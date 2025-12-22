@@ -6,10 +6,10 @@
 
 pub mod compiler;
 
-use std::fs;
+use std::path::Path;
 
 fn print_usage(program: &str) -> ! {
-    eprintln!("usage: \n\t{} <file_path>", program);
+    eprintln!("\x1b[1;1musage:\x1b[0m \n\t{} <file_path>", program);
     std::process::exit(1);
 }
 
@@ -17,17 +17,26 @@ fn main() {
     let mut args = std::env::args();
     let program = args.next().expect("missing program name");
 
-    let file_path = args.next().unwrap_or_else(|| {
+    let file = args.next().unwrap_or_else(|| {
         print_usage(&program);
     });
 
-    let input = fs::read_to_string(file_path).unwrap_or_else(|err| {
-        eprintln!("error: {err}");
+    let file_path = Path::new(&file);
+
+    let Some(file_name) = file_path.file_name() else {
+        print_usage(&program);
+    };
+
+    let input = std::fs::read_to_string(file_path).unwrap_or_else(|err| {
+        eprintln!("\x1b[1;31merror:\x1b[0m {err}");
         print_usage(&program);
     });
 
-    let _ = compiler::Lexer::new(input.as_bytes()).unwrap_or_else(|err| {
-        eprintln!("error: {err}");
-        std::process::exit(1);
-    });
+    let mut lexer = compiler::Lexer::new();
+    lexer
+        .lex(file_name, input.as_bytes())
+        .unwrap_or_else(|err| {
+            eprintln!("{err}");
+            std::process::exit(1);
+        });
 }
