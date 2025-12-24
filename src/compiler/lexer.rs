@@ -20,7 +20,7 @@ pub(crate) enum TokenType {
     ParenClose,
     BraceOpen,
     BraceClose,
-    Semi,
+    Semicolon,
 }
 
 /// Minimal lexical element of the _C_ language standard (_C17_).
@@ -196,7 +196,7 @@ impl Lexer {
                 }
                 b';' => {
                     self.tokens.push_back(Token {
-                        ty: TokenType::Semi,
+                        ty: TokenType::Semicolon,
                         line,
                         col,
                     });

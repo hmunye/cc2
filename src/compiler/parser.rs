@@ -128,7 +128,7 @@ fn parse_statement(file_name: impl AsRef<Path>, lexer: &mut Lexer) -> Result<Sta
 
     let ret_val = parse_expression(&file_name, lexer)?;
 
-    expect_token(&file_name, lexer, TokenType::Semi)?;
+    expect_token(&file_name, lexer, TokenType::Semicolon)?;
 
     Ok(Statement::Return(ret_val))
 }

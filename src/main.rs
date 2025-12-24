@@ -4,66 +4,86 @@
 #![warn(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
 
-// TODO: Add command line options to indicate what stage of compilation to run
-// until ("lex", "parse", "codegen").
-//
 // TODO: Organize error handling.
 
+pub mod args;
 pub mod compiler;
+pub mod error;
 
-use std::fs;
-use std::path::Path;
-
-fn print_usage(program: &str) -> ! {
-    eprintln!("\x1b[1;1musage:\x1b[0m\n\t{} <file_path>", program);
-    std::process::exit(1);
-}
+use std::io::Read;
+use std::process;
 
 fn main() {
-    let mut args = std::env::args();
-    let program = args.next().expect("missing program name");
-
-    let file = args.next().unwrap_or_else(|| {
-        print_usage(&program);
-    });
-
-    let file_path = Path::new(&file);
-    let Some(file_name) = file_path.file_name() else {
-        print_usage(&program);
+    let mut args = args::Args::parse();
+    let Ok(metadata) = args.in_file.metadata() else {
+        print_err!(
+            &args.program,
+            "failed to query file: '{}'",
+            args.in_path.display()
+        );
+        process::exit(1);
     };
 
-    let input = fs::read_to_string(file_path).unwrap_or_else(|err| {
-        eprintln!("\x1b[1;31merror:\x1b[0m {err}");
-        print_usage(&program);
-    });
+    let mut src = Vec::with_capacity(metadata.len() as usize);
+
+    let Ok(_) = args.in_file.read_to_end(&mut src) else {
+        print_err!(
+            &args.program,
+            "failed to read from file: '{}'",
+            args.in_path.display()
+        );
+        process::exit(1);
+    };
 
     let mut lexer = compiler::Lexer::new();
-    lexer
-        .lex(file_name, input.as_bytes())
-        .unwrap_or_else(|err| {
-            eprintln!("{err}");
-            std::process::exit(1);
-        });
-
-    println!("{lexer:#?}");
-
-    let ast = compiler::parser::parse_program(file_name, &mut lexer).unwrap_or_else(|err| {
+    lexer.lex(args.in_path, &src).unwrap_or_else(|err| {
         eprintln!("{err}");
-        std::process::exit(1);
+        process::exit(1);
     });
 
-    let ir = compiler::ir::generate_ir(&ast).unwrap_or_else(|err| {
-        eprintln!("{err}");
-        std::process::exit(1);
-    });
+    match args.stage.as_str() {
+        "lex" => {
+            println!("{lexer:#?}");
+        }
+        "parse" => {
+            let ast =
+                compiler::parser::parse_program(args.in_path, &mut lexer).unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    process::exit(1);
+                });
 
-    println!("AST: {ast:#?}");
-    println!("IR: {ir:#?}");
+            println!("AST: {ast:#?}");
+        }
+        "codegen" => {
+            let ast =
+                compiler::parser::parse_program(args.in_path, &mut lexer).unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    process::exit(1);
+                });
 
-    let output_path = file_path.with_extension("s");
+            let ir = compiler::ir::generate_ir(&ast).unwrap_or_else(|err| {
+                eprintln!("{err}");
+                process::exit(1);
+            });
 
-    compiler::emit::emit_assembly(file_path, output_path, &ir).unwrap_or_else(|err| {
-        eprintln!("{err}");
-        std::process::exit(1);
-    });
+            println!("IR: {ir:#?}");
+        }
+        _ => {
+            let ast =
+                compiler::parser::parse_program(args.in_path, &mut lexer).unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    process::exit(1);
+                });
+
+            let ir = compiler::ir::generate_ir(&ast).unwrap_or_else(|err| {
+                eprintln!("{err}");
+                process::exit(1);
+            });
+
+            compiler::emit::emit_assembly(args.in_path, args.out_path, &ir).unwrap_or_else(|err| {
+                eprintln!("{err}");
+                process::exit(1);
+            });
+        }
+    }
 }
