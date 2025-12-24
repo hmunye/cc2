@@ -3,8 +3,11 @@
 #![deny(missing_docs)]
 #![warn(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
-// FIXME:
-#![allow(dead_code)]
+
+// TODO: Add command line options to indicate what stage of compilation to run
+// until ("lex", "parse", "codegen").
+//
+// TODO: Organize error handling.
 
 pub mod compiler;
 
@@ -42,9 +45,18 @@ fn main() {
             std::process::exit(1);
         });
 
-    println!("Lexer: {:#?}", lexer);
-    println!(
-        "AST: {:#?}",
-        compiler::parser::parse_program(file_name, &mut lexer)
-    );
+    println!("{lexer:#?}");
+
+    let ast = compiler::parser::parse_program(file_name, &mut lexer).unwrap_or_else(|err| {
+        eprintln!("{err}");
+        std::process::exit(1);
+    });
+
+    let ir = compiler::ir::generate_ir(&ast).unwrap_or_else(|err| {
+        eprintln!("{err}");
+        std::process::exit(1);
+    });
+
+    println!("AST: {ast:#?}");
+    println!("IR: {ir:#?}");
 }

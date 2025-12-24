@@ -18,9 +18,11 @@ pub enum AST {
 /// Represents a _function_ definition.
 #[derive(Debug)]
 pub struct Function {
+    // FIXME:
+    #[allow(dead_code)]
     ty: Type,
-    ident: String,
-    body: Statement,
+    pub(crate) ident: String,
+    pub(crate) body: Statement,
 }
 
 /// Represents the _type_ of a lexical token.
