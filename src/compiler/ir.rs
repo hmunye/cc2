@@ -15,14 +15,14 @@ pub enum IR {
 /// Represents a _function_ definition.
 #[derive(Debug)]
 pub struct Function {
-    label: String,
-    instructions: Vec<Instruction>,
+    pub(crate) label: String,
+    pub(crate) instructions: Vec<Instruction>,
 }
 
 /// Represents different assembly (_x86-64_) instructions.
 #[derive(Debug)]
 pub enum Instruction {
-    /// Move instruction (copies _src_ to _dest_).
+    /// Move instruction (copies _src_ to _dst_).
     Mov(Operand, Operand),
     /// Yields control back to the caller.
     Ret,

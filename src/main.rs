@@ -59,4 +59,11 @@ fn main() {
 
     println!("AST: {ast:#?}");
     println!("IR: {ir:#?}");
+
+    let output_path = file_path.with_extension("s");
+
+    compiler::emit::emit_assembly(file_path, output_path, &ir).unwrap_or_else(|err| {
+        eprintln!("{err}");
+        std::process::exit(1);
+    });
 }
