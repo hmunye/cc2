@@ -3,8 +3,7 @@
 //! Performs lexical analysis on _C_ source code, producing a sequence of
 //! tokens.
 
-#![allow(dead_code)]
-
+use std::collections::VecDeque;
 use std::convert::AsRef;
 use std::path::Path;
 
@@ -12,7 +11,7 @@ use std::path::Path;
 const KEYWORDS: [&str; 3] = ["int", "void", "return"];
 
 /// Types of lexical elements.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum TokenType {
     Keyword(String),
     Ident(String),
@@ -27,15 +26,15 @@ pub(crate) enum TokenType {
 /// Minimal lexical element of the _C_ language standard (_C17_).
 #[derive(Debug)]
 pub(crate) struct Token {
-    ty: TokenType,
-    line: usize,
-    col: usize,
+    pub(crate) ty: TokenType,
+    pub(crate) line: usize,
+    pub(crate) col: usize,
 }
 
-/// Stores the ordered sequence of tokens extracted from _C_ source code.
+/// Stores the ordered sequence of tokens extracted from a _C_ translation unit.
 #[derive(Debug, Default)]
 pub struct Lexer {
-    tokens: Vec<Token>,
+    tokens: VecDeque<Token>,
 }
 
 impl Lexer {
@@ -90,8 +89,6 @@ impl Lexer {
                     //
                     // NOTE: Currently don't allow usage of '_' as a separator
                     // between digits.
-                    //
-                    // NOTE: Temporary error handling.
                     if input[i].is_ascii_lowercase()
                         || input[i].is_ascii_uppercase()
                         || input[i] == b'_'
@@ -127,7 +124,7 @@ impl Lexer {
 
                     let integer = token.parse::<i32>().map_err(|err| format!("{err}"))?;
 
-                    self.tokens.push(Token {
+                    self.tokens.push_back(Token {
                         ty: TokenType::ConstantInt(integer),
                         line,
                         col: tok_col,
@@ -148,13 +145,13 @@ impl Lexer {
                         std::str::from_utf8(&input[start..i]).map_err(|err| format!("{err}"))?;
 
                     if KEYWORDS.contains(&token) {
-                        self.tokens.push(Token {
+                        self.tokens.push_back(Token {
                             ty: TokenType::Keyword(token.into()),
                             line,
                             col: tok_col,
                         });
                     } else {
-                        self.tokens.push(Token {
+                        self.tokens.push_back(Token {
                             ty: TokenType::Ident(token.into()),
                             line,
                             col: tok_col,
@@ -162,7 +159,7 @@ impl Lexer {
                     }
                 }
                 b'(' => {
-                    self.tokens.push(Token {
+                    self.tokens.push_back(Token {
                         ty: TokenType::ParenOpen,
                         line,
                         col,
@@ -171,7 +168,7 @@ impl Lexer {
                     i += 1;
                 }
                 b')' => {
-                    self.tokens.push(Token {
+                    self.tokens.push_back(Token {
                         ty: TokenType::ParenClose,
                         line,
                         col,
@@ -180,7 +177,7 @@ impl Lexer {
                     i += 1;
                 }
                 b'{' => {
-                    self.tokens.push(Token {
+                    self.tokens.push_back(Token {
                         ty: TokenType::BraceOpen,
                         line,
                         col,
@@ -189,7 +186,7 @@ impl Lexer {
                     i += 1;
                 }
                 b'}' => {
-                    self.tokens.push(Token {
+                    self.tokens.push_back(Token {
                         ty: TokenType::BraceClose,
                         line,
                         col,
@@ -198,7 +195,7 @@ impl Lexer {
                     i += 1;
                 }
                 b';' => {
-                    self.tokens.push(Token {
+                    self.tokens.push_back(Token {
                         ty: TokenType::Semi,
                         line,
                         col,
@@ -217,6 +214,21 @@ impl Lexer {
         }
 
         Ok(())
+    }
+
+    /// Returns a reference to the next token in sequence without consuming it.
+    pub(crate) fn peek_next(&self) -> Option<&Token> {
+        self.tokens.front()
+    }
+
+    /// Consumes and returns the next token in sequence.
+    pub(crate) fn consume_next(&mut self) -> Option<Token> {
+        self.tokens.pop_front()
+    }
+
+    /// Returns `true` if there are no tokens available to consume.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.tokens.is_empty()
     }
 }
 
