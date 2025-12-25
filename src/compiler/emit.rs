@@ -3,42 +3,61 @@
 //! Compiler pass that emits textual assembly from the compiler's intermediate
 //! assembly representation.
 
-use std::convert::AsRef;
 use std::fs;
-use std::io::{self, Write};
-use std::path::Path;
+use std::io::Write;
+use std::process;
 
 use crate::compiler::ir::{IR, Instruction, Operand};
+use crate::{Context, report_err};
 
-/// Generate an _x86-64_ assembly file from the provided `IR`, written to the
-/// specified output file.
-pub fn emit_assembly(
-    source_path: impl AsRef<Path>,
-    output_path: impl AsRef<Path>,
-    ir: &IR,
-) -> io::Result<()> {
-    let mut f = fs::File::create(output_path)?;
+/// Generate _gas-x86-64-linux_ assembly from the provided `IR`, written to the
+/// output file in the passed context. [Exits] on error with non-zero status.
+///
+/// [Exits]: std::process::exit
+pub fn emit_assembly(ctx: &Context<'_>, ir: &IR) {
+    let Ok(mut f) = fs::File::create(ctx.out_path) else {
+        report_err!(ctx.program, "failed to create output file");
+        process::exit(1);
+    };
 
     match ir {
         IR::Program(func) => {
             writeln!(
                 &mut f,
                 "\t.file\t\"{}\"\n\t.text\n\t.globl\t{label}\n\t.type\t{label}, @function\n{label}:",
-                source_path.as_ref().display(),
+                ctx.in_path.display(),
                 label = func.label
-            )?;
+            ).unwrap_or_else(|err| {
+               report_err!(
+                   ctx.program,
+                   "failed to emit assembly to '{}': {err}",
+                   ctx.out_path.display()
+               );
+               process::exit(1);
+            });
 
             for instruction in &func.instructions {
-                writeln!(&mut f, "\t{}", emit_instruction(instruction))?;
+                writeln!(&mut f, "\t{}", emit_instruction(instruction)).unwrap_or_else(|err| {
+                    report_err!(
+                        ctx.program,
+                        "failed to emit assembly to '{}': {err}",
+                        ctx.out_path.display()
+                    );
+                    process::exit(1);
+                });
             }
 
-            // Indicates the program does not need an executable stack on
-            // Linux.
-            writeln!(&mut f, ".section\t.note.GNU-stack,\"\",@progbits")?;
+            // Indicates the program does not need an executable stack.
+            writeln!(&mut f, ".section\t.note.GNU-stack,\"\",@progbits").unwrap_or_else(|err| {
+                report_err!(
+                    ctx.program,
+                    "failed to emit assembly to '{}': {err}",
+                    ctx.out_path.display()
+                );
+                process::exit(1);
+            });
         }
     }
-
-    Ok(())
 }
 
 /// Return a string representation of the given `IR` instruction.

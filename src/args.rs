@@ -4,7 +4,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use crate::print_err;
+use crate::report_err;
 
 /// Compiler command-line arguments.
 #[derive(Debug)]
@@ -14,7 +14,7 @@ pub struct Args {
     /// Compilation phase to terminate at (lexical analysis, parsing, code
     /// generation).
     ///
-    /// Defaults to invoking full compilation process.
+    /// Empty string invokes the full compilation process.
     pub stage: String,
     /// Input file containing C source code (required).
     pub in_file: File,
@@ -54,18 +54,18 @@ impl Args {
                             }
                             Some(s) => {
                                 // Already peeked the next argument.
-                                print_err!(&program, "invalid stage: '{s}'");
+                                report_err!(&program, "invalid stage: '{s}'");
                                 print_usage(&program);
                             }
                             None => {
-                                print_err!(&program, "missing stage name after '-s'|'--stage'");
+                                report_err!(&program, "missing stage name after '-s'|'--stage'");
                                 print_usage(&program);
                             }
                         },
                         ["-o", "--output"] => match args.next() {
                             Some(path) => out_path = PathBuf::from(&path),
                             None => {
-                                print_err!(&program, "missing file name after '-o'|'--output'");
+                                report_err!(&program, "missing file name after '-o'|'--output'");
                                 print_usage(&program);
                             }
                         },
@@ -76,7 +76,7 @@ impl Args {
                         }
                     }
                 } else {
-                    print_err!(&program, "invalid flag '{flag_name}'");
+                    report_err!(&program, "invalid flag: '{flag_name}'");
                     print_usage(&program);
                 }
             } else {
@@ -87,20 +87,21 @@ impl Args {
 
         // Input file should come after all flags have been processed.
         let Some(file_path) = args.next() else {
-            print_err!(&program, "no input file");
+            report_err!(&program, "no input file");
             print_usage(&program);
         };
 
         // NOTE: Leaking `file_path` to ensure the input path is available for
-        // error reporting throughout the runtime. Could use PathBuf instead.
+        // error reporting during runtime. Could use `PathBuf` instead but the
+        // path will not be mutated.
         let in_path = Path::new(file_path.leak());
 
         let in_file = File::open(in_path).unwrap_or_else(|err| {
-            print_err!(&program, "failed to open file: {err}");
+            report_err!(&program, "failed to open input file: {err}");
             process::exit(1);
         });
 
-        // Indicates no output path was provided.
+        // No output path was provided - use default path.
         if out_path.capacity() == 0 {
             out_path = in_path.with_extension("s");
         }

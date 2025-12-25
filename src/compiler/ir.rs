@@ -3,6 +3,8 @@
 //! Compiler pass that lowers an abstract syntax tree (_AST_) into an
 //! intermediate assembly representation (_x86-64_).
 
+use std::process;
+
 use crate::compiler::parser;
 
 /// Intermediate representation (_IR_) derived from an _AST_.
@@ -14,9 +16,10 @@ pub enum IR {
 
 /// Represents a _function_ definition.
 #[derive(Debug)]
+#[allow(missing_docs)]
 pub struct Function {
-    pub(crate) label: String,
-    pub(crate) instructions: Vec<Instruction>,
+    pub label: String,
+    pub instructions: Vec<Instruction>,
 }
 
 /// Represents different assembly (_x86-64_) instructions.
@@ -38,17 +41,23 @@ pub enum Operand {
 }
 
 /// Generate intermediate representation (`IR`), given an abstract syntax tree
-/// (_AST_).
-pub fn generate_ir(ast: &parser::AST) -> Result<IR, String> {
+/// (_AST_). [Exits] on error with non-zero status.
+///
+/// [Exits]: std::process::exit
+pub fn generate_ir(ast: &parser::AST) -> IR {
     match ast {
         parser::AST::Program(func) => {
-            let ir_function = generate_ir_function(func)?;
-            Ok(IR::Program(ir_function))
+            let ir_function = generate_ir_function(func).unwrap_or_else(|err| {
+                eprintln!("{err}");
+                process::exit(1);
+            });
+
+            IR::Program(ir_function)
         }
     }
 }
 
-/// Generate an IR _function definition_ from the provided `parser::Function`.
+/// Generate an IR _function definition_ from the provided _AST_ function.
 fn generate_ir_function(func: &parser::Function) -> Result<Function, String> {
     let mut instructions = vec![];
 
@@ -56,8 +65,7 @@ fn generate_ir_function(func: &parser::Function) -> Result<Function, String> {
         parser::Statement::Return(ref expr) => {
             let ir_expr = generate_ir_expression(expr)?;
 
-            // Register `eax` is used for return values according to System-V
-            // ABI.
+            // Register `eax` used for return values in System-V ABI.
             instructions.push(Instruction::Mov(ir_expr, Operand::Register("eax")));
             instructions.push(Instruction::Ret);
         }
@@ -69,7 +77,7 @@ fn generate_ir_function(func: &parser::Function) -> Result<Function, String> {
     })
 }
 
-/// Generate an IR _expression_ from the provided `parser::Expression`.
+/// Generate an IR _expression_ from the provided _AST_ expression`.
 fn generate_ir_expression(expr: &parser::Expression) -> Result<Operand, String> {
     match expr {
         parser::Expression::ConstantInt(v) => Ok(Operand::Imm(*v)),
