@@ -11,6 +11,19 @@ use crate::{Context, report_err_ctx, report_token_err};
 /// Reserved tokens by the _C_ language standard (_C17_).
 const KEYWORDS: [&str; 3] = ["int", "void", "return"];
 
+/// Supported operators of the _C_ language standard (_C17_).
+#[derive(Debug, PartialEq)]
+pub enum OperatorKind {
+    /// `~` unary operator.
+    Complement,
+    /// `-` unary operator.
+    Negate,
+    /// `--` unary operator.
+    Decrement,
+}
+
+/// TODO: Implement `Display`.
+///
 /// Types of lexical elements.
 #[derive(Debug, PartialEq)]
 #[allow(missing_docs)]
@@ -18,6 +31,7 @@ pub enum TokenType {
     Keyword(String),
     Ident(String),
     ConstantInt(i32),
+    Operator(OperatorKind),
     ParenOpen,
     ParenClose,
     BraceOpen,
@@ -25,6 +39,8 @@ pub enum TokenType {
     Semicolon,
 }
 
+/// TODO: Add line content so that the parser can report token errors.
+///
 /// Location of a `Token` within a given file.
 #[derive(Debug)]
 #[allow(missing_docs)]
@@ -182,6 +198,43 @@ impl<'a> Lexer<'a> {
                     } else {
                         self.tokens.push_back(Token {
                             ty: TokenType::Ident(token.into()),
+                            loc: Location {
+                                file_path: ctx.in_path,
+                                line: self.line,
+                                col,
+                            },
+                        });
+                    }
+                }
+                b'~' => {
+                    self.tokens.push_back(Token {
+                        ty: TokenType::Operator(OperatorKind::Complement),
+                        loc: Location {
+                            file_path: ctx.in_path,
+                            line: self.line,
+                            col,
+                        },
+                    });
+
+                    self.cur += 1;
+                }
+                b'-' => {
+                    self.cur += 1;
+
+                    if self.has_next() && self.first() == b'-' {
+                        self.tokens.push_back(Token {
+                            ty: TokenType::Operator(OperatorKind::Decrement),
+                            loc: Location {
+                                file_path: ctx.in_path,
+                                line: self.line,
+                                col,
+                            },
+                        });
+
+                        self.cur += 1;
+                    } else {
+                        self.tokens.push_back(Token {
+                            ty: TokenType::Operator(OperatorKind::Negate),
                             loc: Location {
                                 file_path: ctx.in_path,
                                 line: self.line,

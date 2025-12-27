@@ -5,7 +5,7 @@
 
 use std::process;
 
-use crate::compiler::lexer::{Lexer, TokenType};
+use crate::compiler::lexer::{Lexer, OperatorKind, TokenType};
 use crate::{Context, fmt_err, fmt_err_ctx, report_err};
 
 type Ident = String;
@@ -47,6 +47,21 @@ pub enum Statement {
 pub enum Expression {
     /// Constant _int_ value (32-bit).
     ConstantInt(i32),
+    /// Unary operator applied to an expression.
+    #[allow(missing_docs)]
+    Unary {
+        op: UnaryOperator,
+        expr: Box<Expression>,
+    },
+}
+
+/// Represents different variants of _unary operators_.
+#[derive(Debug)]
+pub enum UnaryOperator {
+    /// `~` unary operator.
+    Complement,
+    /// `-` unary operator.
+    Negate,
 }
 
 /// Parses an abstract syntax tree (_AST_) from the provided `Lexer`. [Exits] on
@@ -77,11 +92,16 @@ pub fn parse_program(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> AST {
 
 /// Parses a _function definition_ from the provided `Lexer`.
 fn parse_function(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Function, String> {
-    let ty = parse_type(ctx, lexer)?;
+    // NOTE: Currently only allow `int` return values.
+    expect_token(ctx, lexer, TokenType::Keyword("int".into()))?;
+
     let ident = parse_ident(ctx, lexer)?;
 
     expect_token(ctx, lexer, TokenType::ParenOpen)?;
+
+    // NOTE: Currently do not process function parameters.
     expect_token(ctx, lexer, TokenType::Keyword("void".into()))?;
+
     expect_token(ctx, lexer, TokenType::ParenClose)?;
     expect_token(ctx, lexer, TokenType::BraceOpen)?;
 
@@ -89,7 +109,11 @@ fn parse_function(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Function, 
 
     expect_token(ctx, lexer, TokenType::BraceClose)?;
 
-    Ok(Function { ty, ident, body })
+    Ok(Function {
+        ty: Type::Int,
+        ident,
+        body,
+    })
 }
 
 /// Parse a _statement_ from the provided `Lexer`.
@@ -102,6 +126,7 @@ fn parse_statement(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Statement
 }
 
 /// Parse a function or object _type_ from the provided `Lexer`.
+#[allow(dead_code)]
 fn parse_type(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Type, String> {
     if let Some(token) = lexer.next_token() {
         match token.ty {
@@ -149,6 +174,30 @@ fn parse_expression(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expressi
     if let Some(token) = lexer.next_token() {
         match token.ty {
             TokenType::ConstantInt(v) => Ok(Expression::ConstantInt(v)),
+            TokenType::Operator(OperatorKind::Complement) => {
+                // Recursively parse the expression which the operator is being
+                // applied to.
+                let expr = parse_expression(ctx, lexer)?;
+                Ok(Expression::Unary {
+                    op: UnaryOperator::Complement,
+                    expr: Box::new(expr),
+                })
+            }
+            TokenType::Operator(OperatorKind::Negate) => {
+                // Recursively parse the expression which the operator is being
+                // applied to.
+                let expr = parse_expression(ctx, lexer)?;
+                Ok(Expression::Unary {
+                    op: UnaryOperator::Negate,
+                    expr: Box::new(expr),
+                })
+            }
+            TokenType::ParenOpen => {
+                // Recursively parse the expression within the parenthesis.
+                let expr = parse_expression(ctx, lexer)?;
+                expect_token(ctx, lexer, TokenType::ParenClose)?;
+                Ok(expr)
+            }
             _ => Err(fmt_err_ctx!(
                 token.loc.file_path.display(),
                 token.loc.line,
@@ -213,6 +262,152 @@ mod tests {
     }
 
     #[test]
+    fn parser_valid_bitwise_complement() {
+        let source = b"int main(void) {\n    return ~12;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_bitwise_complement_i32_min() {
+        // Take the bitwise complement of the largest negative integer
+        // that can be safely negated in a 32-bit signed integer (-2147483647).
+        let source = b"int main(void) {\n    return ~-2147483647;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_bitwise_complement_zero() {
+        let source = b"int main(void) {\n    return ~0;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_negation() {
+        let source = b"int main(void) {\n    return -5;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_negation_zero() {
+        let source = b"int main(void) {\n    return -0;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_negation_i32_max() {
+        let source = b"int main(void) {\n    return -2147483647;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_nested_unary_ops() {
+        let source = b"int main(void) {\n    return ~-3;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_parenthesize_constant() {
+        let source = b"int main(void) {\n    return (2);\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_redundant_parens() {
+        let source = b"int main(void) {\n    return -((((10))));\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
     #[should_panic]
     fn parser_invalid_no_expr() {
         let source = b"int main(void) {\n    return";
@@ -224,7 +419,7 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
@@ -243,7 +438,7 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
@@ -261,7 +456,7 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
@@ -278,7 +473,7 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
@@ -297,7 +492,7 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
@@ -314,7 +509,7 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
@@ -331,7 +526,7 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
@@ -348,7 +543,7 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
@@ -365,14 +560,14 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
 
     #[test]
     #[should_panic]
-    fn parser_invalid_parens() {
+    fn parser_invalid_parens_fn() {
         let source = b"int main)void( {\n    return 0;\n}";
         let mut lexer = crate::compiler::Lexer::new(source);
 
@@ -382,14 +577,14 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
 
     #[test]
     #[should_panic]
-    fn parser_invalid_unclosed_brace() {
+    fn parser_invalid_unclosed_brace_fn() {
         let source = b"int main(void) {\n    return 0;";
         let mut lexer = crate::compiler::Lexer::new(source);
 
@@ -399,14 +594,14 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }
 
     #[test]
     #[should_panic]
-    fn parser_invalid_unclosed_paren() {
+    fn parser_invalid_unclosed_paren_fn() {
         let source = b"int main(void {\n    return 0;\n}";
         let mut lexer = crate::compiler::Lexer::new(source);
 
@@ -416,7 +611,109 @@ mod tests {
             lexer.lex(&ctx);
         }));
 
-        assert!(result.is_ok(), "lexer should not panic in test");
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    #[should_panic]
+    fn parser_invalid_extra_paren() {
+        let source = b"int main(void)\n{\n    return (3));\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    #[should_panic]
+    fn parser_invalid_missing_constant() {
+        let source = b"int main(void) {\n    return ~;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    #[should_panic]
+    fn parser_invalid_nested_missing_constant() {
+        let source = b"int main(void)\n{\n    return -~;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    #[should_panic]
+    fn parser_invalid_parenthesize_operand() {
+        let source = b"int main(void) {\n   return (-)3;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    #[should_panic]
+    fn parser_invalid_unclose_paren_expr() {
+        let source = b"int main(void) {\n   return (1;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    #[should_panic]
+    fn parser_invalid_negation_postfix() {
+        let source = b"int main(void) {\n   return 4-;\n}";
+        let mut lexer = crate::compiler::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
 
         parse_program(&ctx, &mut lexer);
     }

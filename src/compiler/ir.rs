@@ -81,5 +81,6 @@ fn generate_ir_function(func: &parser::Function) -> Result<Function, String> {
 fn generate_ir_expression(expr: &parser::Expression) -> Result<Operand, String> {
     match expr {
         parser::Expression::ConstantInt(v) => Ok(Operand::Imm(*v)),
+        _ => todo!(),
     }
 }
