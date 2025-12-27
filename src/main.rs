@@ -62,15 +62,22 @@ fn main() {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             println!("AST: {ast:#?}");
         }
-        "codegen" => {
+        "ir" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
             println!("IR: {ir:#?}");
         }
+        // TODO: Should just print generated assembly to `stdout`.
+        "asm" => {
+            let ast = compiler::parser::parse_program(&ctx, &mut lexer);
+            let ir = compiler::ir::generate_ir(&ast);
+            // compiler::emit::emit_assembly(&ctx, &ir);
+        }
+        // TODO: Should actually emit assembly to output file.
         _ => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
-            compiler::emit::emit_assembly(&ctx, &ir);
+            // compiler::emit::emit_assembly(&ctx, &ir);
         }
     }
 }

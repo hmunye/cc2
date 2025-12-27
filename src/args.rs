@@ -48,7 +48,7 @@ impl Args {
                 {
                     match flag.names {
                         ["-s", "--stage"] => match args.peek().map(|s| &**s) {
-                            Some("lex") | Some("parse") | Some("codegen") => {
+                            Some("lex") | Some("parse") | Some("ir") | Some("asm") => {
                                 // Already peeked the next argument.
                                 stage = args.next().expect("next argument should be present");
                             }
@@ -125,7 +125,7 @@ struct Flag {
 const FLAG_REGISTRY: &[Flag] = &[
     Flag {
         names: ["-s", "--stage"],
-        description: "          stop after the specified compilation phase: 'lex', 'parse', or 'codegen'.",
+        description: "          stop after the specified compilation phase: 'lex', 'parse', 'ir', or 'asm'.",
         run: None,
     },
     Flag {

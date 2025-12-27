@@ -56,7 +56,7 @@ pub enum Expression {
 }
 
 /// Represents different variants of _unary operators_.
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum UnaryOperator {
     /// `~` unary operator.
     Complement,
