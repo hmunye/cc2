@@ -22,8 +22,16 @@ pub enum OperatorKind {
     Decrement,
 }
 
-/// TODO: Implement `Display`.
-///
+impl fmt::Display for OperatorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OperatorKind::Complement => write!(f, "unary('~')"),
+            OperatorKind::Negate => write!(f, "unary('-')"),
+            OperatorKind::Decrement => write!(f, "unary('--')"),
+        }
+    }
+}
+
 /// Types of lexical elements.
 #[derive(Debug, PartialEq)]
 #[allow(missing_docs)]
@@ -39,6 +47,22 @@ pub enum TokenType {
     Semicolon,
 }
 
+impl fmt::Display for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenType::Keyword(s) => write!(f, "keyword(\"{}\")", s),
+            TokenType::Ident(i) => write!(f, "ident(\"{}\")", i),
+            TokenType::ConstantInt(v) => write!(f, "int(\"{}\")", v),
+            TokenType::Operator(op) => fmt::Display::fmt(op, f),
+            TokenType::ParenOpen => write!(f, "'('"),
+            TokenType::ParenClose => write!(f, "')'"),
+            TokenType::BraceOpen => write!(f, "'{{'"),
+            TokenType::BraceClose => write!(f, "'}}'"),
+            TokenType::Semicolon => write!(f, "';'"),
+        }
+    }
+}
+
 /// TODO: Add line content so that the parser can report token errors.
 ///
 /// Location of a processed `Token`.
@@ -50,6 +74,12 @@ pub struct Location {
     pub col: usize,
 }
 
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.file_path.display(), self.line, self.col)
+    }
+}
+
 /// Minimal lexical element of the _C_ language standard (_C17_).
 #[derive(Debug)]
 #[allow(missing_docs)]
@@ -58,8 +88,14 @@ pub struct Token {
     pub loc: Location,
 }
 
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}\t    {}", self.loc, self.ty)
+    }
+}
+
 /// Stores the ordered sequence of tokens extracted from a _C_ translation unit.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Lexer<'a> {
     tokens: std::collections::VecDeque<Token>,
     src: &'a [u8],
@@ -356,11 +392,13 @@ impl<'a> Lexer<'a> {
     }
 }
 
-impl fmt::Debug for Lexer<'_> {
+impl fmt::Display for Lexer<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Lexer")
-            .field("tokens", &self.tokens)
-            .finish()
+        for tok in &self.tokens {
+            writeln!(f, "{}", tok)?;
+        }
+
+        Ok(())
     }
 }
 

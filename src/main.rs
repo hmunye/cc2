@@ -56,22 +56,22 @@ fn main() {
 
     match args.stage.as_str() {
         "lex" => {
-            println!("{lexer:#?}");
+            print!("{lexer}");
         }
         "parse" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
-            println!("AST: {ast:#?}");
+            println!("AST: {ast:?}");
         }
         "ir" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
-            println!("IR: {ir:#?}");
+            println!("IR: {ir:?}");
         }
         "asm" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
             let asm = compiler::asm::generate_asm(&ir);
-            println!("ASM: {asm:#?}");
+            println!("ASM MIR: {asm:?}");
         }
         _ => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
