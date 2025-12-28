@@ -4,6 +4,7 @@
 //! representation (_IR_) into a structured assembly representation (_x86-64_).
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use crate::compiler::ir::{self, IR};
 use crate::compiler::parser::UnaryOperator;
@@ -35,20 +36,28 @@ impl ASM {
                                 // Either increment the current stack offset, or
                                 // use the stored offset if the identifier has
                                 // already been seen.
-                                let offset = *map.entry(ident.clone()).or_insert({
-                                    stack_offset += 4;
-                                    stack_offset
-                                });
+                                let offset = match map.entry(ident.clone()) {
+                                    Entry::Occupied(entry) => *entry.get(),
+                                    Entry::Vacant(entry) => {
+                                        stack_offset += 4;
+                                        entry.insert(stack_offset);
+                                        stack_offset
+                                    }
+                                };
                                 *src = Operand::Stack(offset);
                             }
                             if let Operand::Pseudo(ident) = dst {
                                 // Either increment the current stack offset, or
                                 // use the stored offset if the identifier has
                                 // already been seen.
-                                let offset = *map.entry(ident.clone()).or_insert({
-                                    stack_offset += 4;
-                                    stack_offset
-                                });
+                                let offset = match map.entry(ident.clone()) {
+                                    Entry::Occupied(entry) => *entry.get(),
+                                    Entry::Vacant(entry) => {
+                                        stack_offset += 4;
+                                        entry.insert(stack_offset);
+                                        stack_offset
+                                    }
+                                };
                                 *dst = Operand::Stack(offset);
                             }
                         }
@@ -57,10 +66,14 @@ impl ASM {
                                 // Either increment the current stack offset, or
                                 // use the stored offset if the identifier has
                                 // already been seen.
-                                let offset = *map.entry(ident.clone()).or_insert({
-                                    stack_offset += 4;
-                                    stack_offset
-                                });
+                                let offset = match map.entry(ident.clone()) {
+                                    Entry::Occupied(entry) => *entry.get(),
+                                    Entry::Vacant(entry) => {
+                                        stack_offset += 4;
+                                        entry.insert(stack_offset);
+                                        stack_offset
+                                    }
+                                };
                                 *op = Operand::Stack(offset);
                             }
                         }
