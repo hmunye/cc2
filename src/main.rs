@@ -67,7 +67,6 @@ fn main() {
             let ir = compiler::ir::generate_ir(&ast);
             println!("IR: {ir:#?}");
         }
-        // TODO: Should print structured assembly representation (not textual).
         "asm" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
@@ -78,7 +77,7 @@ fn main() {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
             let asm = compiler::asm::generate_asm(&ir);
-            // compiler::emit::emit_assembly(&ctx, &asm);
+            compiler::emit::emit_assembly(&ctx, &asm);
         }
     }
 }

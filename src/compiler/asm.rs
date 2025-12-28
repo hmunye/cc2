@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::fmt;
 
 use crate::compiler::ir::{self, IR};
 use crate::compiler::parser::UnaryOperator;
@@ -21,7 +22,7 @@ pub enum ASM {
 impl ASM {
     /// Replaces each _pseudoregister_ encountered with a stack offset,
     /// returning the stack offset of the final temporary variable.
-    fn replace_pseudo(&mut self) -> i32 {
+    fn replace_pseudo_registers(&mut self) -> i32 {
         let mut map: HashMap<Ident, i32> = Default::default();
 
         // NOTE: Currently "allocating" in 4-byte offsets.
@@ -100,7 +101,7 @@ impl ASM {
 
     /// Normalizes `MOV` instructions that contain both memory operands,
     /// converting them into valid forms.
-    fn rewrite_invalid_mov(&mut self) {
+    fn rewrite_invalid_mov_instructions(&mut self) {
         match self {
             ASM::Program(func) => {
                 let mut i = 0;
@@ -126,8 +127,8 @@ impl ASM {
                         func.instructions.splice(
                             i..=i,
                             [
-                                Instruction::Mov(src.clone(), Operand::Register(Reg::R10D)),
-                                Instruction::Mov(Operand::Register(Reg::R10D), dst.clone()),
+                                Instruction::Mov(src.clone(), Operand::Register(Reg::R10)),
+                                Instruction::Mov(Operand::Register(Reg::R10), dst.clone()),
                             ],
                         );
 
@@ -182,7 +183,16 @@ pub enum Operand {
 #[allow(missing_docs)]
 pub enum Reg {
     AX,
-    R10D,
+    R10,
+}
+
+impl fmt::Display for Reg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Reg::AX => write!(f, "%eax"),
+            Reg::R10 => write!(f, "%r10d"),
+        }
+    }
 }
 
 /// Generate structured assembly representation, given an intermediate
@@ -198,11 +208,11 @@ pub fn generate_asm(ir: &IR) -> ASM {
             let mut asm = ASM::Program(asm_func);
 
             // Pass 2 - Each pseudoregister replace with stack offsets.
-            let stack_offset = asm.replace_pseudo();
+            let stack_offset = asm.replace_pseudo_registers();
 
             // Pass 3 - Rewrite invalid `Mov` instructions (both operands may
             // now be memory addresses).
-            asm.rewrite_invalid_mov();
+            asm.rewrite_invalid_mov_instructions();
 
             // Pass 4 - Insert instruction for allocating `stack_offset` bytes
             asm.emit_stack_allocation(stack_offset);

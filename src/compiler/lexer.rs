@@ -89,6 +89,8 @@ impl<'a> Lexer<'a> {
     ///
     /// [Exits]: std::process::exit
     pub fn lex(&mut self, ctx: &Context<'_>) {
+        // TODO: Track each current line, so it's contents can used in error
+        // reporting.
         while self.has_next() {
             let col = self.cur - self.bol;
 
