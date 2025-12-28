@@ -1,7 +1,7 @@
 //! Code Emission.
 //!
-//! Compiler pass that emits textual assembly from the compiler's intermediate
-//! assembly representation.
+//! Compiler pass that emits textual assembly from the compiler's structured
+//! assembly representation (_x86-64_).
 
 use std::fs;
 use std::io::Write;

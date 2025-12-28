@@ -51,7 +51,7 @@ fn main() {
         out_path: args.out_path.as_path(),
     };
 
-    let mut lexer = compiler::Lexer::new(&src);
+    let mut lexer = compiler::lexer::Lexer::new(&src);
     lexer.lex(&ctx);
 
     match args.stage.as_str() {
@@ -67,17 +67,18 @@ fn main() {
             let ir = compiler::ir::generate_ir(&ast);
             println!("IR: {ir:#?}");
         }
-        // TODO: Should just print generated assembly to `stdout`.
+        // TODO: Should print structured assembly representation (not textual).
         "asm" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
-            // compiler::emit::emit_assembly(&ctx, &ir);
+            let asm = compiler::asm::generate_asm(&ir);
+            println!("ASM: {asm:#?}");
         }
-        // TODO: Should actually emit assembly to output file.
         _ => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
-            // compiler::emit::emit_assembly(&ctx, &ir);
+            let asm = compiler::asm::generate_asm(&ir);
+            // compiler::emit::emit_assembly(&ctx, &asm);
         }
     }
 }

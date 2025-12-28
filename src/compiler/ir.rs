@@ -1,16 +1,16 @@
-//! Intermediate Code Generation.
+//! Intermediate Representation.
 //!
-//! Compiler pass that lowers an abstract syntax tree (_AST_) into an
-//! intermediate representation (three-address code).
+//! Compiler pass that lowers an abstract syntax tree (_AST_) into intermediate
+//! representation (_IR_) using three-address code (_TAC_).
 
 use crate::compiler::parser::{self, UnaryOperator};
 
 type Ident = String;
 
-/// Intermediate representation (_IR_) derived from an _AST_.
+/// Intermediate representation (_IR_).
 #[derive(Debug)]
 pub enum IR {
-    /// Function that represent the structure of the assembly program.
+    /// Function that represent the structure of the program.
     Program(Function),
 }
 
@@ -18,7 +18,7 @@ pub enum IR {
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Function {
-    pub label: Ident,
+    pub ident: Ident,
     pub instructions: Vec<Instruction>,
 }
 
@@ -26,7 +26,7 @@ pub struct Function {
 #[derive(Debug)]
 pub enum Instruction {
     /// Returns a _value_ to the caller.
-    Ret(Value),
+    Return(Value),
     /// Perform a _unary_ operation on `src`, storing the result in `dst`.
     ///
     /// NOTE: The `dst` of any unary instruction must be `Value::Var`.
@@ -93,13 +93,13 @@ fn generate_ir_function(func: &parser::Function) -> Function {
     match func.body {
         parser::Statement::Return(ref expr) => {
             let ir_expr = generate_ir_expression(expr, &mut builder);
-            builder.instructions.push(Instruction::Ret(ir_expr));
+            builder.instructions.push(Instruction::Return(ir_expr));
         }
     }
 
     Function {
         instructions: builder.instructions,
-        label,
+        ident: label,
     }
 }
 

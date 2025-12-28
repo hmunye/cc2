@@ -1,17 +1,17 @@
-//! Lexical Analysis.
+//! Lexical Analysis
 //!
-//! Performs lexical analysis on _C_ source code, producing a sequence of
+//! Compiler pass that tokenizes _C_ source code, producing a sequence of
 //! tokens.
 
 use std::path::Path;
-use std::process;
+use std::{fmt, process};
 
 use crate::{Context, report_err_ctx, report_token_err};
 
 /// Reserved tokens by the _C_ language standard (_C17_).
 const KEYWORDS: [&str; 3] = ["int", "void", "return"];
 
-/// Supported operators of the _C_ language standard (_C17_).
+/// Different operators defined in the _C_ language standard (_C17_).
 #[derive(Debug, PartialEq)]
 pub enum OperatorKind {
     /// `~` unary operator.
@@ -41,7 +41,7 @@ pub enum TokenType {
 
 /// TODO: Add line content so that the parser can report token errors.
 ///
-/// Location of a `Token` within a given file.
+/// Location of a processed `Token`.
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Location {
@@ -82,8 +82,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Analyzes the _C_ source code used to initialize the `Lexer`, internally
-    /// producing a sequence of tokens. [Exits] on error with non-zero status.
+    /// Initialize the `Lexer` given _C_ source code, internally producing a
+    /// sequence of tokens. [Exits] on error with non-zero status.
     ///
     /// Does **not** support universal character names (only _ASCII_).
     ///
@@ -354,8 +354,8 @@ impl<'a> Lexer<'a> {
     }
 }
 
-impl std::fmt::Debug for Lexer<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Lexer<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Lexer")
             .field("tokens", &self.tokens)
             .finish()

@@ -11,8 +11,8 @@ use crate::report_err;
 pub struct Args {
     /// Name of the program.
     pub program: String,
-    /// Compilation phase to terminate at (lexical analysis, parsing, code
-    /// generation).
+    /// Compilation phase to terminate at (lexical analysis, parsing,
+    /// intermediate representation, code generation).
     ///
     /// Empty string invokes the full compilation process.
     pub stage: String,
@@ -101,7 +101,7 @@ impl Args {
             process::exit(1);
         });
 
-        // No output path was provided - use default path.
+        // No output path was provided - use default output path name.
         if out_path.capacity() == 0 {
             out_path = in_path.with_extension("s");
         }

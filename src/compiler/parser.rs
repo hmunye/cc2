@@ -1,7 +1,7 @@
-//! Syntax Analysis.
+//! Syntax Analysis
 //!
-//! Converts a stream of tokens (produced by lexical analysis) into an
-//! abstract syntax tree (AST).
+//! Compiler pass that parses a stream of tokens (from lexical analysis) into
+//! an abstract syntax tree (_AST_).
 
 use std::process;
 
@@ -10,7 +10,7 @@ use crate::{Context, fmt_err, fmt_err_ctx, report_err};
 
 type Ident = String;
 
-/// Abstract Syntax Tree (_AST_) node types.
+/// Abstract Syntax Tree (_AST_).
 #[derive(Debug)]
 pub enum AST {
     /// Function that represent the structure of the program.
@@ -26,7 +26,7 @@ pub struct Function {
     pub body: Statement,
 }
 
-/// Represents the _type_ of a lexical token.
+/// Different types defined by the _C_ language standard (_C17_).
 #[derive(Debug)]
 pub enum Type {
     /// Integer type.
@@ -35,14 +35,14 @@ pub enum Type {
     Void,
 }
 
-/// Represents different variants of _statements_.
+/// Represents different _statements_.
 #[derive(Debug)]
+#[allow(missing_docs)]
 pub enum Statement {
-    /// Return statement that yields control back to the caller.
     Return(Expression),
 }
 
-/// Represents different variants of _expressions_.
+/// Represents different _expressions_.
 #[derive(Debug)]
 pub enum Expression {
     /// Constant _int_ value (32-bit).
@@ -55,7 +55,7 @@ pub enum Expression {
     },
 }
 
-/// Represents different variants of _unary operators_.
+/// Represents different _unary operators_.
 #[derive(Debug, Copy, Clone)]
 pub enum UnaryOperator {
     /// `~` unary operator.
@@ -175,8 +175,8 @@ fn parse_expression(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expressi
         match token.ty {
             TokenType::ConstantInt(v) => Ok(Expression::ConstantInt(v)),
             TokenType::Operator(OperatorKind::Complement) => {
-                // Recursively parse the expression which the operator is being
-                // applied to.
+                // Recursively parse the expression on which the operator is
+                // being applied to.
                 let expr = parse_expression(ctx, lexer)?;
                 Ok(Expression::Unary {
                     op: UnaryOperator::Complement,
@@ -184,8 +184,8 @@ fn parse_expression(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expressi
                 })
             }
             TokenType::Operator(OperatorKind::Negate) => {
-                // Recursively parse the expression which the operator is being
-                // applied to.
+                // Recursively parse the expression on which the operator is
+                // being applied to.
                 let expr = parse_expression(ctx, lexer)?;
                 Ok(Expression::Unary {
                     op: UnaryOperator::Negate,
@@ -193,7 +193,7 @@ fn parse_expression(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expressi
                 })
             }
             TokenType::ParenOpen => {
-                // Recursively parse the expression within the parenthesis.
+                // Recursively parse the expression within parenthesis.
                 let expr = parse_expression(ctx, lexer)?;
                 expect_token(ctx, lexer, TokenType::ParenClose)?;
                 Ok(expr)
