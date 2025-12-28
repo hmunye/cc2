@@ -42,7 +42,7 @@ macro_rules! fmt_err_ctx {
 /// printing to `stderr`.
 #[macro_export]
 macro_rules! report_token_err {
-    ($file:expr, $line:expr, $col:expr, $token:expr, $line_content:expr, $($arg:tt)+) => {{
+    ($file:expr, $line:expr, $col:expr, $token:expr, $marker_len:expr, $line_content:expr, $($arg:tt)+) => {{
         eprintln!(
             "\x1b[1;1m{}:{line}:{col}:\x1b[0m \x1b[1;31merror:\x1b[0m {}\n{:>5} | {:<10}\n{:>5} | \x1b[1;31m{:>col$}{}\x1b[0m",
             $file,
@@ -51,7 +51,7 @@ macro_rules! report_token_err {
             $line_content,
             "",
             "^",
-            "~".repeat($token.len()),
+            "~".repeat($marker_len),
             line = $line,
             col = $col
         );

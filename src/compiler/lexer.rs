@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::{fmt, process};
 
-use crate::{Context, report_err_ctx, report_token_err};
+use crate::{Context, report_token_err};
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
 const KEYWORDS: [&str; 3] = ["int", "void", "return"];
@@ -63,18 +63,17 @@ impl fmt::Display for TokenType {
     }
 }
 
-/// TODO: Add line content so that the parser can report token errors.
-///
 /// Location of a processed `Token`.
 #[derive(Debug)]
 #[allow(missing_docs)]
-pub struct Location {
+pub struct Location<'a> {
+    pub line_content: &'a str,
     pub file_path: &'static Path,
     pub line: usize,
     pub col: usize,
 }
 
-impl fmt::Display for Location {
+impl fmt::Display for Location<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}:{}", self.file_path.display(), self.line, self.col)
     }
@@ -83,12 +82,12 @@ impl fmt::Display for Location {
 /// Minimal lexical element.
 #[derive(Debug)]
 #[allow(missing_docs)]
-pub struct Token {
+pub struct Token<'a> {
     pub ty: TokenType,
-    pub loc: Location,
+    pub loc: Location<'a>,
 }
 
-impl fmt::Display for Token {
+impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}\t    {}", self.loc, self.ty)
     }
@@ -97,7 +96,7 @@ impl fmt::Display for Token {
 /// Stores the ordered sequence of tokens extracted from a _C_ translation unit.
 #[derive(Debug, Default)]
 pub struct Lexer<'a> {
-    tokens: std::collections::VecDeque<Token>,
+    tokens: std::collections::VecDeque<Token<'a>>,
     src: &'a [u8],
     cur: usize,
     // Index of the beginning of a newline (used to calculate the current
@@ -125,16 +124,39 @@ impl<'a> Lexer<'a> {
     ///
     /// [Exits]: std::process::exit
     pub fn lex(&mut self, ctx: &Context<'_>) {
-        // TODO: Track each current line, so it's contents can stored with each
-        // token.
+        let mut first_line_captured = false;
+        let mut line_content = "";
+
         while self.has_next() {
             let col = self.cur - self.bol;
+
+            // Capture the first line's contents (before encountering any '\n').
+            if !first_line_captured {
+                let mut i = 0;
+                while i < self.src.len() && self.src[i] != b'\n' {
+                    i += 1;
+                }
+
+                line_content = std::str::from_utf8(&self.src[self.bol..i])
+                    .expect("ASCII bytes should be valid UTF-8");
+
+                first_line_captured = true;
+            }
 
             match self.first() {
                 b'\n' => {
                     self.bol = self.cur;
                     self.cur += 1;
                     self.line += 1;
+
+                    // Capture the new line's contents.
+                    let mut i = self.cur;
+                    while i < self.src.len() && self.src[i] != b'\n' {
+                        i += 1;
+                    }
+
+                    line_content = std::str::from_utf8(&self.src[self.bol + 1..i])
+                        .expect("ASCII bytes should be valid UTF-8");
                 }
                 b if b.is_ascii_whitespace() => {
                     self.cur += 1;
@@ -162,14 +184,6 @@ impl<'a> Lexer<'a> {
                         let suffix = std::str::from_utf8(&self.src[token_start + 1..self.cur])
                             .expect("ASCII bytes should be valid UTF-8");
 
-                        // Continue to consume the rest of the line.
-                        while self.has_next() && self.first() != b'\n' {
-                            self.cur += 1;
-                        }
-
-                        let line_contents = std::str::from_utf8(&self.src[self.bol + 1..self.cur])
-                            .expect("ASCII bytes should be valid UTF-8");
-
                         if cfg!(test) {
                             panic!("invalid suffix '{suffix}' on integer constant");
                         }
@@ -179,7 +193,8 @@ impl<'a> Lexer<'a> {
                             self.line,
                             col,
                             suffix,
-                            line_contents,
+                            suffix.len(),
+                            line_content,
                             "invalid suffix '{suffix}' on integer constant",
                         );
                         process::exit(1);
@@ -190,14 +205,17 @@ impl<'a> Lexer<'a> {
 
                     let Ok(integer) = token.parse::<i32>() else {
                         if cfg!(test) {
-                            panic!("invalid integer constant: '{token}'");
+                            panic!("integer constant is too large for its type");
                         }
 
-                        report_err_ctx!(
+                        report_token_err!(
                             ctx.in_path.display(),
                             self.line,
                             col,
-                            "invalid integer constant: '{token}'"
+                            token,
+                            token.len() - 1,
+                            line_content,
+                            "integer constant is too large for its type",
                         );
                         process::exit(1);
                     };
@@ -205,6 +223,7 @@ impl<'a> Lexer<'a> {
                     self.tokens.push_back(Token {
                         ty: TokenType::ConstantInt(integer),
                         loc: Location {
+                            line_content,
                             file_path: ctx.in_path,
                             line: self.line,
                             col,
@@ -228,6 +247,7 @@ impl<'a> Lexer<'a> {
                         self.tokens.push_back(Token {
                             ty: TokenType::Keyword(token.into()),
                             loc: Location {
+                                line_content,
                                 file_path: ctx.in_path,
                                 line: self.line,
                                 col,
@@ -237,6 +257,7 @@ impl<'a> Lexer<'a> {
                         self.tokens.push_back(Token {
                             ty: TokenType::Ident(token.into()),
                             loc: Location {
+                                line_content,
                                 file_path: ctx.in_path,
                                 line: self.line,
                                 col,
@@ -248,6 +269,7 @@ impl<'a> Lexer<'a> {
                     self.tokens.push_back(Token {
                         ty: TokenType::Operator(OperatorKind::Complement),
                         loc: Location {
+                            line_content,
                             file_path: ctx.in_path,
                             line: self.line,
                             col,
@@ -263,6 +285,7 @@ impl<'a> Lexer<'a> {
                         self.tokens.push_back(Token {
                             ty: TokenType::Operator(OperatorKind::Decrement),
                             loc: Location {
+                                line_content,
                                 file_path: ctx.in_path,
                                 line: self.line,
                                 col,
@@ -274,6 +297,7 @@ impl<'a> Lexer<'a> {
                         self.tokens.push_back(Token {
                             ty: TokenType::Operator(OperatorKind::Negate),
                             loc: Location {
+                                line_content,
                                 file_path: ctx.in_path,
                                 line: self.line,
                                 col,
@@ -285,6 +309,7 @@ impl<'a> Lexer<'a> {
                     self.tokens.push_back(Token {
                         ty: TokenType::ParenOpen,
                         loc: Location {
+                            line_content,
                             file_path: ctx.in_path,
                             line: self.line,
                             col,
@@ -297,6 +322,7 @@ impl<'a> Lexer<'a> {
                     self.tokens.push_back(Token {
                         ty: TokenType::ParenClose,
                         loc: Location {
+                            line_content,
                             file_path: ctx.in_path,
                             line: self.line,
                             col,
@@ -309,6 +335,7 @@ impl<'a> Lexer<'a> {
                     self.tokens.push_back(Token {
                         ty: TokenType::BraceOpen,
                         loc: Location {
+                            line_content,
                             file_path: ctx.in_path,
                             line: self.line,
                             col,
@@ -321,6 +348,7 @@ impl<'a> Lexer<'a> {
                     self.tokens.push_back(Token {
                         ty: TokenType::BraceClose,
                         loc: Location {
+                            line_content,
                             file_path: ctx.in_path,
                             line: self.line,
                             col,
@@ -333,6 +361,7 @@ impl<'a> Lexer<'a> {
                     self.tokens.push_back(Token {
                         ty: TokenType::Semicolon,
                         loc: Location {
+                            line_content,
                             file_path: ctx.in_path,
                             line: self.line,
                             col,
@@ -342,16 +371,20 @@ impl<'a> Lexer<'a> {
                     self.cur += 1;
                 }
                 b => {
+                    let token = format!("{}", b as char);
+
                     if cfg!(test) {
-                        panic!("invalid character: '{}'", b as char);
+                        panic!("stray '{token}' in program");
                     }
 
-                    report_err_ctx!(
+                    report_token_err!(
                         ctx.in_path.display(),
                         self.line,
                         col,
-                        "invalid character: '{}'",
-                        b as char
+                        token,
+                        0,
+                        line_content,
+                        "stray '{token}' in program"
                     );
                     process::exit(1);
                 }
@@ -360,12 +393,12 @@ impl<'a> Lexer<'a> {
     }
 
     /// Returns a reference to the next token in sequence without consuming it.
-    pub fn peek(&self) -> Option<&Token> {
+    pub fn peek(&self) -> Option<&Token<'_>> {
         self.tokens.front()
     }
 
     /// Returns the next token in sequence.
-    pub fn next_token(&mut self) -> Option<Token> {
+    pub fn next_token(&mut self) -> Option<Token<'_>> {
         self.tokens.pop_front()
     }
 
@@ -466,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid character")]
+    #[should_panic(expected = "stray")]
     fn lexer_invalid_unexpected_symbol() {
         // The '@' symbol doesn't appear in any token, except inside string or
         // character literals.
@@ -476,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid character")]
+    #[should_panic(expected = "stray")]
     fn lexer_invalid_backslash() {
         // Single backslash ('\') is not a valid token.
         let source = b"\\";
@@ -485,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid character")]
+    #[should_panic(expected = "stray")]
     fn lexer_invalid_backtick() {
         // Backtick ('`') is not a valid token.
         let source = b"`";
@@ -504,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid character")]
+    #[should_panic(expected = "stray")]
     fn lexer_invalid_identifier_symbol() {
         // Identifiers are not allowed to start with digits, must begin with
         // a non-digit including ('_').

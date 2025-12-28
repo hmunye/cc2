@@ -193,8 +193,8 @@ impl fmt::Display for Instruction {
                 let src_str = format!("{src}");
                 let len = src_str.len();
 
-                let max_width = 15;
-                let width = if len >= max_width { 0 } else { max_width - len };
+                let max_width: usize = 13;
+                let width = max_width.saturating_sub(len);
 
                 write!(
                     f,
