@@ -20,7 +20,7 @@ impl fmt::Display for IR {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             IR::Program(func) => {
-                write!(f, "Program\n{:4}{func}", "")
+                write!(f, "IR Program\n{:4}{func}", "")
             }
         }
     }
@@ -36,7 +36,7 @@ pub struct Function {
 
 impl fmt::Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Label {:?}:", self.ident)?;
+        writeln!(f, "Ident({:?})", self.ident)?;
 
         for inst in &self.instructions {
             writeln!(f, "{:8}{inst}", "")?;
@@ -65,18 +65,19 @@ pub enum Instruction {
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Instruction::Return(v) => {
-                write!(f, "{:<15}{}", "Return", v)
-            }
+            Instruction::Return(v) => write!(f, "{:<15}{}", "Return", v),
             Instruction::Unary { op, src, dst } => {
-                let width = if let Value::Var(_) = src { 4 } else { 15 };
+                let src_str = format!("{src}");
+                let len = src_str.len();
+
+                let max_width = 15;
+                let width = if len >= max_width { 0 } else { max_width - len };
+
                 write!(
                     f,
-                    "{:<15}{}{:>width$}  {}",
-                    format!("{:?}", op),
-                    src,
+                    "{:<15}{src_str} {:>width$}  {dst}",
+                    format!("{op:?}"),
                     "->",
-                    dst,
                     width = width
                 )
             }

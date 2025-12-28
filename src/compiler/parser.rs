@@ -21,7 +21,7 @@ impl fmt::Display for AST {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AST::Program(func) => {
-                writeln!(f, "Program\n{:4}{func}", "")
+                writeln!(f, "AST Program\n{:4}{func}", "")
             }
         }
     }

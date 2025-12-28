@@ -143,12 +143,34 @@ impl MIR {
     }
 }
 
+impl fmt::Display for MIR {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MIR::Program(func) => {
+                write!(f, "MIR Program\n{:4}{func}", "")
+            }
+        }
+    }
+}
+
 /// _MIR_ function definition.
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Function {
     pub label: Ident,
     pub instructions: Vec<Instruction>,
+}
+
+impl fmt::Display for Function {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Label {:?}:", self.label)?;
+
+        for inst in &self.instructions {
+            writeln!(f, "{:8}{inst}", "")?;
+        }
+
+        Ok(())
+    }
 }
 
 /// _MIR_ instructions.
@@ -164,6 +186,31 @@ pub enum Instruction {
     Ret,
 }
 
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Instruction::Mov(src, dst) => {
+                let src_str = format!("{src}");
+                let len = src_str.len();
+
+                let max_width = 15;
+                let width = if len >= max_width { 0 } else { max_width - len };
+
+                write!(
+                    f,
+                    "{:<15}{src_str} {:>width$}  {dst}",
+                    "Mov",
+                    "->",
+                    width = width
+                )
+            }
+            Instruction::Unary(op, operand) => write!(f, "{:<15}{operand}", format!("{op:?}")),
+            Instruction::StackAlloc(v) => write!(f, "{:<15}{v}", "StackAlloc"),
+            Instruction::Ret => write!(f, "Ret"),
+        }
+    }
+}
+
 /// _MIR_ operands.
 #[derive(Debug, Clone)]
 pub enum Operand {
@@ -175,6 +222,17 @@ pub enum Operand {
     Pseudo(Ident),
     /// Stack address with the specified offset from the `RBP` register.
     Stack(i32),
+}
+
+impl fmt::Display for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operand::Imm32(v) => write!(f, "{v}"),
+            Operand::Register(r) => fmt::Display::fmt(r, f),
+            Operand::Pseudo(i) => write!(f, "{i:?}"),
+            Operand::Stack(v) => write!(f, "stack({v})"),
+        }
+    }
 }
 
 /// _MIR x86-64_ registers (size agnostic).

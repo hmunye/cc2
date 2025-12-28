@@ -71,7 +71,7 @@ fn main() {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
             let mir = compiler::mir::generate_mir(&ir);
-            println!("MIR: {mir:#?}");
+            print!("{mir}");
         }
         stage => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
