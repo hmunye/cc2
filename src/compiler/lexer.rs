@@ -25,9 +25,9 @@ pub enum OperatorKind {
 impl fmt::Display for OperatorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OperatorKind::Complement => write!(f, "unary('~')"),
-            OperatorKind::Negate => write!(f, "unary('-')"),
-            OperatorKind::Decrement => write!(f, "unary('--')"),
+            OperatorKind::Complement => write!(f, "op('~')"),
+            OperatorKind::Negate => write!(f, "op('-')"),
+            OperatorKind::Decrement => write!(f, "op('--')"),
         }
     }
 }
@@ -50,8 +50,8 @@ pub enum TokenType {
 impl fmt::Display for TokenType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenType::Keyword(s) => write!(f, "keyword(\"{}\")", s),
-            TokenType::Ident(i) => write!(f, "ident(\"{}\")", i),
+            TokenType::Keyword(s) => write!(f, "keyword({:?})", s),
+            TokenType::Ident(i) => write!(f, "ident({:?})", i),
             TokenType::ConstantInt(v) => write!(f, "int(\"{}\")", v),
             TokenType::Operator(op) => fmt::Display::fmt(op, f),
             TokenType::ParenOpen => write!(f, "'('"),

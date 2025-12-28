@@ -3,7 +3,7 @@
 //! Compiler pass that parses a stream of tokens (from lexical analysis) into
 //! an abstract syntax tree (_AST_).
 
-use std::process;
+use std::{fmt, process};
 
 use crate::compiler::lexer::{Lexer, OperatorKind, TokenType};
 use crate::{Context, fmt_err, fmt_err_ctx, report_err};
@@ -17,6 +17,16 @@ pub enum AST {
     Program(Function),
 }
 
+impl fmt::Display for AST {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AST::Program(func) => {
+                writeln!(f, "Program\n{:4}{}", "", func)
+            }
+        }
+    }
+}
+
 /// Represents a _function_ definition.
 #[derive(Debug)]
 #[allow(missing_docs)]
@@ -24,6 +34,13 @@ pub struct Function {
     pub ty: Type,
     pub ident: Ident,
     pub body: Statement,
+}
+
+impl fmt::Display for Function {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Function({:?}, {:?})", self.ty, self.ident)?;
+        write!(f, "{:8}{}", "", self.body)
+    }
 }
 
 /// Different types defined by the _C_ language standard (_C17_).
@@ -42,6 +59,14 @@ pub enum Statement {
     Return(Expression),
 }
 
+impl fmt::Display for Statement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Statement::Return(expr) => write!(f, "Return({})", expr),
+        }
+    }
+}
+
 /// Represents different _expressions_.
 #[derive(Debug)]
 pub enum Expression {
@@ -53,6 +78,15 @@ pub enum Expression {
         op: UnaryOperator,
         expr: Box<Expression>,
     },
+}
+
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expression::ConstantInt(val) => write!(f, "Int({})", val),
+            Expression::Unary { op, expr } => write!(f, "Unary({:?}, {})", op, expr),
+        }
+    }
 }
 
 /// Represents different _unary operators_.
@@ -264,7 +298,7 @@ mod tests {
     #[test]
     fn parser_valid_bitwise_complement() {
         let source = b"int main(void) {\n    return ~12;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -282,7 +316,7 @@ mod tests {
         // Take the bitwise complement of the largest negative integer
         // that can be safely negated in a 32-bit signed integer (-2147483647).
         let source = b"int main(void) {\n    return ~-2147483647;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -298,7 +332,7 @@ mod tests {
     #[test]
     fn parser_valid_bitwise_complement_zero() {
         let source = b"int main(void) {\n    return ~0;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -314,7 +348,7 @@ mod tests {
     #[test]
     fn parser_valid_negation() {
         let source = b"int main(void) {\n    return -5;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -330,7 +364,7 @@ mod tests {
     #[test]
     fn parser_valid_negation_zero() {
         let source = b"int main(void) {\n    return -0;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -346,7 +380,7 @@ mod tests {
     #[test]
     fn parser_valid_negation_i32_max() {
         let source = b"int main(void) {\n    return -2147483647;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -362,7 +396,7 @@ mod tests {
     #[test]
     fn parser_valid_nested_unary_ops() {
         let source = b"int main(void) {\n    return ~-3;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -378,7 +412,7 @@ mod tests {
     #[test]
     fn parser_valid_parenthesize_constant() {
         let source = b"int main(void) {\n    return (2);\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -394,7 +428,7 @@ mod tests {
     #[test]
     fn parser_valid_redundant_parens() {
         let source = b"int main(void) {\n    return -((((10))));\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -411,7 +445,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_no_expr() {
         let source = b"int main(void) {\n    return";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -430,7 +464,7 @@ mod tests {
         // Single identifier outside of a declaration is not a valid top-level
         // construct.
         let source = b"int main(void) {\n    return 2;\n}\nfoo";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -448,7 +482,7 @@ mod tests {
     fn parser_invalid_function_ident() {
         // Functions must have an identifier as a name.
         let source = b"int 3 (void) {\n    return 0;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -465,7 +499,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_case_sensitive_keyword() {
         let source = b"int main(void) {\n    RETURN 0;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -484,7 +518,7 @@ mod tests {
         // Because of backwards compatibility, `GCC` and `Clang` will compile
         // this program with a warning.
         let source = b"main(void) {\n    return 0;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -501,7 +535,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_keyword() {
         let source = b"int main(void) {\n    returns 0;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -518,7 +552,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_missing_semicolon() {
         let source = b"int main(void) {\n    return 0\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -535,7 +569,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_expression() {
         let source = b"int main(void) {\n    return int;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -552,7 +586,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_keyword_space() {
         let source = b"int main(void) {\n    retur n 0;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -569,7 +603,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_parens_fn() {
         let source = b"int main)void( {\n    return 0;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -586,7 +620,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_unclosed_brace_fn() {
         let source = b"int main(void) {\n    return 0;";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -603,7 +637,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_unclosed_paren_fn() {
         let source = b"int main(void {\n    return 0;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -620,7 +654,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_extra_paren() {
         let source = b"int main(void)\n{\n    return (3));\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -637,7 +671,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_missing_constant() {
         let source = b"int main(void) {\n    return ~;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -654,7 +688,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_nested_missing_constant() {
         let source = b"int main(void)\n{\n    return -~;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -671,7 +705,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_parenthesize_operand() {
         let source = b"int main(void) {\n   return (-)3;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -688,7 +722,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_unclose_paren_expr() {
         let source = b"int main(void) {\n   return (1;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 
@@ -705,7 +739,7 @@ mod tests {
     #[should_panic]
     fn parser_invalid_negation_postfix() {
         let source = b"int main(void) {\n   return 4-;\n}";
-        let mut lexer = crate::compiler::Lexer::new(source);
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();
 

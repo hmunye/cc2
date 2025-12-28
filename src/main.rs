@@ -60,12 +60,12 @@ fn main() {
         }
         "parse" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
-            println!("AST: {ast:?}");
+            print!("{ast}");
         }
         "ir" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
-            println!("IR: {ir:?}");
+            println!("IR: {ir:#?}");
         }
         "asm" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
