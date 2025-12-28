@@ -6,7 +6,7 @@
 use std::{fmt, process};
 
 use crate::compiler::lexer::{Lexer, OperatorKind, TokenType};
-use crate::{Context, fmt_err, fmt_err_ctx, report_err};
+use crate::{Context, fmt_err, fmt_token_err, report_err};
 
 type Ident = String;
 
@@ -114,10 +114,14 @@ pub fn parse_program(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> AST {
 
     if !lexer.is_empty() {
         if cfg!(test) {
-            panic!("tokens remaining after parsing");
+            panic!("tokens remaining after parsing: {}", lexer.len());
         }
 
-        report_err!(ctx.in_path.display(), "tokens remaining after parsing");
+        report_err!(
+            ctx.in_path.display(),
+            "tokens remaining after parsing: {}",
+            lexer.len()
+        );
         process::exit(1);
     }
 
@@ -126,9 +130,7 @@ pub fn parse_program(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> AST {
 
 /// Parses an _AST_ function definition from the provided `Lexer`.
 fn parse_function(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Function, String> {
-    // NOTE: Currently only allow `int` return values.
-    expect_token(ctx, lexer, TokenType::Keyword("int".into()))?;
-
+    let ty = parse_type(ctx, lexer)?;
     let ident = parse_ident(ctx, lexer)?;
 
     expect_token(ctx, lexer, TokenType::ParenOpen)?;
@@ -143,11 +145,7 @@ fn parse_function(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Function, 
 
     expect_token(ctx, lexer, TokenType::BraceClose)?;
 
-    Ok(Function {
-        ty: Type::Int,
-        ident,
-        body,
-    })
+    Ok(Function { ty, ident, body })
 }
 
 /// Parse an _AST_ statement from the provided `Lexer`.
@@ -160,24 +158,27 @@ fn parse_statement(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Statement
 }
 
 /// Parse an _AST_ function/object type from the provided `Lexer`.
-#[allow(dead_code)]
 fn parse_type(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Type, String> {
     if let Some(token) = lexer.next_token() {
-        match token.ty {
-            TokenType::Keyword(ref s) if s == "int" => Ok(Type::Int),
-            TokenType::Keyword(ref s) if s == "void" => Ok(Type::Void),
-            _ => Err(fmt_err_ctx!(
+        let tok_str = format!("{token:?}");
+
+        match tok_str.as_str() {
+            "int" => Ok(Type::Int),
+            "void" => Ok(Type::Void),
+            t => Err(fmt_token_err!(
                 token.loc.file_path.display(),
                 token.loc.line,
                 token.loc.col,
-                "expected '<type>', but found '{:?}'",
-                token.ty
+                t,
+                t.len() - 1,
+                token.loc.line_content,
+                "unknown type name '{t}'",
             )),
         }
     } else {
         Err(fmt_err!(
             ctx.in_path.display(),
-            "unexpected end of input, expected '<type>'"
+            "expected '<type>' at end of input",
         ))
     }
 }
@@ -187,18 +188,24 @@ fn parse_ident(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Ident, String
     if let Some(token) = lexer.next_token() {
         match token.ty {
             TokenType::Ident(ref s) => Ok(s.clone()),
-            _ => Err(fmt_err_ctx!(
-                token.loc.file_path.display(),
-                token.loc.line,
-                token.loc.col,
-                "expected '<ident>', but found '{:?}'",
-                token.ty
-            )),
+            t => {
+                let tok_str = format!("{t:?}");
+
+                Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    token.loc.line_content,
+                    "expected identifier",
+                ))
+            }
         }
     } else {
         Err(fmt_err!(
             ctx.in_path.display(),
-            "unexpected end of input, expected '<ident>'"
+            "expected '<ident>' at end of input",
         ))
     }
 }
@@ -232,18 +239,24 @@ fn parse_expression(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expressi
                 expect_token(ctx, lexer, TokenType::ParenClose)?;
                 Ok(expr)
             }
-            _ => Err(fmt_err_ctx!(
-                token.loc.file_path.display(),
-                token.loc.line,
-                token.loc.col,
-                "expected '<expr>', but found '{:?}'",
-                token.ty
-            )),
+            t => {
+                let tok_str = format!("{t:?}");
+
+                Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    token.loc.line_content,
+                    "'{tok_str}' undeclared",
+                ))
+            }
         }
     } else {
         Err(fmt_err!(
             ctx.in_path.display(),
-            "unexpected end of input, expected '<expr>'"
+            "expected '<expr>' at end of input",
         ))
     }
 }
@@ -260,19 +273,22 @@ fn expect_token(
             let _ = lexer.next_token();
             Ok(())
         } else {
-            Err(fmt_err_ctx!(
+            let tok_str = format!("{token:?}");
+
+            Err(fmt_token_err!(
                 token.loc.file_path.display(),
                 token.loc.line,
                 token.loc.col,
-                "expected '{:?}', but found '{:?}'",
-                expected,
-                token.ty
+                tok_str,
+                tok_str.len(),
+                token.loc.line_content,
+                "expected '{expected}', but found '{tok_str}'",
             ))
         }
     } else {
         Err(fmt_err!(
             ctx.in_path.display(),
-            "unexpected end of input, expected '{:?}'",
+            "expected '{}' at end of input",
             expected
         ))
     }

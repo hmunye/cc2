@@ -12,7 +12,7 @@ use crate::{Context, report_token_err};
 const KEYWORDS: [&str; 3] = ["int", "void", "return"];
 
 /// Types of operators.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum OperatorKind {
     /// `~` unary operator.
     Complement,
@@ -20,6 +20,16 @@ pub enum OperatorKind {
     Negate,
     /// `--` unary operator.
     Decrement,
+}
+
+impl fmt::Debug for OperatorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OperatorKind::Complement => write!(f, "~"),
+            OperatorKind::Negate => write!(f, "-"),
+            OperatorKind::Decrement => write!(f, "--"),
+        }
+    }
 }
 
 impl fmt::Display for OperatorKind {
@@ -33,7 +43,7 @@ impl fmt::Display for OperatorKind {
 }
 
 /// Types of lexical elements.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq, Clone)]
 #[allow(missing_docs)]
 pub enum TokenType {
     Keyword(String),
@@ -45,6 +55,22 @@ pub enum TokenType {
     BraceOpen,
     BraceClose,
     Semicolon,
+}
+
+impl fmt::Debug for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenType::Keyword(s) => write!(f, "{s}"),
+            TokenType::Ident(i) => write!(f, "{i}"),
+            TokenType::ConstantInt(v) => write!(f, "{v}"),
+            TokenType::Operator(op) => fmt::Debug::fmt(op, f),
+            TokenType::ParenOpen => write!(f, "("),
+            TokenType::ParenClose => write!(f, ")"),
+            TokenType::BraceOpen => write!(f, "{{"),
+            TokenType::BraceClose => write!(f, "}}"),
+            TokenType::Semicolon => write!(f, ";"),
+        }
+    }
 }
 
 impl fmt::Display for TokenType {
@@ -80,11 +106,16 @@ impl fmt::Display for Location<'_> {
 }
 
 /// Minimal lexical element.
-#[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Token<'a> {
     pub ty: TokenType,
     pub loc: Location<'a>,
+}
+
+impl fmt::Debug for Token<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.ty)
+    }
 }
 
 impl fmt::Display for Token<'_> {
@@ -400,6 +431,11 @@ impl<'a> Lexer<'a> {
     /// Returns the next token in sequence.
     pub fn next_token(&mut self) -> Option<Token<'_>> {
         self.tokens.pop_front()
+    }
+
+    /// Returns the number of tokens left to consume.
+    pub fn len(&self) -> usize {
+        self.tokens.len()
     }
 
     /// Returns `true` if there are no more tokens available to consume.
