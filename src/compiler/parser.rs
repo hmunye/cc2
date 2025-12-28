@@ -21,7 +21,7 @@ impl fmt::Display for AST {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AST::Program(func) => {
-                writeln!(f, "Program\n{:4}{}", "", func)
+                writeln!(f, "Program\n{:4}{func}", "")
             }
         }
     }
@@ -62,7 +62,7 @@ pub enum Statement {
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Statement::Return(expr) => write!(f, "Return({})", expr),
+            Statement::Return(expr) => write!(f, "Return({expr})"),
         }
     }
 }
@@ -83,8 +83,8 @@ pub enum Expression {
 impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expression::ConstantInt(val) => write!(f, "Int({})", val),
-            Expression::Unary { op, expr } => write!(f, "Unary({:?}, {})", op, expr),
+            Expression::ConstantInt(v) => write!(f, "Int({v})"),
+            Expression::Unary { op, expr } => write!(f, "Unary({op:?}, {expr})"),
         }
     }
 }

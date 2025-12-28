@@ -3,6 +3,8 @@
 //! Compiler pass that lowers an abstract syntax tree (_AST_) into intermediate
 //! representation (_IR_) using three-address code (_TAC_).
 
+use std::fmt;
+
 use crate::compiler::parser::{self, UnaryOperator};
 
 type Ident = String;
@@ -14,12 +16,34 @@ pub enum IR {
     Program(Function),
 }
 
+impl fmt::Display for IR {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IR::Program(func) => {
+                write!(f, "Program\n{:4}{func}", "")
+            }
+        }
+    }
+}
+
 /// _IR_ function definition.
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Function {
     pub ident: Ident,
     pub instructions: Vec<Instruction>,
+}
+
+impl fmt::Display for Function {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Label {:?}:", self.ident)?;
+
+        for inst in &self.instructions {
+            writeln!(f, "{:8}{inst}", "")?;
+        }
+
+        Ok(())
+    }
 }
 
 /// _IR_ instructions.
@@ -38,6 +62,28 @@ pub enum Instruction {
     },
 }
 
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Instruction::Return(v) => {
+                write!(f, "{:<15}{}", "Return", v)
+            }
+            Instruction::Unary { op, src, dst } => {
+                let width = if let Value::Var(_) = src { 4 } else { 15 };
+                write!(
+                    f,
+                    "{:<15}{}{:>width$}  {}",
+                    format!("{:?}", op),
+                    src,
+                    "->",
+                    dst,
+                    width = width
+                )
+            }
+        }
+    }
+}
+
 /// _IR_ values.
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -45,6 +91,15 @@ pub enum Value {
     ConstantInt(i32),
     /// Temporary variable.
     Var(Ident),
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::ConstantInt(v) => write!(f, "{v}"),
+            Value::Var(i) => write!(f, "{i:?}"),
+        }
+    }
 }
 
 /// Helper for lowering nested _AST_ expressions into three-address code (_TAC_)

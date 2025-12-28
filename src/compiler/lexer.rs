@@ -50,9 +50,9 @@ pub enum TokenType {
 impl fmt::Display for TokenType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenType::Keyword(s) => write!(f, "keyword({:?})", s),
-            TokenType::Ident(i) => write!(f, "ident({:?})", i),
-            TokenType::ConstantInt(v) => write!(f, "int(\"{}\")", v),
+            TokenType::Keyword(s) => write!(f, "keyword({s:?})"),
+            TokenType::Ident(i) => write!(f, "ident({i:?})"),
+            TokenType::ConstantInt(v) => write!(f, "int(\"{v}\")"),
             TokenType::Operator(op) => fmt::Display::fmt(op, f),
             TokenType::ParenOpen => write!(f, "'('"),
             TokenType::ParenClose => write!(f, "')'"),
