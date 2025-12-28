@@ -7,7 +7,7 @@ use std::fs;
 use std::process;
 use std::{fmt::Write, io::Write as IoWrite};
 
-use crate::compiler::asm::{self, ASM};
+use crate::compiler::mir::{self, MIR};
 use crate::compiler::parser::UnaryOperator;
 use crate::{Context, report_err};
 
@@ -16,14 +16,14 @@ use crate::{Context, report_err};
 /// error with non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn emit_assembly(ctx: &Context<'_>, asm: &ASM) {
+pub fn emit_assembly(ctx: &Context<'_>, asm: &MIR) {
     let Ok(mut f) = fs::File::create(ctx.out_path) else {
         report_err!(ctx.program, "failed to create output file");
         process::exit(1);
     };
 
     match asm {
-        ASM::Program(func) => {
+        MIR::Program(func) => {
             // Write the function prologue in GNU `as` (assembler) format.
             writeln!(
                 &mut f,
@@ -62,7 +62,7 @@ pub fn emit_assembly(ctx: &Context<'_>, asm: &ASM) {
 }
 
 /// Return a string representation of the given `ASM` function.
-fn emit_function(ctx: &Context<'_>, func: &asm::Function) -> String {
+fn emit_function(ctx: &Context<'_>, func: &mir::Function) -> String {
     let mut asm = String::new();
 
     // Generate the function prologue:
@@ -97,27 +97,27 @@ fn emit_function(ctx: &Context<'_>, func: &asm::Function) -> String {
 }
 
 /// Return a string representation of the given `ASM` instruction.
-fn emit_instruction(instruction: &asm::Instruction) -> String {
+fn emit_instruction(instruction: &mir::Instruction) -> String {
     match instruction {
-        asm::Instruction::Mov(src, dst) => {
+        mir::Instruction::Mov(src, dst) => {
             format!("movl\t{}, {}", emit_operand(src), emit_operand(dst))
         }
-        asm::Instruction::Ret => "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into(),
-        asm::Instruction::Unary(op, operand) => match op {
+        mir::Instruction::Ret => "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into(),
+        mir::Instruction::Unary(op, operand) => match op {
             UnaryOperator::Complement => format!("notl\t{}", emit_operand(operand)),
             UnaryOperator::Negate => format!("negl\t{}", emit_operand(operand)),
         },
-        asm::Instruction::AllocateStack(v) => format!("subq\t${v}, %rsp"),
+        mir::Instruction::AllocateStack(v) => format!("subq\t${v}, %rsp"),
     }
 }
 
 /// Return a string representation of the given `ASM` operand.
-fn emit_operand(op: &asm::Operand) -> String {
+fn emit_operand(op: &mir::Operand) -> String {
     match op {
-        asm::Operand::Imm(v) => format!("${v}"),
-        asm::Operand::Register(reg) => format!("{reg}"),
-        asm::Operand::Stack(s) => format!("-{s}(%rbp)"),
-        asm::Operand::Pseudo(_) => {
+        mir::Operand::Imm(v) => format!("${v}"),
+        mir::Operand::Register(reg) => format!("{reg}"),
+        mir::Operand::Stack(s) => format!("-{s}(%rbp)"),
+        mir::Operand::Pseudo(_) => {
             panic!("should not be emitting pseudo registers in textual assembly")
         }
     }

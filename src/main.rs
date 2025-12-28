@@ -8,7 +8,7 @@ pub mod args;
 pub mod compiler;
 pub mod error;
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process;
 
@@ -67,17 +67,22 @@ fn main() {
             let ir = compiler::ir::generate_ir(&ast);
             println!("IR: {ir:#?}");
         }
-        "asm" => {
+        "mir" => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
-            let asm = compiler::asm::generate_asm(&ir);
-            println!("ASM MIR: {asm:?}");
+            let mir = compiler::mir::generate_mir(&ir);
+            println!("MIR: {mir:#?}");
         }
-        _ => {
+        stage => {
             let ast = compiler::parser::parse_program(&ctx, &mut lexer);
             let ir = compiler::ir::generate_ir(&ast);
-            let asm = compiler::asm::generate_asm(&ir);
-            compiler::emit::emit_assembly(&ctx, &asm);
+            let mir = compiler::mir::generate_mir(&ir);
+
+            // TODO: Should emit assembly to `stdout` if stage is "asm". Open
+            // the output file here is "asm" is not specified.
+            let _output: Box<dyn Write> = if stage == "asm" { todo!() } else { todo!() };
+
+            compiler::emit::emit_assembly(&ctx, &mir);
         }
     }
 }

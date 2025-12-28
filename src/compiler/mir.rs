@@ -1,7 +1,7 @@
-//! Intermediate Code Generation
+//! Mid-level Intermediate Representation
 //!
 //! Compiler pass that translates three-address code (_TAC_) intermediate
-//! representation (_IR_) into a structured assembly representation (_x86-64_).
+//! representation (_IR_) into mid-level intermediate representation (_x86-64_).
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -12,14 +12,14 @@ use crate::compiler::parser::UnaryOperator;
 
 type Ident = String;
 
-/// Structured _x86-64_ assembly representation.
+/// Mid-level _IR_: structured x86-64 assembly representation.
 #[derive(Debug)]
-pub enum ASM {
+pub enum MIR {
     /// Function that represent the structure of the assembly program.
     Program(Function),
 }
 
-impl ASM {
+impl MIR {
     /// Replaces each _pseudoregister_ encountered with a stack offset,
     /// returning the stack offset of the final temporary variable.
     fn replace_pseudo_registers(&mut self) -> i32 {
@@ -29,7 +29,7 @@ impl ASM {
         let mut stack_offset = 0;
 
         match self {
-            ASM::Program(func) => {
+            MIR::Program(func) => {
                 for inst in &mut func.instructions {
                     match inst {
                         Instruction::Mov(src, dst) => {
@@ -91,7 +91,7 @@ impl ASM {
     /// reserving the specified number of bytes for local storage.
     fn emit_stack_allocation(&mut self, offset: i32) {
         match self {
-            ASM::Program(func) => {
+            MIR::Program(func) => {
                 // _O(n)_ time complexity.
                 func.instructions
                     .insert(0, Instruction::AllocateStack(offset));
@@ -103,7 +103,7 @@ impl ASM {
     /// converting them into valid forms.
     fn rewrite_invalid_mov_instructions(&mut self) {
         match self {
-            ASM::Program(func) => {
+            MIR::Program(func) => {
                 let mut i = 0;
 
                 while i < func.instructions.len() {
@@ -199,13 +199,13 @@ impl fmt::Display for Reg {
 /// representation (_IR_). [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn generate_asm(ir: &IR) -> ASM {
+pub fn generate_mir(ir: &IR) -> MIR {
     match ir {
         IR::Program(func) => {
             let asm_func = generate_asm_function(func);
 
             // Pass 1 - Structured assembly representation initialized.
-            let mut asm = ASM::Program(asm_func);
+            let mut asm = MIR::Program(asm_func);
 
             // Pass 2 - Each pseudoregister replace with stack offsets.
             let stack_offset = asm.replace_pseudo_registers();
