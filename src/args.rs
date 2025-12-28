@@ -11,10 +11,8 @@ use crate::report_err;
 pub struct Args {
     /// Name of the program.
     pub program: String,
-    /// Compilation phase to terminate at (lexical analysis, parsing,
-    /// intermediate representation, code generation).
-    ///
-    /// Empty string invokes the full compilation process.
+    /// Compilation phase to terminate at (empty string invokes the full
+    /// compilation process).
     pub stage: String,
     /// Input file containing C source code (required).
     pub in_file: File,
@@ -48,7 +46,8 @@ impl Args {
                 {
                     match flag.names {
                         ["-s", "--stage"] => match args.peek().map(|s| &**s) {
-                            Some("lex") | Some("parse") | Some("ir") | Some("asm") => {
+                            Some("lex") | Some("parse") | Some("ir") | Some("mir")
+                            | Some("asm") => {
                                 // Already peeked the next argument.
                                 stage = args.next().expect("next argument should be present");
                             }
@@ -125,7 +124,7 @@ struct Flag {
 const FLAG_REGISTRY: &[Flag] = &[
     Flag {
         names: ["-s", "--stage"],
-        description: "          stop after the specified compilation phase: 'lex', 'parse', 'ir', or 'asm'.",
+        description: "          stop after the specified compilation phase: 'lex', 'parse', 'ir', 'mir', or 'asm'.",
         run: None,
     },
     Flag {

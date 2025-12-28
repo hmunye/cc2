@@ -1,4 +1,4 @@
-//! Intermediate Representation.
+//! Intermediate Representation
 //!
 //! Compiler pass that lowers an abstract syntax tree (_AST_) into intermediate
 //! representation (_IR_) using three-address code (_TAC_).
@@ -14,7 +14,7 @@ pub enum IR {
     Program(Function),
 }
 
-/// Represents an IR _function_ definition.
+/// _IR_ function definition.
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Function {
@@ -22,12 +22,12 @@ pub struct Function {
     pub instructions: Vec<Instruction>,
 }
 
-/// Represents different IR _instructions_.
+/// _IR_ instructions.
 #[derive(Debug)]
 pub enum Instruction {
-    /// Returns a _value_ to the caller.
+    /// Returns a value to the caller.
     Return(Value),
-    /// Perform a _unary_ operation on `src`, storing the result in `dst`.
+    /// Perform a unary operation on `src`, storing the result in `dst`.
     ///
     /// NOTE: The `dst` of any unary instruction must be `Value::Var`.
     #[allow(missing_docs)]
@@ -38,12 +38,12 @@ pub enum Instruction {
     },
 }
 
-/// Represents different IR _values_.
+/// _IR_ values.
 #[derive(Debug, Clone)]
 pub enum Value {
-    /// Constant _int_ value (32-bit).
+    /// Constant int value (32-bit).
     ConstantInt(i32),
-    /// Temporary _variable_.
+    /// Temporary variable.
     Var(Ident),
 }
 
@@ -56,18 +56,18 @@ struct TACBuilder<'a> {
 }
 
 impl TACBuilder<'_> {
-    /// Allocates and returns a fresh temp variable identifier.
+    /// Allocates and returns a fresh temporary variable identifier.
     fn new_tmp(&mut self) -> Ident {
         // The `.` in temporary identifiers guarantees they won’t conflict
-        // with user-defined identifiers, since the _C17_ standard forbids `.`
-        // in identifiers.
+        // with user-defined identifiers, since the _C_ standard forbids `.` in
+        // identifiers.
         let ident = format!("{}.tmp.{}", self.label, self.count);
         self.count += 1;
         ident
     }
 }
 
-/// Generate intermediate representation (`IR`), given an abstract syntax tree
+/// Generate intermediate representation (_IR_), given an abstract syntax tree
 /// (_AST_). [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
@@ -80,7 +80,7 @@ pub fn generate_ir(ast: &parser::AST) -> IR {
     }
 }
 
-/// Generate an IR _function definition_ from the provided _AST_ function.
+/// Generate an _IR_ function definition from the provided _AST_ function.
 fn generate_ir_function(func: &parser::Function) -> Function {
     let label = func.ident.clone();
 
@@ -103,7 +103,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
     }
 }
 
-/// Generate an IR _expression_ from the provided _AST_ expression`.
+/// Generate an _IR_ expression from the provided _AST_ expression.
 fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_>) -> Value {
     match expr {
         parser::Expression::ConstantInt(v) => Value::ConstantInt(*v),
@@ -120,7 +120,8 @@ fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_
                 dst: dst.clone(),
             });
 
-            // The returned `dst` is used as the new `src` when unwinding.
+            // The returned `dst` is used as the new `src` in each unwind of
+            // the recursion.
             dst
         }
     }

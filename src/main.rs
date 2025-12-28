@@ -1,4 +1,4 @@
-//! Tiny C Compiler (cc2).
+//! Tiny C Compiler (cc2)
 
 #![deny(missing_docs)]
 #![warn(missing_debug_implementations)]
@@ -8,9 +8,9 @@ pub mod args;
 pub mod compiler;
 pub mod error;
 
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process;
+use std::{fs, process};
 
 /// Context for each compilation phase.
 #[derive(Debug)]
@@ -78,11 +78,20 @@ fn main() {
             let ir = compiler::ir::generate_ir(&ast);
             let mir = compiler::mir::generate_mir(&ir);
 
-            // TODO: Should emit assembly to `stdout` if stage is "asm". Open
-            // the output file here is "asm" is not specified.
-            let _output: Box<dyn Write> = if stage == "asm" { todo!() } else { todo!() };
+            let output: Box<dyn Write> = if stage == "asm" {
+                Box::new(io::stdout().lock())
+            } else {
+                Box::new(fs::File::create(ctx.out_path).unwrap_or_else(|err| {
+                    report_err!(
+                        &ctx.program,
+                        "failed to create output file '{}': {err}",
+                        ctx.in_path.display()
+                    );
+                    process::exit(1);
+                }))
+            };
 
-            compiler::emit::emit_assembly(&ctx, &mir);
+            compiler::emit::emit_asm(&ctx, &mir, output);
         }
     }
 }

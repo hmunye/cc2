@@ -8,10 +8,10 @@ use std::{fmt, process};
 
 use crate::{Context, report_err_ctx, report_token_err};
 
-/// Reserved tokens by the _C_ language standard (_C17_).
+/// Reserved tokens defined by the _C_ language standard (_C17_).
 const KEYWORDS: [&str; 3] = ["int", "void", "return"];
 
-/// Different operators defined in the _C_ language standard (_C17_).
+/// Types of operators.
 #[derive(Debug, PartialEq)]
 pub enum OperatorKind {
     /// `~` unary operator.
@@ -80,7 +80,7 @@ impl fmt::Display for Location {
     }
 }
 
-/// Minimal lexical element of the _C_ language standard (_C17_).
+/// Minimal lexical element.
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Token {
@@ -118,15 +118,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Initialize the `Lexer` given _C_ source code, internally producing a
-    /// sequence of tokens. [Exits] on error with non-zero status.
+    /// Produces a sequence of tokens internally given _C_ source code. [Exits]
+    /// on error with non-zero status.
     ///
     /// Does **not** support universal character names (only _ASCII_).
     ///
     /// [Exits]: std::process::exit
     pub fn lex(&mut self, ctx: &Context<'_>) {
-        // TODO: Track each current line, so it's contents can used in error
-        // reporting.
+        // TODO: Track each current line, so it's contents can stored with each
+        // token.
         while self.has_next() {
             let col = self.cur - self.bol;
 

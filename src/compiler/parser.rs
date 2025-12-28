@@ -1,7 +1,7 @@
 //! Syntax Analysis
 //!
-//! Compiler pass that parses a stream of tokens (from lexical analysis) into
-//! an abstract syntax tree (_AST_).
+//! Compiler pass that parses a stream of tokens into an abstract syntax tree
+//! (_AST_).
 
 use std::{fmt, process};
 
@@ -27,7 +27,7 @@ impl fmt::Display for AST {
     }
 }
 
-/// Represents a _function_ definition.
+/// _AST_ function definition.
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Function {
@@ -43,7 +43,7 @@ impl fmt::Display for Function {
     }
 }
 
-/// Different types defined by the _C_ language standard (_C17_).
+/// _AST_ function/object types.
 #[derive(Debug)]
 pub enum Type {
     /// Integer type.
@@ -52,7 +52,7 @@ pub enum Type {
     Void,
 }
 
-/// Represents different _statements_.
+/// _AST_ statements.
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub enum Statement {
@@ -67,10 +67,10 @@ impl fmt::Display for Statement {
     }
 }
 
-/// Represents different _expressions_.
+/// _AST_ expressions.
 #[derive(Debug)]
 pub enum Expression {
-    /// Constant _int_ value (32-bit).
+    /// Constant int value (32-bit).
     ConstantInt(i32),
     /// Unary operator applied to an expression.
     #[allow(missing_docs)]
@@ -89,7 +89,7 @@ impl fmt::Display for Expression {
     }
 }
 
-/// Represents different _unary operators_.
+/// _AST_ unary operators.
 #[derive(Debug, Copy, Clone)]
 pub enum UnaryOperator {
     /// `~` unary operator.
@@ -124,7 +124,7 @@ pub fn parse_program(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> AST {
     AST::Program(func)
 }
 
-/// Parses a _function definition_ from the provided `Lexer`.
+/// Parses an _AST_ function definition from the provided `Lexer`.
 fn parse_function(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Function, String> {
     // NOTE: Currently only allow `int` return values.
     expect_token(ctx, lexer, TokenType::Keyword("int".into()))?;
@@ -150,7 +150,7 @@ fn parse_function(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Function, 
     })
 }
 
-/// Parse a _statement_ from the provided `Lexer`.
+/// Parse an _AST_ statement from the provided `Lexer`.
 fn parse_statement(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Statement, String> {
     expect_token(ctx, lexer, TokenType::Keyword("return".into()))?;
     let ret_val = parse_expression(ctx, lexer)?;
@@ -159,7 +159,7 @@ fn parse_statement(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Statement
     Ok(Statement::Return(ret_val))
 }
 
-/// Parse a function or object _type_ from the provided `Lexer`.
+/// Parse an _AST_ function/object type from the provided `Lexer`.
 #[allow(dead_code)]
 fn parse_type(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Type, String> {
     if let Some(token) = lexer.next_token() {
@@ -182,7 +182,7 @@ fn parse_type(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Type, String> 
     }
 }
 
-/// Parse an _identifier_ from the provided `Lexer`.
+/// Parse an _AST_ identifier from the provided `Lexer`.
 fn parse_ident(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Ident, String> {
     if let Some(token) = lexer.next_token() {
         match token.ty {
@@ -203,7 +203,7 @@ fn parse_ident(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Ident, String
     }
 }
 
-/// Parse an _expression_ from the provided `Lexer`.
+/// Parse an _AST_ expression from the provided `Lexer`.
 fn parse_expression(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, String> {
     if let Some(token) = lexer.next_token() {
         match token.ty {

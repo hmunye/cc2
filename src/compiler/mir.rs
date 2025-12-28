@@ -1,7 +1,7 @@
-//! Mid-level Intermediate Representation
+//! Machine Intermediate Representation
 //!
-//! Compiler pass that translates three-address code (_TAC_) intermediate
-//! representation (_IR_) into mid-level intermediate representation (_x86-64_).
+//! Compiler pass that lowers three-address code (_TAC_) intermediate
+//! representation (_IR_) into machine intermediate representation (_x86-64_).
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -12,7 +12,7 @@ use crate::compiler::parser::UnaryOperator;
 
 type Ident = String;
 
-/// Mid-level _IR_: structured x86-64 assembly representation.
+/// Machine _IR_: structured _x86-64_ assembly representation.
 #[derive(Debug)]
 pub enum MIR {
     /// Function that represent the structure of the assembly program.
@@ -87,19 +87,18 @@ impl MIR {
         stack_offset
     }
 
-    /// Prepends a `AllocateStack` instruction to the instruction sequence,
-    /// reserving the specified number of bytes for local storage.
-    fn emit_stack_allocation(&mut self, offset: i32) {
+    /// Prepends a `StackAlloc` instruction to the current instruction sequence
+    /// given the number of bytes to allocate.
+    fn emit_stack_allocation(&mut self, bytes: i32) {
         match self {
             MIR::Program(func) => {
-                // _O(n)_ time complexity.
-                func.instructions
-                    .insert(0, Instruction::AllocateStack(offset));
+                // NOTE: O(n) time complexity.
+                func.instructions.insert(0, Instruction::StackAlloc(bytes));
             }
         }
     }
 
-    /// Normalizes `MOV` instructions that contain both memory operands,
+    /// Normalizes `mov` instructions that contain both memory address operands,
     /// converting them into valid forms.
     fn rewrite_invalid_mov_instructions(&mut self) {
         match self {
@@ -109,7 +108,7 @@ impl MIR {
                 while i < func.instructions.len() {
                     let inst = &mut func.instructions[i];
 
-                    // `Mov` instruction that uses a memory address for both
+                    // `mov` instruction that uses a memory address for both
                     // operands (illegal).
                     if let Instruction::Mov(src, dst) = inst
                         && let Operand::Stack(_) = src
@@ -118,10 +117,10 @@ impl MIR {
                         let src = src.clone();
                         let dst = dst.clone();
 
-                        // Use the `R10D` scratch register as temporary storage
+                        // Use the `r10d` scratch register as temporary storage
                         // for intermediate values in the new instructions.
                         //
-                        // `R10D`, unlike other hardware registers, serves no
+                        // `r10d`, unlike other hardware registers, serves no
                         // special purpose, so we are less likely to encounter
                         // a conflict.
                         func.instructions.splice(
@@ -132,7 +131,7 @@ impl MIR {
                             ],
                         );
 
-                        // Increment `i` by 1 to ensure the two new instructions
+                        // Increment `i` to ensure the two new instructions
                         // inserted are skipped.
                         i += 1;
                     }
@@ -144,7 +143,7 @@ impl MIR {
     }
 }
 
-/// Represents an x86-64 _function_ definition.
+/// _MIR_ function definition.
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Function {
@@ -152,24 +151,24 @@ pub struct Function {
     pub instructions: Vec<Instruction>,
 }
 
-/// Represents x86-64 _instructions_.
+/// _MIR_ instructions.
 #[derive(Debug)]
 pub enum Instruction {
-    /// Move instruction (copies _src_ to _dst_).
+    /// Move instruction (copies `src` to `dst`).
     Mov(Operand, Operand),
     /// Apply the given unary operator to the operand.
     Unary(UnaryOperator, Operand),
-    /// Subtract the specified number of bytes from `RSP` register.
-    AllocateStack(i32),
+    /// Subtract the specified number of bytes from `rsp` register.
+    StackAlloc(i32),
     /// Yields control back to the caller.
     Ret,
 }
 
-/// Represents x86-64 _operands_.
+/// _MIR_ operands.
 #[derive(Debug, Clone)]
 pub enum Operand {
     /// Immediate value (32-bit).
-    Imm(i32),
+    Imm32(i32),
     /// Register name.
     Register(Reg),
     /// Pseudoregister to represent temporary variable.
@@ -178,7 +177,7 @@ pub enum Operand {
     Stack(i32),
 }
 
-/// Represents x86_64 _hardware registers_ (size agnostic).
+/// _MIR x86-64_ registers (size agnostic).
 #[derive(Debug, Copy, Clone)]
 #[allow(missing_docs)]
 pub enum Reg {
@@ -195,51 +194,50 @@ impl fmt::Display for Reg {
     }
 }
 
-/// Generate structured assembly representation, given an intermediate
+/// Generate machine intermediate representation (_MIR_), given intermediate
 /// representation (_IR_). [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
 pub fn generate_mir(ir: &IR) -> MIR {
     match ir {
         IR::Program(func) => {
-            let asm_func = generate_asm_function(func);
+            let mir_func = generate_mir_function(func);
 
-            // Pass 1 - Structured assembly representation initialized.
-            let mut asm = MIR::Program(asm_func);
+            // Pass 1 - MIR initialized.
+            let mut mir = MIR::Program(mir_func);
 
             // Pass 2 - Each pseudoregister replace with stack offsets.
-            let stack_offset = asm.replace_pseudo_registers();
+            let stack_offset = mir.replace_pseudo_registers();
 
-            // Pass 3 - Rewrite invalid `Mov` instructions (both operands may
-            // now be memory addresses).
-            asm.rewrite_invalid_mov_instructions();
+            // Pass 3 - Rewrite invalid `mov` instructions (both operands may
+            // now be stack memory addresses).
+            mir.rewrite_invalid_mov_instructions();
 
-            // Pass 4 - Insert instruction for allocating `stack_offset` bytes
-            asm.emit_stack_allocation(stack_offset);
+            // Pass 4 - Insert instruction for allocating `stack_offset` bytes.
+            mir.emit_stack_allocation(stack_offset);
 
-            asm
+            mir
         }
     }
 }
 
-/// Generate an assembly representation _function definition_ from the provided
-/// _IR_ function.
-fn generate_asm_function(func: &ir::Function) -> Function {
+/// Generate a _MIR_ function definition from the provided _IR_ function.
+fn generate_mir_function(func: &ir::Function) -> Function {
     let mut instructions = vec![];
 
     for inst in &func.instructions {
         match inst {
             ir::Instruction::Return(v) => {
                 instructions.push(Instruction::Mov(
-                    generate_asm_operand(v),
+                    generate_mir_operand(v),
                     Operand::Register(Reg::AX),
                 ));
                 instructions.push(Instruction::Ret);
             }
             ir::Instruction::Unary { op, src, dst } => {
-                let dst = generate_asm_operand(dst);
+                let dst = generate_mir_operand(dst);
 
-                instructions.push(Instruction::Mov(generate_asm_operand(src), dst.clone()));
+                instructions.push(Instruction::Mov(generate_mir_operand(src), dst.clone()));
                 instructions.push(Instruction::Unary(*op, dst));
             }
         }
@@ -251,10 +249,10 @@ fn generate_asm_function(func: &ir::Function) -> Function {
     }
 }
 
-/// Generate an assembly representation _operand_ from the provided _IR_ value.
-fn generate_asm_operand(val: &ir::Value) -> Operand {
+/// Generate a _MIR_ operand from the provided _IR_ value.
+fn generate_mir_operand(val: &ir::Value) -> Operand {
     match val {
-        ir::Value::ConstantInt(v) => Operand::Imm(*v),
+        ir::Value::ConstantInt(v) => Operand::Imm32(*v),
         ir::Value::Var(v) => Operand::Pseudo(v.clone()),
     }
 }
