@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use crate::compiler::parser::{self, UnaryOperator};
+use crate::compiler::parser::{self, BinaryOperator, UnaryOperator};
 
 type Ident = String;
 
@@ -60,6 +60,17 @@ pub enum Instruction {
         src: Value,
         dst: Value,
     },
+    /// Perform a binary operation on `lhs` and `rhs`, storing the result in
+    /// `dst`.
+    ///
+    /// NOTE: The `dst` of any binary instruction must be `Value::Var`.
+    #[allow(missing_docs)]
+    Binary {
+        op: BinaryOperator,
+        lhs: Value,
+        rhs: Value,
+        dst: Value,
+    },
 }
 
 impl fmt::Display for Instruction {
@@ -76,6 +87,22 @@ impl fmt::Display for Instruction {
                 write!(
                     f,
                     "{:<15}{src_str} {:>width$}  {dst}",
+                    format!("{op:?}"),
+                    "->",
+                    width = width
+                )
+            }
+            Instruction::Binary { op, lhs, rhs, dst } => {
+                let lhs_str = format!("{lhs}");
+                let rhs_str = format!("{rhs}");
+                let len = lhs_str.len() + rhs_str.len();
+
+                let max_width: usize = 30;
+                let width = max_width.saturating_sub(len);
+
+                write!(
+                    f,
+                    "{:<15}{lhs_str}, {rhs_str} {:>width$}  {dst}",
                     format!("{op:?}"),
                     "->",
                     width = width
@@ -165,8 +192,8 @@ fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_
         parser::Expression::ConstantInt(v) => Value::ConstantInt(*v),
         parser::Expression::Unary { op, expr } => {
             // Recursively process the expression until the base case
-            // (`Expression::ConstantInt`) is reached. This ensures the inner
-            // expression is processed initially before unwinding.
+            // (`ConstantInt`) is reached. This ensures the inner expression is
+            // processed initially before unwinding.
             let src = generate_ir_expression(expr, builder);
             let dst = Value::Var(builder.new_tmp());
 
@@ -180,6 +207,22 @@ fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_
             // the recursion.
             dst
         }
-        _ => todo!(),
+        parser::Expression::Binary { op, lhs, rhs } => {
+            // NOTE: According to the _C_ standard, sub-expressions of the same
+            // operation are _unsequenced_ (few exceptions). This means either
+            // the `lhs` or the `rhs` can be processed first.
+            let lhs = generate_ir_expression(lhs, builder);
+            let rhs = generate_ir_expression(rhs, builder);
+            let dst = Value::Var(builder.new_tmp());
+
+            builder.instructions.push(Instruction::Binary {
+                op: *op,
+                lhs,
+                rhs,
+                dst: dst.clone(),
+            });
+
+            dst
+        }
     }
 }

@@ -298,6 +298,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 instructions.push(Instruction::Mov(generate_mir_operand(src), dst.clone()));
                 instructions.push(Instruction::Unary(*op, dst));
             }
+            _ => todo!(),
         }
     }
 
