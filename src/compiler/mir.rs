@@ -3,8 +3,6 @@
 //! Compiler pass that lowers three-address code (_TAC_) intermediate
 //! representation (_IR_) into machine intermediate representation (_x86-64_).
 
-// TODO: Potential bug in MIR
-
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt;
@@ -163,7 +161,7 @@ impl MIR {
                                 && matches!(dst, Operand::Stack(_)) =>
                         {
                             let src = src.clone();
-                            let dst = src.clone();
+                            let dst = dst.clone();
 
                             // Use the `r10d` register as temporary storage for
                             // intermediate values in the new instructions.
@@ -210,25 +208,17 @@ impl MIR {
                             let lhs = lhs.clone();
                             let rhs = rhs.clone();
 
-                            let final_instr = if let BinaryOperator::Add = op {
-                                Instruction::Binary(
-                                    BinaryOperator::Add,
-                                    Operand::Register(Reg::R10),
-                                    rhs,
-                                )
+                            let binop = if let BinaryOperator::Add = op {
+                                BinaryOperator::Add
                             } else {
-                                Instruction::Binary(
-                                    BinaryOperator::Sub,
-                                    Operand::Register(Reg::R10),
-                                    rhs,
-                                )
+                                BinaryOperator::Sub
                             };
 
                             func.instructions.splice(
                                 i..=i,
                                 [
                                     Instruction::Mov(lhs, Operand::Register(Reg::R10)),
-                                    final_instr,
+                                    Instruction::Binary(binop, Operand::Register(Reg::R10), rhs),
                                 ],
                             );
 
@@ -445,9 +435,9 @@ impl TryFrom<&crate::compiler::parser::BinaryOperator> for BinaryOperator {
 
     fn try_from(binop: &crate::compiler::parser::BinaryOperator) -> Result<Self, Self::Error> {
         match binop {
-            crate::compiler::parser::BinaryOperator::Addition => Ok(BinaryOperator::Add),
-            crate::compiler::parser::BinaryOperator::Subtraction => Ok(BinaryOperator::Sub),
-            crate::compiler::parser::BinaryOperator::Multiplication => Ok(BinaryOperator::Imul),
+            crate::compiler::parser::BinaryOperator::Add => Ok(BinaryOperator::Add),
+            crate::compiler::parser::BinaryOperator::Subtract => Ok(BinaryOperator::Sub),
+            crate::compiler::parser::BinaryOperator::Multiply => Ok(BinaryOperator::Imul),
             _ => Err(()),
         }
     }
@@ -502,7 +492,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 let dst = generate_mir_operand(dst);
 
                 match op {
-                    crate::compiler::parser::BinaryOperator::Division => {
+                    crate::compiler::parser::BinaryOperator::Divide => {
                         instructions.push(Instruction::Mov(
                             generate_mir_operand(lhs),
                             Operand::Register(Reg::AX),
