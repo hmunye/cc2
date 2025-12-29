@@ -32,7 +32,7 @@ pub fn emit_asm(ctx: &Context<'_>, mir: &MIR, mut f: Box<dyn IoWrite>) {
             });
 
             write!(&mut f, "{}", emit_asm_function(ctx, func)).unwrap_or_else(|err| {
-                report_err!(ctx.program, "failed to emit assembly: {err}",);
+                report_err!(ctx.program, "failed to emit assembly: {err}");
                 process::exit(1);
             });
         }
@@ -40,7 +40,7 @@ pub fn emit_asm(ctx: &Context<'_>, mir: &MIR, mut f: Box<dyn IoWrite>) {
 
     // Indicates the program does not need an executable stack (Linux).
     writeln!(&mut f, "\t.section\t.note.GNU-stack,\"\",@progbits").unwrap_or_else(|err| {
-        report_err!(ctx.program, "failed to emit assembly: {err}",);
+        report_err!(ctx.program, "failed to emit assembly: {err}");
         process::exit(1);
     });
 }
@@ -58,7 +58,7 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
     // (`rbp`) to establish the start of the current function's stack
     // frame.
     writeln!(&mut asm, "\tpushq\t%rbp\n\tmovq\t%rsp, %rbp").unwrap_or_else(|err| {
-        report_err!(ctx.program, "failed to emit assembly: {err}",);
+        report_err!(ctx.program, "failed to emit assembly: {err}");
         process::exit(1);
     });
 
@@ -68,11 +68,12 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
 
     for inst in &func.instructions {
         if let mir::Instruction::StackAlloc(b) = inst {
-            alloc = *b;
+            // Accumulate any allocations made before any `Return` instruction.
+            alloc += *b;
         }
 
         writeln!(&mut asm, "\t{}", emit_asm_instruction(inst, alloc)).unwrap_or_else(|err| {
-            report_err!(ctx.program, "failed to emit assembly: {err}",);
+            report_err!(ctx.program, "failed to emit assembly: {err}");
             process::exit(1);
         });
     }

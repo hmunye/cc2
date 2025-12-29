@@ -180,5 +180,6 @@ fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_
             // the recursion.
             dst
         }
+        _ => todo!(),
     }
 }

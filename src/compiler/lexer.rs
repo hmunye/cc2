@@ -14,19 +14,34 @@ const KEYWORDS: [&str; 3] = ["int", "void", "return"];
 /// Types of operators.
 #[derive(PartialEq, Clone, Copy)]
 pub enum OperatorKind {
-    /// `~` unary operator.
-    Complement,
-    /// `-` unary operator.
-    Negate,
-    /// `--` unary operator.
+    /// `~` bitwise NOT operator.
+    BitwiseNot,
+    /// `-` subtraction or negation operator.
+    Minus,
+    /// `+` addition or unary positive operator.
+    Plus,
+    /// `*` multiplication or dereference operator.
+    Asterisk,
+    /// `/` division operator.
+    Division,
+    /// `%` remainder operator.
+    Modulo,
+    /// `++` increment operator.
+    Increment,
+    /// `--` decrement operator.
     Decrement,
 }
 
 impl fmt::Debug for OperatorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OperatorKind::Complement => write!(f, "~"),
-            OperatorKind::Negate => write!(f, "-"),
+            OperatorKind::BitwiseNot => write!(f, "~"),
+            OperatorKind::Minus => write!(f, "-"),
+            OperatorKind::Plus => write!(f, "+"),
+            OperatorKind::Asterisk => write!(f, "*"),
+            OperatorKind::Division => write!(f, "/"),
+            OperatorKind::Modulo => write!(f, "-"),
+            OperatorKind::Increment => write!(f, "++"),
             OperatorKind::Decrement => write!(f, "--"),
         }
     }
@@ -35,8 +50,13 @@ impl fmt::Debug for OperatorKind {
 impl fmt::Display for OperatorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OperatorKind::Complement => write!(f, "op('~')"),
-            OperatorKind::Negate => write!(f, "op('-')"),
+            OperatorKind::BitwiseNot => write!(f, "op('~')"),
+            OperatorKind::Minus => write!(f, "op('-')"),
+            OperatorKind::Plus => write!(f, "op('+')"),
+            OperatorKind::Asterisk => write!(f, "op('*')"),
+            OperatorKind::Division => write!(f, "op('/')"),
+            OperatorKind::Modulo => write!(f, "op('-')"),
+            OperatorKind::Increment => write!(f, "op('++')"),
             OperatorKind::Decrement => write!(f, "op('--')"),
         }
     }
@@ -159,6 +179,7 @@ impl<'a> Lexer<'a> {
         let mut line_content = "";
 
         while self.has_next() {
+            // Ensures the first line has the correct column count.
             let col = if self.line == 1 {
                 self.cur - self.bol + 1
             } else {
@@ -302,7 +323,7 @@ impl<'a> Lexer<'a> {
                 }
                 b'~' => {
                     self.tokens.push_back(Token {
-                        ty: TokenType::Operator(OperatorKind::Complement),
+                        ty: TokenType::Operator(OperatorKind::BitwiseNot),
                         loc: Location {
                             line_content,
                             file_path: ctx.in_path,
@@ -330,7 +351,7 @@ impl<'a> Lexer<'a> {
                         self.cur += 1;
                     } else {
                         self.tokens.push_back(Token {
-                            ty: TokenType::Operator(OperatorKind::Negate),
+                            ty: TokenType::Operator(OperatorKind::Minus),
                             loc: Location {
                                 line_content,
                                 file_path: ctx.in_path,
@@ -339,6 +360,72 @@ impl<'a> Lexer<'a> {
                             },
                         });
                     }
+                }
+                b'+' => {
+                    self.cur += 1;
+
+                    if self.has_next() && self.first() == b'+' {
+                        self.tokens.push_back(Token {
+                            ty: TokenType::Operator(OperatorKind::Increment),
+                            loc: Location {
+                                line_content,
+                                file_path: ctx.in_path,
+                                line: self.line,
+                                col,
+                            },
+                        });
+
+                        self.cur += 1;
+                    } else {
+                        self.tokens.push_back(Token {
+                            ty: TokenType::Operator(OperatorKind::Plus),
+                            loc: Location {
+                                line_content,
+                                file_path: ctx.in_path,
+                                line: self.line,
+                                col,
+                            },
+                        });
+                    }
+                }
+                b'*' => {
+                    self.tokens.push_back(Token {
+                        ty: TokenType::Operator(OperatorKind::Asterisk),
+                        loc: Location {
+                            line_content,
+                            file_path: ctx.in_path,
+                            line: self.line,
+                            col,
+                        },
+                    });
+
+                    self.cur += 1;
+                }
+                b'/' => {
+                    self.tokens.push_back(Token {
+                        ty: TokenType::Operator(OperatorKind::Division),
+                        loc: Location {
+                            line_content,
+                            file_path: ctx.in_path,
+                            line: self.line,
+                            col,
+                        },
+                    });
+
+                    self.cur += 1;
+                }
+                b'%' => {
+                    self.tokens.push_back(Token {
+                        ty: TokenType::Operator(OperatorKind::Modulo),
+                        loc: Location {
+                            line_content,
+                            file_path: ctx.in_path,
+                            line: self.line,
+                            col,
+                        },
+                    });
+
+                    self.cur += 1;
                 }
                 b'(' => {
                     self.tokens.push_back(Token {
