@@ -62,8 +62,16 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
         process::exit(1);
     });
 
+    // Updated if a `StackAlloc` instruction is encountered, so the allocated
+    // stack memory can be deallocated if returning.
+    let mut alloc = 0;
+
     for inst in &func.instructions {
-        writeln!(&mut asm, "\t{}", emit_asm_instruction(inst)).unwrap_or_else(|err| {
+        if let mir::Instruction::StackAlloc(b) = inst {
+            alloc = *b;
+        }
+
+        writeln!(&mut asm, "\t{}", emit_asm_instruction(inst, alloc)).unwrap_or_else(|err| {
             report_err!(ctx.program, "failed to emit assembly: {err}",);
             process::exit(1);
         });
@@ -73,7 +81,7 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
 }
 
 /// Return a string assembly representation of the given `MIR` instruction.
-fn emit_asm_instruction(instruction: &mir::Instruction) -> String {
+fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
     match instruction {
         mir::Instruction::Mov(src, dst) => {
             format!("movl\t{}, {}", emit_asm_operand(src), emit_asm_operand(dst))
@@ -90,9 +98,15 @@ fn emit_asm_instruction(instruction: &mir::Instruction) -> String {
         // 3. Return control to the caller, jumping to the return address stored
         // on the caller's stack frame.
         //
-        // NOTE: If `StackAlloc` instruction was encountered, the allocated
-        // stack space should be deallocated ("addq\t${v}, %rsp").
-        mir::Instruction::Ret => "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into(),
+        // NOTE: If any stack memory was allocated in the current stack frame,
+        // it should deallocated before returning to the caller.
+        mir::Instruction::Ret => {
+            if alloc == 0 {
+                "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into()
+            } else {
+                format!("addq\t${alloc}, %rsp\n\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")
+            }
+        }
         mir::Instruction::Unary(op, operand) => match op {
             UnaryOperator::Complement => format!("notl\t{}", emit_asm_operand(operand)),
             UnaryOperator::Negate => format!("negl\t{}", emit_asm_operand(operand)),
