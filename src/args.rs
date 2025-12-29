@@ -11,15 +11,13 @@ use crate::report_err;
 pub struct Args {
     /// Name of the program.
     pub program: String,
-    /// Compilation phase to terminate at (empty string invokes the full
-    /// compilation process).
+    /// Compilation phase to terminate at.
     pub stage: String,
     /// Input file containing C source code (required).
     pub in_file: File,
-    /// Path to input file (used in error reporting).
+    /// Path to input file.
     pub in_path: &'static Path,
-    /// Output path for assembly code emission (defaults to input file path with
-    /// `.s` extension).
+    /// Output path for assembly code emission.
     pub out_path: PathBuf,
 }
 
@@ -29,12 +27,12 @@ impl Args {
     ///
     /// [exiting]: std::process::exit
     pub fn parse() -> Self {
-        // TODO: Allow the input file to be specified first as well.
         let mut args = std::env::args().peekable();
         let program = args.next().unwrap_or("cc2".into());
 
         let mut stage = String::new();
         let mut out_path = PathBuf::new();
+        let mut in_path = String::new();
 
         while let Some(arg) = args.peek() {
             if arg.starts_with("-") {
@@ -80,37 +78,36 @@ impl Args {
                     print_usage(&program);
                 }
             } else {
-                // No remaining flags to process.
-                break;
+                if in_path.is_empty() {
+                    // Input file can come before or after flags.
+                    in_path = args.next().expect("next argument should be present");
+                } else {
+                    report_err!(&program, "invalid arg: '{arg}'");
+                    print_usage(&program);
+                }
             }
         }
 
-        // Input file should come after all flags have been processed.
-        let Some(file_path) = args.next() else {
-            report_err!(&program, "no input file");
-            print_usage(&program);
-        };
-
-        // NOTE: Leaking `file_path` to ensure the input path is available for
+        // NOTE: Leaking `in_path` to ensure the input path is available for
         // error reporting during runtime. Could use `PathBuf` instead but the
         // path will not be mutated.
-        let in_path = Path::new(file_path.leak());
+        let path = Path::new(in_path.leak());
 
-        let in_file = File::open(in_path).unwrap_or_else(|err| {
+        let in_file = File::open(path).unwrap_or_else(|err| {
             report_err!(&program, "failed to open input file: {err}");
             process::exit(1);
         });
 
         // No output path was provided - use default output path name.
         if out_path.capacity() == 0 {
-            out_path = in_path.with_extension("s");
+            out_path = path.with_extension("s");
         }
 
         Self {
             program,
             stage,
             in_file,
-            in_path,
+            in_path: path,
             out_path,
         }
     }
