@@ -81,7 +81,7 @@ impl fmt::Display for Instruction {
                 let src_str = format!("{src}");
                 let len = src_str.len();
 
-                let max_width: usize = 15;
+                let max_width: usize = 32;
                 let width = max_width.saturating_sub(len);
 
                 write!(

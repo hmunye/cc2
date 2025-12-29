@@ -29,6 +29,7 @@ impl Args {
     ///
     /// [exiting]: std::process::exit
     pub fn parse() -> Self {
+        // TODO: Allow the input file to be specified first as well.
         let mut args = std::env::args().peekable();
         let program = args.next().unwrap_or("cc2".into());
 

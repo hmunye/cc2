@@ -7,7 +7,7 @@ use std::process;
 use std::{fmt::Write, io::Write as IoWrite};
 
 use crate::compiler::mir::{self, MIR};
-use crate::compiler::parser::UnaryOperator;
+use crate::compiler::mir::{BinaryOperator, UnaryOperator};
 use crate::{Context, report_err};
 
 /// Emits _gas-x86-64-linux_ assembly given a _MIR_ to the provided output.
@@ -87,6 +87,27 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
         mir::Instruction::Mov(src, dst) => {
             format!("movl\t{}, {}", emit_asm_operand(src), emit_asm_operand(dst))
         }
+        mir::Instruction::Unary(unop, operand) => match unop {
+            UnaryOperator::Not => format!("notl\t{}", emit_asm_operand(operand)),
+            UnaryOperator::Neg => format!("negl\t{}", emit_asm_operand(operand)),
+        },
+        mir::Instruction::Binary(binop, lhs, rhs) => {
+            let instr = match binop {
+                BinaryOperator::Add => "addl",
+                BinaryOperator::Sub => "subl",
+                BinaryOperator::Imul => "imull",
+            };
+
+            format!(
+                "{}\t{}, {}",
+                instr,
+                emit_asm_operand(lhs),
+                emit_asm_operand(rhs)
+            )
+        }
+        mir::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div)),
+        mir::Instruction::Cdq => "cdq".into(),
+        mir::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
         // Include the function epilogue before returning to the caller:
         //
         // 1. Move the current base pointer (`rbp`) into the stack pointer
@@ -108,11 +129,6 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
                 format!("addq\t${alloc}, %rsp\n\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")
             }
         }
-        mir::Instruction::Unary(op, operand) => match op {
-            UnaryOperator::Complement => format!("notl\t{}", emit_asm_operand(operand)),
-            UnaryOperator::Negate => format!("negl\t{}", emit_asm_operand(operand)),
-        },
-        mir::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
     }
 }
 

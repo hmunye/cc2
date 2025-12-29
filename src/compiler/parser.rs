@@ -82,23 +82,25 @@ pub enum UnaryOperator {
 #[derive(Debug, Copy, Clone)]
 pub enum BinaryOperator {
     /// `+` binary operator.
-    Add,
+    Addition,
     /// `-` binary operator.
-    Sub,
+    Subtraction,
     /// `*` binary operator.
-    Mul,
+    Multiplication,
     /// `/` binary operator.
-    Div,
+    Division,
     /// `%` binary operator.
-    Rem,
+    Remainder,
 }
 
 impl BinaryOperator {
     /// Returns the _precedence_ level of the binary operator.
     pub fn precedence(&self) -> u8 {
         match self {
-            BinaryOperator::Add | BinaryOperator::Sub => 13,
-            BinaryOperator::Mul | BinaryOperator::Div | BinaryOperator::Rem => 14,
+            BinaryOperator::Addition | BinaryOperator::Subtraction => 13,
+            BinaryOperator::Multiplication
+            | BinaryOperator::Division
+            | BinaryOperator::Remainder => 14,
         }
     }
 }
@@ -235,11 +237,11 @@ fn parse_expression(
         ) = token.ty
     {
         let op = match token.ty {
-            TokenType::Operator(OperatorKind::Plus) => BinaryOperator::Add,
-            TokenType::Operator(OperatorKind::Minus) => BinaryOperator::Sub,
-            TokenType::Operator(OperatorKind::Asterisk) => BinaryOperator::Mul,
-            TokenType::Operator(OperatorKind::Division) => BinaryOperator::Div,
-            TokenType::Operator(OperatorKind::Modulo) => BinaryOperator::Rem,
+            TokenType::Operator(OperatorKind::Plus) => BinaryOperator::Addition,
+            TokenType::Operator(OperatorKind::Minus) => BinaryOperator::Subtraction,
+            TokenType::Operator(OperatorKind::Asterisk) => BinaryOperator::Multiplication,
+            TokenType::Operator(OperatorKind::Division) => BinaryOperator::Division,
+            TokenType::Operator(OperatorKind::Modulo) => BinaryOperator::Remainder,
             _ => unreachable!(),
         };
 
