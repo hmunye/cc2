@@ -242,6 +242,12 @@ fn parse_expression(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expressi
             t => {
                 let tok_str = format!("{t:?}");
 
+                let err_msg = if let TokenType::ParenClose = t {
+                    format!("expected expression before '{tok_str}' token")
+                } else {
+                    format!("'{tok_str}' undeclared")
+                };
+
                 Err(fmt_token_err!(
                     token.loc.file_path.display(),
                     token.loc.line,
@@ -249,7 +255,7 @@ fn parse_expression(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expressi
                     tok_str,
                     tok_str.len() - 1,
                     token.loc.line_content,
-                    "'{tok_str}' undeclared",
+                    "{err_msg}",
                 ))
             }
         }
@@ -280,15 +286,15 @@ fn expect_token(
                 token.loc.line,
                 token.loc.col,
                 tok_str,
-                tok_str.len(),
+                tok_str.len() - 1,
                 token.loc.line_content,
-                "expected '{expected}', but found '{tok_str}'",
+                "expected '{expected:?}', but found '{tok_str}'",
             ))
         }
     } else {
         Err(fmt_err!(
             ctx.in_path.display(),
-            "expected '{}' at end of input",
+            "expected '{:?}' at end of input",
             expected
         ))
     }

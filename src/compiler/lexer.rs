@@ -159,7 +159,11 @@ impl<'a> Lexer<'a> {
         let mut line_content = "";
 
         while self.has_next() {
-            let col = self.cur - self.bol;
+            let col = if self.line == 1 {
+                self.cur - self.bol + 1
+            } else {
+                self.cur - self.bol
+            };
 
             // Capture the first line's contents (before encountering any '\n').
             if !first_line_captured {
@@ -246,7 +250,7 @@ impl<'a> Lexer<'a> {
                             token,
                             token.len() - 1,
                             line_content,
-                            "integer constant is too large for its type",
+                            "integer constant is too large for its type (32-bit signed)",
                         );
                         process::exit(1);
                     };
