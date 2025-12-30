@@ -15,7 +15,7 @@ const KEYWORDS: [&str; 3] = ["int", "void", "return"];
 #[derive(PartialEq, Clone, Copy)]
 pub enum OperatorKind {
     /// `~` bitwise NOT operator.
-    BitwiseNot,
+    BitNot,
     /// `-` subtraction or negation operator.
     Minus,
     /// `+` addition or unary positive operator.
@@ -33,19 +33,19 @@ pub enum OperatorKind {
     /// `&` bitwise AND or address-of operator.
     Ampersand,
     /// `|` bitwise OR operator.
-    BitwiseOr,
+    BitOr,
     /// `^` bitwise XOR operator.
-    BitwiseXor,
+    BitXor,
     /// `<<` bitwise left-shift operator.
-    LeftShift,
+    ShiftLeft,
     /// `>>` bitwise right-shift operator.
-    RightShift,
+    ShiftRight,
 }
 
 impl fmt::Display for OperatorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OperatorKind::BitwiseNot => write!(f, "op('~')"),
+            OperatorKind::BitNot => write!(f, "op('~')"),
             OperatorKind::Minus => write!(f, "op('-')"),
             OperatorKind::Plus => write!(f, "op('+')"),
             OperatorKind::Asterisk => write!(f, "op('*')"),
@@ -54,10 +54,10 @@ impl fmt::Display for OperatorKind {
             OperatorKind::Increment => write!(f, "op('++')"),
             OperatorKind::Decrement => write!(f, "op('--')"),
             OperatorKind::Ampersand => write!(f, "op('&')"),
-            OperatorKind::BitwiseOr => write!(f, "op('|')"),
-            OperatorKind::BitwiseXor => write!(f, "op('^')"),
-            OperatorKind::LeftShift => write!(f, "op('<<')"),
-            OperatorKind::RightShift => write!(f, "op('>>')"),
+            OperatorKind::BitOr => write!(f, "op('|')"),
+            OperatorKind::BitXor => write!(f, "op('^')"),
+            OperatorKind::ShiftLeft => write!(f, "op('<<')"),
+            OperatorKind::ShiftRight => write!(f, "op('>>')"),
         }
     }
 }
@@ -65,7 +65,7 @@ impl fmt::Display for OperatorKind {
 impl fmt::Debug for OperatorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OperatorKind::BitwiseNot => write!(f, "~"),
+            OperatorKind::BitNot => write!(f, "~"),
             OperatorKind::Minus => write!(f, "-"),
             OperatorKind::Plus => write!(f, "+"),
             OperatorKind::Asterisk => write!(f, "*"),
@@ -74,10 +74,10 @@ impl fmt::Debug for OperatorKind {
             OperatorKind::Increment => write!(f, "++"),
             OperatorKind::Decrement => write!(f, "--"),
             OperatorKind::Ampersand => write!(f, "&"),
-            OperatorKind::BitwiseOr => write!(f, "|"),
-            OperatorKind::BitwiseXor => write!(f, "^"),
-            OperatorKind::LeftShift => write!(f, "<<"),
-            OperatorKind::RightShift => write!(f, ">>"),
+            OperatorKind::BitOr => write!(f, "|"),
+            OperatorKind::BitXor => write!(f, "^"),
+            OperatorKind::ShiftLeft => write!(f, "<<"),
+            OperatorKind::ShiftRight => write!(f, ">>"),
         }
     }
 }
@@ -335,7 +335,7 @@ impl<'a> Lexer<'a> {
                 }
                 b'~' => {
                     self.add_token(
-                        TokenType::Operator(OperatorKind::BitwiseNot),
+                        TokenType::Operator(OperatorKind::BitNot),
                         line_content,
                         ctx.in_path,
                         col,
@@ -420,7 +420,7 @@ impl<'a> Lexer<'a> {
                 }
                 b'|' => {
                     self.add_token(
-                        TokenType::Operator(OperatorKind::BitwiseOr),
+                        TokenType::Operator(OperatorKind::BitOr),
                         line_content,
                         ctx.in_path,
                         col,
@@ -429,7 +429,7 @@ impl<'a> Lexer<'a> {
                 }
                 b'^' => {
                     self.add_token(
-                        TokenType::Operator(OperatorKind::BitwiseXor),
+                        TokenType::Operator(OperatorKind::BitXor),
                         line_content,
                         ctx.in_path,
                         col,
@@ -441,7 +441,7 @@ impl<'a> Lexer<'a> {
 
                     if self.has_next() && self.first() == b'<' {
                         self.add_token(
-                            TokenType::Operator(OperatorKind::LeftShift),
+                            TokenType::Operator(OperatorKind::ShiftLeft),
                             line_content,
                             ctx.in_path,
                             col,
@@ -456,7 +456,7 @@ impl<'a> Lexer<'a> {
 
                     if self.has_next() && self.first() == b'>' {
                         self.add_token(
-                            TokenType::Operator(OperatorKind::RightShift),
+                            TokenType::Operator(OperatorKind::ShiftRight),
                             line_content,
                             ctx.in_path,
                             col,

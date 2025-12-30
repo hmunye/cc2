@@ -28,6 +28,7 @@ impl fmt::Debug for AST {
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Function {
+    // NOTE: Currently unused.
     pub ty: Type,
     pub ident: Ident,
     pub body: Statement,
@@ -91,13 +92,40 @@ pub enum BinaryOperator {
     Divide,
     /// `%` binary operator.
     Remainder,
+    /// `&` binary operator.
+    BitAnd,
+    /// `|` binary operator.
+    BitOr,
+    /// `^` binary operator.
+    BitXor,
+    /// `<<` binary operator.
+    ShiftLeft,
+    /// `>>` binary operator.
+    ShiftRight,
 }
 
 impl BinaryOperator {
-    /// Returns the _precedence_ level of the binary operator.
+    /// Returns the _precedence_ level of the binary operator (higher numbers
+    /// indicate tighter binding).
+    ///
+    /// Derived from the structure of the _C17_ expression grammar.
     pub fn precedence(&self) -> u8 {
         match self {
+            // _C17_ 6.5.12 (inclusive-OR-expression)
+            BinaryOperator::BitOr => 7,
+            // _C17_ 6.5.11 (exclusive-OR-expression)
+            BinaryOperator::BitXor => 8,
+            // _C17_ 6.5.10 (AND-expression)
+            BinaryOperator::BitAnd => 9,
+            // _C17_ 6.5.9 (equality-expression)
+            // => 10
+            // _C17_ 6.5.8 (relational-expression)
+            // => 11
+            // _C17_ 6.5.7 (shift-expression)
+            BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight => 12,
+            // _C17_ 6.5.6 (additive-expression)
             BinaryOperator::Add | BinaryOperator::Subtract => 13,
+            // _C17_ 6.5.5 (multiplicative-expression)
             BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Remainder => 14,
         }
     }
@@ -227,22 +255,9 @@ fn parse_expression(
     let mut lhs = parse_factor(ctx, lexer)?;
     let mut next = lexer.peek();
 
-    while let Some(token) = next
-        && let TokenType::Operator(
-            OperatorKind::Plus
-            | OperatorKind::Minus
-            | OperatorKind::Asterisk
-            | OperatorKind::Division
-            | OperatorKind::Modulo,
-        ) = token.ty
-    {
-        let binop = match token.ty {
-            TokenType::Operator(OperatorKind::Plus) => BinaryOperator::Add,
-            TokenType::Operator(OperatorKind::Minus) => BinaryOperator::Subtract,
-            TokenType::Operator(OperatorKind::Asterisk) => BinaryOperator::Multiply,
-            TokenType::Operator(OperatorKind::Division) => BinaryOperator::Divide,
-            TokenType::Operator(OperatorKind::Modulo) => BinaryOperator::Remainder,
-            _ => unreachable!(),
+    while let Some(token) = next {
+        let Some(binop) = is_binop(&token.ty) else {
+            break;
         };
 
         // Higher-precedence operators will be evaluated first, making
@@ -274,9 +289,9 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
     if let Some(token) = lexer.next_token() {
         match token.ty {
             TokenType::ConstantInt(v) => Ok(Expression::ConstantInt(v)),
-            TokenType::Operator(OperatorKind::BitwiseNot | OperatorKind::Minus) => {
+            TokenType::Operator(OperatorKind::BitNot | OperatorKind::Minus) => {
                 let unop = match token.ty {
-                    TokenType::Operator(OperatorKind::BitwiseNot) => UnaryOperator::Complement,
+                    TokenType::Operator(OperatorKind::BitNot) => UnaryOperator::Complement,
                     TokenType::Operator(OperatorKind::Minus) => UnaryOperator::Negate,
                     _ => unreachable!(),
                 };
@@ -354,6 +369,24 @@ fn expect_token(
             "expected '{:?}' at end of input",
             expected
         ))
+    }
+}
+
+/// Returns the conversion of `TokenType` to BinaryOperator, or `None` if the
+/// token type is not a binary operator.
+fn is_binop(ty: &TokenType) -> Option<BinaryOperator> {
+    match ty {
+        TokenType::Operator(OperatorKind::Plus) => Some(BinaryOperator::Add),
+        TokenType::Operator(OperatorKind::Minus) => Some(BinaryOperator::Subtract),
+        TokenType::Operator(OperatorKind::Asterisk) => Some(BinaryOperator::Multiply),
+        TokenType::Operator(OperatorKind::Division) => Some(BinaryOperator::Divide),
+        TokenType::Operator(OperatorKind::Modulo) => Some(BinaryOperator::Remainder),
+        TokenType::Operator(OperatorKind::Ampersand) => Some(BinaryOperator::BitAnd),
+        TokenType::Operator(OperatorKind::BitOr) => Some(BinaryOperator::BitOr),
+        TokenType::Operator(OperatorKind::BitXor) => Some(BinaryOperator::BitXor),
+        TokenType::Operator(OperatorKind::ShiftLeft) => Some(BinaryOperator::ShiftLeft),
+        TokenType::Operator(OperatorKind::ShiftRight) => Some(BinaryOperator::ShiftRight),
+        _ => None,
     }
 }
 
