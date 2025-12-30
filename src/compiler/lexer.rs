@@ -30,6 +30,16 @@ pub enum OperatorKind {
     Increment,
     /// `--` decrement operator.
     Decrement,
+    /// `&` bitwise AND or address-of operator.
+    Ampersand,
+    /// `|` bitwise OR operator.
+    BitwiseOr,
+    /// `^` bitwise XOR operator.
+    BitwiseXor,
+    /// `<<` bitwise left-shift operator.
+    LeftShift,
+    /// `>>` bitwise right-shift operator.
+    RightShift,
 }
 
 impl fmt::Display for OperatorKind {
@@ -43,6 +53,11 @@ impl fmt::Display for OperatorKind {
             OperatorKind::Modulo => write!(f, "op('-')"),
             OperatorKind::Increment => write!(f, "op('++')"),
             OperatorKind::Decrement => write!(f, "op('--')"),
+            OperatorKind::Ampersand => write!(f, "op('&')"),
+            OperatorKind::BitwiseOr => write!(f, "op('|')"),
+            OperatorKind::BitwiseXor => write!(f, "op('^')"),
+            OperatorKind::LeftShift => write!(f, "op('<<')"),
+            OperatorKind::RightShift => write!(f, "op('>>')"),
         }
     }
 }
@@ -58,6 +73,11 @@ impl fmt::Debug for OperatorKind {
             OperatorKind::Modulo => write!(f, "-"),
             OperatorKind::Increment => write!(f, "++"),
             OperatorKind::Decrement => write!(f, "--"),
+            OperatorKind::Ampersand => write!(f, "&"),
+            OperatorKind::BitwiseOr => write!(f, "|"),
+            OperatorKind::BitwiseXor => write!(f, "^"),
+            OperatorKind::LeftShift => write!(f, "<<"),
+            OperatorKind::RightShift => write!(f, ">>"),
         }
     }
 }
@@ -277,15 +297,12 @@ impl<'a> Lexer<'a> {
                         process::exit(1);
                     };
 
-                    self.tokens.push_back(Token {
-                        ty: TokenType::ConstantInt(integer),
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
+                    self.add_token(
+                        TokenType::ConstantInt(integer),
+                        line_content,
+                        ctx.in_path,
+                        col,
+                    );
                 }
                 // Handle identifier or keyword (allowed to begin with '_').
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
@@ -301,196 +318,172 @@ impl<'a> Lexer<'a> {
                         .expect("ASCII bytes should be valid UTF-8");
 
                     if KEYWORDS.contains(&token) {
-                        self.tokens.push_back(Token {
-                            ty: TokenType::Keyword(token.into()),
-                            loc: Location {
-                                line_content,
-                                file_path: ctx.in_path,
-                                line: self.line,
-                                col,
-                            },
-                        });
+                        self.add_token(
+                            TokenType::Keyword(token.into()),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
                     } else {
-                        self.tokens.push_back(Token {
-                            ty: TokenType::Ident(token.into()),
-                            loc: Location {
-                                line_content,
-                                file_path: ctx.in_path,
-                                line: self.line,
-                                col,
-                            },
-                        });
+                        self.add_token(
+                            TokenType::Ident(token.into()),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
                     }
                 }
                 b'~' => {
-                    self.tokens.push_back(Token {
-                        ty: TokenType::Operator(OperatorKind::BitwiseNot),
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
-
+                    self.add_token(
+                        TokenType::Operator(OperatorKind::BitwiseNot),
+                        line_content,
+                        ctx.in_path,
+                        col,
+                    );
                     self.cur += 1;
                 }
                 b'-' => {
                     self.cur += 1;
 
                     if self.has_next() && self.first() == b'-' {
-                        self.tokens.push_back(Token {
-                            ty: TokenType::Operator(OperatorKind::Decrement),
-                            loc: Location {
-                                line_content,
-                                file_path: ctx.in_path,
-                                line: self.line,
-                                col,
-                            },
-                        });
-
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::Decrement),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
                         self.cur += 1;
                     } else {
-                        self.tokens.push_back(Token {
-                            ty: TokenType::Operator(OperatorKind::Minus),
-                            loc: Location {
-                                line_content,
-                                file_path: ctx.in_path,
-                                line: self.line,
-                                col,
-                            },
-                        });
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::Minus),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
                     }
                 }
                 b'+' => {
                     self.cur += 1;
 
                     if self.has_next() && self.first() == b'+' {
-                        self.tokens.push_back(Token {
-                            ty: TokenType::Operator(OperatorKind::Increment),
-                            loc: Location {
-                                line_content,
-                                file_path: ctx.in_path,
-                                line: self.line,
-                                col,
-                            },
-                        });
-
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::Increment),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
                         self.cur += 1;
                     } else {
-                        self.tokens.push_back(Token {
-                            ty: TokenType::Operator(OperatorKind::Plus),
-                            loc: Location {
-                                line_content,
-                                file_path: ctx.in_path,
-                                line: self.line,
-                                col,
-                            },
-                        });
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::Plus),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
                     }
                 }
                 b'*' => {
-                    self.tokens.push_back(Token {
-                        ty: TokenType::Operator(OperatorKind::Asterisk),
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
-
+                    self.add_token(
+                        TokenType::Operator(OperatorKind::Asterisk),
+                        line_content,
+                        ctx.in_path,
+                        col,
+                    );
                     self.cur += 1;
                 }
                 b'/' => {
-                    self.tokens.push_back(Token {
-                        ty: TokenType::Operator(OperatorKind::Division),
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
-
+                    self.add_token(
+                        TokenType::Operator(OperatorKind::Division),
+                        line_content,
+                        ctx.in_path,
+                        col,
+                    );
                     self.cur += 1;
                 }
                 b'%' => {
-                    self.tokens.push_back(Token {
-                        ty: TokenType::Operator(OperatorKind::Modulo),
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
-
+                    self.add_token(
+                        TokenType::Operator(OperatorKind::Modulo),
+                        line_content,
+                        ctx.in_path,
+                        col,
+                    );
                     self.cur += 1;
                 }
-                b'(' => {
-                    self.tokens.push_back(Token {
-                        ty: TokenType::ParenOpen,
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
+                b'&' => {
+                    self.add_token(
+                        TokenType::Operator(OperatorKind::Ampersand),
+                        line_content,
+                        ctx.in_path,
+                        col,
+                    );
+                    self.cur += 1;
+                }
+                b'|' => {
+                    self.add_token(
+                        TokenType::Operator(OperatorKind::BitwiseOr),
+                        line_content,
+                        ctx.in_path,
+                        col,
+                    );
+                    self.cur += 1;
+                }
+                b'^' => {
+                    self.add_token(
+                        TokenType::Operator(OperatorKind::BitwiseXor),
+                        line_content,
+                        ctx.in_path,
+                        col,
+                    );
+                    self.cur += 1;
+                }
+                b'<' => {
+                    self.cur += 1;
 
+                    if self.has_next() && self.first() == b'<' {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::LeftShift),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                        self.cur += 1;
+                    } else {
+                        // TODO: Add `<` relational operator.
+                    }
+                }
+                b'>' => {
+                    self.cur += 1;
+
+                    if self.has_next() && self.first() == b'>' {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::RightShift),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                        self.cur += 1;
+                    } else {
+                        // TODO: Add `>` relational operator.
+                    }
+                }
+                b'(' => {
+                    self.add_token(TokenType::ParenOpen, line_content, ctx.in_path, col);
                     self.cur += 1;
                 }
                 b')' => {
-                    self.tokens.push_back(Token {
-                        ty: TokenType::ParenClose,
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
-
+                    self.add_token(TokenType::ParenClose, line_content, ctx.in_path, col);
                     self.cur += 1;
                 }
                 b'{' => {
-                    self.tokens.push_back(Token {
-                        ty: TokenType::BraceOpen,
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
-
+                    self.add_token(TokenType::BraceOpen, line_content, ctx.in_path, col);
                     self.cur += 1;
                 }
                 b'}' => {
-                    self.tokens.push_back(Token {
-                        ty: TokenType::BraceClose,
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
-
+                    self.add_token(TokenType::BraceClose, line_content, ctx.in_path, col);
                     self.cur += 1;
                 }
                 b';' => {
-                    self.tokens.push_back(Token {
-                        ty: TokenType::Semicolon,
-                        loc: Location {
-                            line_content,
-                            file_path: ctx.in_path,
-                            line: self.line,
-                            col,
-                        },
-                    });
-
+                    self.add_token(TokenType::Semicolon, line_content, ctx.in_path, col);
                     self.cur += 1;
                 }
                 b => {
@@ -533,6 +526,20 @@ impl<'a> Lexer<'a> {
     /// Returns `true` if there are no more tokens available to consume.
     pub fn is_empty(&self) -> bool {
         self.tokens.is_empty()
+    }
+
+    /// Generates and appends a new `Token` to the token sequence.
+    #[inline]
+    fn add_token(&mut self, ty: TokenType, lc: &'a str, file_path: &'static Path, col: usize) {
+        self.tokens.push_back(Token {
+            ty,
+            loc: Location {
+                line_content: lc,
+                file_path,
+                line: self.line,
+                col,
+            },
+        });
     }
 
     /// Returns the byte from `src` at the current cursor position. Does **not**
