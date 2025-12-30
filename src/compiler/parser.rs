@@ -60,6 +60,7 @@ pub enum Expression {
     Unary {
         op: UnaryOperator,
         expr: Box<Expression>,
+        sign: Signedness,
     },
     /// Binary operator applied to two expressions.
     #[allow(missing_docs)]
@@ -67,6 +68,7 @@ pub enum Expression {
         op: BinaryOperator,
         lhs: Box<Expression>,
         rhs: Box<Expression>,
+        sign: Signedness,
     },
 }
 
@@ -102,6 +104,18 @@ pub enum BinaryOperator {
     ShiftLeft,
     /// `>>` binary operator.
     ShiftRight,
+}
+
+/// Currently used to determine the signedness of an expression, particularly
+/// for logical or arithmetic right shifts.
+///
+/// NOTE: Any unary negation or binary subtraction will treat an expression as
+/// signed.
+#[derive(Debug, Clone, Copy)]
+#[allow(missing_docs)]
+pub enum Signedness {
+    Signed,
+    Unsigned,
 }
 
 impl BinaryOperator {
@@ -260,6 +274,12 @@ fn parse_expression(
             break;
         };
 
+        let sign = if let BinaryOperator::Subtract = binop {
+            Signedness::Signed
+        } else {
+            Signedness::Unsigned
+        };
+
         // Higher-precedence operators will be evaluated first, making
         // the resulting AST left-associative.
         if binop.precedence() < min_precedence {
@@ -275,6 +295,7 @@ fn parse_expression(
             op: binop,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
+            sign,
         };
 
         next = lexer.peek();
@@ -296,12 +317,19 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
                     _ => unreachable!(),
                 };
 
+                let sign = if let UnaryOperator::Negate = unop {
+                    Signedness::Signed
+                } else {
+                    Signedness::Unsigned
+                };
+
                 // Recursively parse the factor on which the unary operator is
                 // being applied to.
                 let inner_fct = parse_factor(ctx, lexer)?;
                 Ok(Expression::Unary {
                     op: unop,
                     expr: Box::new(inner_fct),
+                    sign,
                 })
             }
             TokenType::ParenOpen => {
@@ -716,6 +744,70 @@ mod tests {
     #[test]
     fn parser_valid_bin_associativity_and_precedence() {
         let source = b"int main(void) {\n    return 5 * 4 / 2 - 3 % (2 + 1);\n}";
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_bin_bit_and() {
+        let source = b"int main(void) {\n    return 3 & 5;\n}";
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_bin_bit_or() {
+        let source = b"int main(void) {\n    return 1 | 2;\n}";
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_bin_bit_precedence() {
+        let source = b"int main(void) {\n    return 80 >> 2 | 1 ^ 5 & 7 << 1;\n}";
+        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+
+        let ctx = test_ctx();
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            lexer.lex(&ctx);
+        }));
+
+        assert!(result.is_ok(), "lexer should not panic in parser test");
+
+        parse_program(&ctx, &mut lexer);
+    }
+
+    #[test]
+    fn parser_valid_bin_bit_shift() {
+        let source = b"int main(void) {\n    return 33 << 4 >> 2;\n}";
         let mut lexer = crate::compiler::lexer::Lexer::new(source);
 
         let ctx = test_ctx();

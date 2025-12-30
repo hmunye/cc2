@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use crate::compiler::parser::{self, BinaryOperator, UnaryOperator};
+use crate::compiler::parser::{self, BinaryOperator, Signedness, UnaryOperator};
 
 type Ident = String;
 
@@ -59,6 +59,7 @@ pub enum Instruction {
         op: UnaryOperator,
         src: Value,
         dst: Value,
+        sign: Signedness,
     },
     /// Perform a binary operation on `lhs` and `rhs`, storing the result in
     /// `dst`.
@@ -70,6 +71,7 @@ pub enum Instruction {
         lhs: Value,
         rhs: Value,
         dst: Value,
+        sign: Signedness,
     },
 }
 
@@ -77,7 +79,7 @@ impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Instruction::Return(v) => write!(f, "{:<15}{}", "Return", v),
-            Instruction::Unary { op, src, dst } => {
+            Instruction::Unary { op, src, dst, sign } => {
                 let src_str = format!("{src}");
                 let len = src_str.len();
 
@@ -87,12 +89,25 @@ impl fmt::Display for Instruction {
                 write!(
                     f,
                     "{:<15}{src_str} {:>width$}  {dst}",
-                    format!("{op:?}"),
+                    format!(
+                        "{op:?}({})",
+                        if let Signedness::Signed = sign {
+                            "S"
+                        } else {
+                            "U"
+                        }
+                    ),
                     "->",
                     width = width
                 )
             }
-            Instruction::Binary { op, lhs, rhs, dst } => {
+            Instruction::Binary {
+                op,
+                lhs,
+                rhs,
+                dst,
+                sign,
+            } => {
                 let lhs_str = format!("{lhs}");
                 let rhs_str = format!("{rhs}");
                 let len = lhs_str.len() + rhs_str.len();
@@ -103,7 +118,14 @@ impl fmt::Display for Instruction {
                 write!(
                     f,
                     "{:<15}{lhs_str}, {rhs_str} {:>width$}  {dst}",
-                    format!("{op:?}"),
+                    format!(
+                        "{op:?}({})",
+                        if let Signedness::Signed = sign {
+                            "S"
+                        } else {
+                            "U"
+                        }
+                    ),
                     "->",
                     width = width
                 )
@@ -190,7 +212,18 @@ fn generate_ir_function(func: &parser::Function) -> Function {
 fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_>) -> Value {
     match expr {
         parser::Expression::ConstantInt(v) => Value::ConstantInt(*v),
-        parser::Expression::Unary { op, expr } => {
+        parser::Expression::Unary { op, expr, .. } => {
+            // The sign of an _IR_ instruction is determined by the
+            // sub-expressions (here `expr`), not by when the operator is
+            // applied to them. Subsequent instructions that use the result
+            // will interpret its sign based on the operator's effect on the
+            // operand(s) at the time of usage.
+            let sign = match **expr {
+                parser::Expression::Unary { sign, .. } => sign,
+                parser::Expression::Binary { sign, .. } => sign,
+                _ => Signedness::Unsigned,
+            };
+
             // Recursively process the expression until the base case
             // (`ConstantInt`) is reached. This ensures the inner expression is
             // processed initially before unwinding.
@@ -201,13 +234,25 @@ fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_
                 op: *op,
                 src,
                 dst: dst.clone(),
+                sign,
             });
 
             // The returned `dst` is used as the new `src` in each unwind of
             // the recursion.
             dst
         }
-        parser::Expression::Binary { op, lhs, rhs } => {
+        parser::Expression::Binary { op, lhs, rhs, .. } => {
+            // The sign of an _IR_ instruction is determined by the
+            // sub-expressions (here `lhs`), not by when the operator is
+            // applied to them. Subsequent instructions that use the result
+            // will interpret its sign based on the operator's effect on the
+            // operand(s) at the time of usage.
+            let sign = match **lhs {
+                parser::Expression::Unary { sign, .. } => sign,
+                parser::Expression::Binary { sign, .. } => sign,
+                _ => Signedness::Unsigned,
+            };
+
             // _C17_ 5.1.2.3 (Program execution)
             //
             // Sub-expressions of the same operation are _unsequenced_ (few
@@ -222,6 +267,7 @@ fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_
                 lhs,
                 rhs,
                 dst: dst.clone(),
+                sign,
             });
 
             dst

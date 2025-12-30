@@ -8,7 +8,7 @@ use std::collections::hash_map::Entry;
 use std::fmt;
 
 use crate::compiler::ir::{self, IR};
-use crate::compiler::parser;
+use crate::compiler::parser::{self, Signedness};
 
 type Ident = String;
 
@@ -408,6 +408,8 @@ pub enum BinaryOperator {
     Shl,
     /// Instructions right shift (logical).
     Shr,
+    /// Instructions right shift (arithmetic).
+    Sar,
 }
 
 impl TryFrom<&parser::BinaryOperator> for BinaryOperator {
@@ -422,6 +424,7 @@ impl TryFrom<&parser::BinaryOperator> for BinaryOperator {
             parser::BinaryOperator::BitOr => Ok(BinaryOperator::Or),
             parser::BinaryOperator::BitXor => Ok(BinaryOperator::Xor),
             parser::BinaryOperator::ShiftLeft => Ok(BinaryOperator::Shl),
+            // Defaults to logical `shr` operator.
             parser::BinaryOperator::ShiftRight => Ok(BinaryOperator::Shr),
             _ => Err(()),
         }
@@ -467,13 +470,19 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 ));
                 instructions.push(Instruction::Ret);
             }
-            ir::Instruction::Unary { op, src, dst } => {
+            ir::Instruction::Unary { op, src, dst, .. } => {
                 let dst = generate_mir_operand(dst);
 
                 instructions.push(Instruction::Mov(generate_mir_operand(src), dst.clone()));
                 instructions.push(Instruction::Unary(op.into(), dst));
             }
-            ir::Instruction::Binary { op, lhs, rhs, dst } => {
+            ir::Instruction::Binary {
+                op,
+                lhs,
+                rhs,
+                dst,
+                sign,
+            } => {
                 let dst = generate_mir_operand(dst);
 
                 match op {
@@ -496,6 +505,20 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                         instructions.push(Instruction::Mov(src, dst));
                     }
                     _ => {
+                        let binop = if let parser::BinaryOperator::ShiftRight = op
+                            && let Signedness::Signed = sign
+                        {
+                            // Since the shift-right instruction is determined
+                            // to be signed, use an arithmetic right shift
+                            // instead of logical.
+                            BinaryOperator::Sar
+                        } else {
+                            op.try_into().unwrap_or_else(|_| panic!(
+                                "parser::BinaryOperator '{:?}' is an invalid mir::BinaryOperator",
+                                op
+                            ))
+                        };
+
                         instructions.push(Instruction::Mov(generate_mir_operand(lhs), dst.clone()));
                         // In the new instruction, it's `rhs` is the destination
                         // and it's `lhs` is the source.
@@ -505,8 +528,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                         //     op  rhs -> dst      # dst = dst op rhs
                         // ```
                         instructions.push(Instruction::Binary(
-                            op.try_into().unwrap_or_else(|_| panic!("parser::BinaryOperator '{:?}' is an invalid mir::BinaryOperator",
-                                op)),
+                            binop,
                             generate_mir_operand(rhs),
                             dst,
                         ));
