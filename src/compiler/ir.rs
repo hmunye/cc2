@@ -208,9 +208,11 @@ fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_
             dst
         }
         parser::Expression::Binary { op, lhs, rhs } => {
-            // NOTE: According to the _C_ standard, sub-expressions of the same
-            // operation are _unsequenced_ (few exceptions). This means either
-            // the `lhs` or the `rhs` can be processed first.
+            // _C17_ 5.1.2.3 (Program execution)
+            //
+            // Sub-expressions of the same operation are _unsequenced_ (few
+            // exceptions). This means either the `lhs` or the `rhs` can be
+            // processed first.
             let lhs = generate_ir_expression(lhs, builder);
             let rhs = generate_ir_expression(rhs, builder);
             let dst = Value::Var(builder.new_tmp());

@@ -85,27 +85,36 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
 fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
     match instruction {
         mir::Instruction::Mov(src, dst) => {
-            format!("movl\t{}, {}", emit_asm_operand(src), emit_asm_operand(dst))
+            format!(
+                "movl\t{}, {}",
+                emit_asm_operand(src, 4),
+                emit_asm_operand(dst, 4)
+            )
         }
         mir::Instruction::Unary(unop, operand) => match unop {
-            UnaryOperator::Not => format!("notl\t{}", emit_asm_operand(operand)),
-            UnaryOperator::Neg => format!("negl\t{}", emit_asm_operand(operand)),
+            UnaryOperator::Not => format!("notl\t{}", emit_asm_operand(operand, 4)),
+            UnaryOperator::Neg => format!("negl\t{}", emit_asm_operand(operand, 4)),
         },
         mir::Instruction::Binary(binop, lhs, rhs) => {
-            let instr = match binop {
-                BinaryOperator::Add => "addl",
-                BinaryOperator::Sub => "subl",
-                BinaryOperator::Imul => "imull",
+            let (instr, size) = match binop {
+                BinaryOperator::Add => ("addl", 4),
+                BinaryOperator::Sub => ("subl", 4),
+                BinaryOperator::Imul => ("imull", 4),
+                BinaryOperator::And => ("andl", 4),
+                BinaryOperator::Or => ("or", 4),
+                BinaryOperator::Xor => ("xor", 4),
+                BinaryOperator::Shl => ("shll", 1),
+                BinaryOperator::Shr => ("shrl", 1),
             };
 
             format!(
                 "{}\t{}, {}",
                 instr,
-                emit_asm_operand(lhs),
-                emit_asm_operand(rhs)
+                emit_asm_operand(lhs, size),
+                emit_asm_operand(rhs, size)
             )
         }
-        mir::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div)),
+        mir::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div, 4)),
         mir::Instruction::Cdq => "cdq".into(),
         mir::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
         // Include the function epilogue before returning to the caller:
@@ -133,13 +142,56 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
 }
 
 /// Return a string assembly representation of the given `MIR` operand.
-fn emit_asm_operand(op: &mir::Operand) -> String {
+///
+/// `size` formats register operands depending on the required width (in bytes).
+fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
     match op {
         mir::Operand::Imm32(v) => format!("${v}"),
-        mir::Operand::Register(reg) => format!("{reg}"),
+        mir::Operand::Register(r) => match r {
+            mir::Reg::AX => match size {
+                1 => "%al",
+                2 => "%ax",
+                4 => "%eax",
+                8 => "%rax",
+                _ => panic!("invalid register size for AX: '{}'", size),
+            }
+            .to_string(),
+            mir::Reg::CX => match size {
+                1 => "%cl",
+                2 => "%cx",
+                4 => "%ecx",
+                8 => "%rcx",
+                _ => panic!("invalid register size for CX: '{}'", size),
+            }
+            .to_string(),
+            mir::Reg::DX => match size {
+                1 => "%dl",
+                2 => "%dx",
+                4 => "%edx",
+                8 => "%rdx",
+                _ => panic!("invalid register size for DX: '{}'", size),
+            }
+            .to_string(),
+            mir::Reg::R10 => match size {
+                1 => "%r10b",
+                2 => "%r10w",
+                4 => "%r10d",
+                8 => "%r10",
+                _ => panic!("invalid register size for R10: '{}'", size),
+            }
+            .to_string(),
+            mir::Reg::R11 => match size {
+                1 => "%r11b",
+                2 => "%r11w",
+                4 => "%r11d",
+                8 => "%r11",
+                _ => panic!("invalid register size for R11: '{}'", size),
+            }
+            .to_string(),
+        },
         mir::Operand::Stack(s) => format!("-{s}(%rbp)"),
         mir::Operand::Pseudo(_) => {
-            panic!("pseudoregisters should not be encountered when emitting textual assembly")
+            panic!("pseudoregisters should not be encountered when emitting assembly")
         }
     }
 }

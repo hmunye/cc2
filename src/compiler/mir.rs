@@ -8,6 +8,7 @@ use std::collections::hash_map::Entry;
 use std::fmt;
 
 use crate::compiler::ir::{self, IR};
+use crate::compiler::parser;
 
 type Ident = String;
 
@@ -27,100 +28,45 @@ impl MIR {
         // NOTE: Currently "allocating" in 4-byte offsets.
         let mut stack_offset = 0;
 
+        // Either increment the current stack offset, or use the stored offset
+        // if the identifier has already been seen.
+        let mut get_offset = |ident: &mut String| match map.entry(ident.clone()) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                stack_offset += 4;
+                entry.insert(stack_offset);
+                stack_offset
+            }
+        };
+
         match self {
             MIR::Program(func) => {
                 for inst in &mut func.instructions {
                     match inst {
                         Instruction::Mov(src, dst) => {
                             if let Operand::Pseudo(ident) = src {
-                                // Either increment the current stack offset, or
-                                // use the stored offset if the identifier has
-                                // already been seen.
-                                let offset = match map.entry(ident.clone()) {
-                                    Entry::Occupied(entry) => *entry.get(),
-                                    Entry::Vacant(entry) => {
-                                        stack_offset += 4;
-                                        entry.insert(stack_offset);
-                                        stack_offset
-                                    }
-                                };
-                                *src = Operand::Stack(offset);
+                                *src = Operand::Stack(get_offset(ident));
                             }
                             if let Operand::Pseudo(ident) = dst {
-                                // Either increment the current stack offset, or
-                                // use the stored offset if the identifier has
-                                // already been seen.
-                                let offset = match map.entry(ident.clone()) {
-                                    Entry::Occupied(entry) => *entry.get(),
-                                    Entry::Vacant(entry) => {
-                                        stack_offset += 4;
-                                        entry.insert(stack_offset);
-                                        stack_offset
-                                    }
-                                };
-                                *dst = Operand::Stack(offset);
+                                *dst = Operand::Stack(get_offset(ident));
                             }
                         }
                         Instruction::Unary(_, operand) => {
                             if let Operand::Pseudo(ident) = operand {
-                                // Either increment the current stack offset, or
-                                // use the stored offset if the identifier has
-                                // already been seen.
-                                let offset = match map.entry(ident.clone()) {
-                                    Entry::Occupied(entry) => *entry.get(),
-                                    Entry::Vacant(entry) => {
-                                        stack_offset += 4;
-                                        entry.insert(stack_offset);
-                                        stack_offset
-                                    }
-                                };
-                                *operand = Operand::Stack(offset);
+                                *operand = Operand::Stack(get_offset(ident));
                             }
                         }
                         Instruction::Binary(_, lhs, rhs) => {
                             if let Operand::Pseudo(ident) = lhs {
-                                // Either increment the current stack offset, or
-                                // use the stored offset if the identifier has
-                                // already been seen.
-                                let offset = match map.entry(ident.clone()) {
-                                    Entry::Occupied(entry) => *entry.get(),
-                                    Entry::Vacant(entry) => {
-                                        stack_offset += 4;
-                                        entry.insert(stack_offset);
-                                        stack_offset
-                                    }
-                                };
-                                *lhs = Operand::Stack(offset);
+                                *lhs = Operand::Stack(get_offset(ident));
                             }
                             if let Operand::Pseudo(ident) = rhs {
-                                // Either increment the current stack offset, or
-                                // use the stored offset if the identifier has
-                                // already been seen.
-                                let offset = match map.entry(ident.clone()) {
-                                    Entry::Occupied(entry) => *entry.get(),
-                                    Entry::Vacant(entry) => {
-                                        stack_offset += 4;
-                                        entry.insert(stack_offset);
-                                        stack_offset
-                                    }
-                                };
-                                *rhs = Operand::Stack(offset);
+                                *rhs = Operand::Stack(get_offset(ident));
                             }
                         }
                         Instruction::Idiv(div) => {
                             if let Operand::Pseudo(ident) = div {
-                                // Either increment the current stack offset, or
-                                // use the stored offset if the identifier has
-                                // already been seen.
-                                let offset = match map.entry(ident.clone()) {
-                                    Entry::Occupied(entry) => *entry.get(),
-                                    Entry::Vacant(entry) => {
-                                        stack_offset += 4;
-                                        entry.insert(stack_offset);
-                                        stack_offset
-                                    }
-                                };
-                                *div = Operand::Stack(offset);
+                                *div = Operand::Stack(get_offset(ident));
                             }
                         }
                         _ => {}
@@ -198,21 +144,22 @@ impl MIR {
                             // inserted are skipped.
                             i += 1;
                         }
-                        // `add` or `sub` instruction that uses a memory address
-                        // for both operands (illegal).
+                        // `add`, `sub`, `and`, `or`, or, `xor` instruction that
+                        // uses a memory address for both operands (illegal).
                         Instruction::Binary(op, lhs, rhs)
-                            if matches!(op, BinaryOperator::Add | BinaryOperator::Sub)
-                                && matches!(lhs, Operand::Stack(_))
+                            if matches!(
+                                op,
+                                BinaryOperator::Add
+                                    | BinaryOperator::Sub
+                                    | BinaryOperator::And
+                                    | BinaryOperator::Or
+                                    | BinaryOperator::Xor
+                            ) && matches!(lhs, Operand::Stack(_))
                                 && matches!(rhs, Operand::Stack(_)) =>
                         {
                             let lhs = lhs.clone();
                             let rhs = rhs.clone();
-
-                            let binop = if let BinaryOperator::Add = op {
-                                BinaryOperator::Add
-                            } else {
-                                BinaryOperator::Sub
-                            };
+                            let binop = *op;
 
                             func.instructions.splice(
                                 i..=i,
@@ -252,6 +199,32 @@ impl MIR {
                             // Increment `i` to ensure the three new
                             // instructions inserted are skipped.
                             i += 2;
+                        }
+                        // `shl` or `shr` instruction that uses a memory address
+                        // or register not `%cl` as source operand (illegal).
+                        Instruction::Binary(op, lhs, rhs)
+                            if matches!(op, BinaryOperator::Shl | BinaryOperator::Shr)
+                                && !matches!(
+                                    lhs,
+                                    Operand::Imm32(_) | Operand::Register(Reg::CX)
+                                ) =>
+                        {
+                            let lhs = lhs.clone();
+                            let rhs = rhs.clone();
+                            let binop = *op;
+
+                            // `Reg::CX` here represents the `%cl` register.
+                            func.instructions.splice(
+                                i..=i,
+                                [
+                                    Instruction::Mov(lhs, Operand::Register(Reg::CX)),
+                                    Instruction::Binary(binop, Operand::Register(Reg::CX), rhs),
+                                ],
+                            );
+
+                            // Increment `i` to ensure the two new instructions
+                            // inserted are skipped.
+                            i += 1;
                         }
                         _ => {}
                     }
@@ -373,7 +346,7 @@ impl fmt::Display for Operand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Operand::Imm32(v) => write!(f, "{v}"),
-            Operand::Register(r) => fmt::Display::fmt(r, f),
+            Operand::Register(r) => write!(f, "%{r:?}"),
             Operand::Pseudo(i) => write!(f, "{i:?}"),
             Operand::Stack(v) => write!(f, "stack({v})"),
         }
@@ -382,39 +355,36 @@ impl fmt::Display for Operand {
 
 /// _MIR x86-64_ registers (size agnostic).
 #[derive(Debug, Copy, Clone)]
-#[allow(missing_docs)]
 pub enum Reg {
+    /// `rax` (64-bit), `eax` (32-bit), `ax` (16-bit), `al` (8-bit low),
+    /// `ah` (8-bit high).
     AX,
+    /// `rcx` (64-bit), `ecx` (32-bit), `cx` (16-bit), `cl` (8-bit low),
+    /// `ch` (8-bit high).
+    CX,
+    /// `rdx` (64-bit), `edx` (32-bit), `dx` (16-bit), `dl` (8-bit low),
+    /// `dh` (8-bit high).
     DX,
+    /// `r10` (64-bit), `r10d` (32-bit), `r10w` (16-bit), `r10b` (8-bit low)
     R10,
+    /// `r11` (64-bit), `r11d` (32-bit), `r11w` (16-bit), `r11b` (8-bit low)
     R11,
-}
-
-impl fmt::Display for Reg {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Reg::AX => write!(f, "%eax"),
-            Reg::DX => write!(f, "%edx"),
-            Reg::R10 => write!(f, "%r10d"),
-            Reg::R11 => write!(f, "%r11d"),
-        }
-    }
 }
 
 /// _MIR_ unary operators.
 #[derive(Debug, Copy, Clone)]
 pub enum UnaryOperator {
-    /// Instruction for bitwise negation.
+    /// Instruction for one's complement negation.
     Not,
     /// Instruction for two's complement negation.
     Neg,
 }
 
-impl From<&crate::compiler::parser::UnaryOperator> for UnaryOperator {
-    fn from(unop: &crate::compiler::parser::UnaryOperator) -> UnaryOperator {
+impl From<&parser::UnaryOperator> for UnaryOperator {
+    fn from(unop: &parser::UnaryOperator) -> UnaryOperator {
         match unop {
-            crate::compiler::parser::UnaryOperator::Complement => UnaryOperator::Not,
-            crate::compiler::parser::UnaryOperator::Negate => UnaryOperator::Neg,
+            parser::UnaryOperator::Complement => UnaryOperator::Not,
+            parser::UnaryOperator::Negate => UnaryOperator::Neg,
         }
     }
 }
@@ -428,16 +398,31 @@ pub enum BinaryOperator {
     Sub,
     /// Instruction for signed multiplication.
     Imul,
+    /// Instructions for logical AND.
+    And,
+    /// Instructions for logical OR.
+    Or,
+    /// Instructions for logical XOR.
+    Xor,
+    /// Instructions left shift (logical).
+    Shl,
+    /// Instructions right shift (logical).
+    Shr,
 }
 
-impl TryFrom<&crate::compiler::parser::BinaryOperator> for BinaryOperator {
+impl TryFrom<&parser::BinaryOperator> for BinaryOperator {
     type Error = ();
 
-    fn try_from(binop: &crate::compiler::parser::BinaryOperator) -> Result<Self, Self::Error> {
+    fn try_from(binop: &parser::BinaryOperator) -> Result<Self, Self::Error> {
         match binop {
-            crate::compiler::parser::BinaryOperator::Add => Ok(BinaryOperator::Add),
-            crate::compiler::parser::BinaryOperator::Subtract => Ok(BinaryOperator::Sub),
-            crate::compiler::parser::BinaryOperator::Multiply => Ok(BinaryOperator::Imul),
+            parser::BinaryOperator::Add => Ok(BinaryOperator::Add),
+            parser::BinaryOperator::Subtract => Ok(BinaryOperator::Sub),
+            parser::BinaryOperator::Multiply => Ok(BinaryOperator::Imul),
+            parser::BinaryOperator::BitAnd => Ok(BinaryOperator::And),
+            parser::BinaryOperator::BitOr => Ok(BinaryOperator::Or),
+            parser::BinaryOperator::BitXor => Ok(BinaryOperator::Xor),
+            parser::BinaryOperator::ShiftLeft => Ok(BinaryOperator::Shl),
+            parser::BinaryOperator::ShiftRight => Ok(BinaryOperator::Shr),
             _ => Err(()),
         }
     }
@@ -492,26 +477,33 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 let dst = generate_mir_operand(dst);
 
                 match op {
-                    crate::compiler::parser::BinaryOperator::Divide => {
+                    parser::BinaryOperator::Divide | parser::BinaryOperator::Remainder => {
                         instructions.push(Instruction::Mov(
                             generate_mir_operand(lhs),
                             Operand::Register(Reg::AX),
                         ));
                         instructions.push(Instruction::Cdq);
                         instructions.push(Instruction::Idiv(generate_mir_operand(rhs)));
-                        instructions.push(Instruction::Mov(Operand::Register(Reg::AX), dst));
-                    }
-                    crate::compiler::parser::BinaryOperator::Remainder => {
-                        instructions.push(Instruction::Mov(
-                            generate_mir_operand(lhs),
-                            Operand::Register(Reg::AX),
-                        ));
-                        instructions.push(Instruction::Cdq);
-                        instructions.push(Instruction::Idiv(generate_mir_operand(rhs)));
-                        instructions.push(Instruction::Mov(Operand::Register(Reg::DX), dst));
+
+                        let src = if let parser::BinaryOperator::Divide = op {
+                            // Quotient is in `eax` register.
+                            Operand::Register(Reg::AX)
+                        } else {
+                            // Remainder is in `edx` register.
+                            Operand::Register(Reg::DX)
+                        };
+
+                        instructions.push(Instruction::Mov(src, dst));
                     }
                     _ => {
                         instructions.push(Instruction::Mov(generate_mir_operand(lhs), dst.clone()));
+                        // In the new instruction, it's `rhs` is the destination
+                        // and it's `lhs` is the source.
+                        //
+                        // ```
+                        //     mov lhs -> dst      # copy lhs into destination
+                        //     op  rhs -> dst      # dst = dst op rhs
+                        // ```
                         instructions.push(Instruction::Binary(
                             op.try_into().unwrap_or_else(|_| panic!("parser::BinaryOperator '{:?}' is an invalid mir::BinaryOperator",
                                 op)),
