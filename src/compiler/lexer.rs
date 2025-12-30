@@ -251,6 +251,9 @@ impl<'a> Lexer<'a> {
                     //
                     // NOTE: Currently don't allow '_' as a separator.
                     if self.first().is_ascii_alphabetic() || self.first() == b'_' {
+                        let const_len = self.cur - token_start;
+                        let const_end = self.cur;
+
                         // Continue consuming the invalid suffix.
                         while self.has_next()
                             && (self.first().is_ascii_alphabetic() || self.first() == b'_')
@@ -258,7 +261,7 @@ impl<'a> Lexer<'a> {
                             self.cur += 1;
                         }
 
-                        let suffix = std::str::from_utf8(&self.src[token_start + 1..self.cur])
+                        let suffix = std::str::from_utf8(&self.src[const_end..self.cur])
                             .expect("ASCII bytes should be valid UTF-8");
 
                         if cfg!(test) {
@@ -268,9 +271,9 @@ impl<'a> Lexer<'a> {
                         report_token_err!(
                             ctx.in_path.display(),
                             self.line,
-                            col,
+                            col + const_len,
                             suffix,
-                            suffix.len(),
+                            suffix.len() - 1,
                             line_content,
                             "invalid suffix '{suffix}' on integer constant",
                         );
