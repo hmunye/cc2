@@ -8,17 +8,6 @@ macro_rules! report_err {
     }};
 }
 
-/// Report a generic error message with context, printing to `stderr`.
-#[macro_export]
-macro_rules! report_ctx_err {
-    ($file:expr, $line:expr, $col:expr, $($arg:tt)+) => {{
-        eprintln!(
-            "\x1b[1;1m{}:{}:{}:\x1b[0m \x1b[1;31merror:\x1b[0m {}",
-            $file, $line, $col, format!($($arg)+)
-        );
-    }};
-}
-
 /// Report an error related to a token (with token position and line content),
 /// printing to `stderr`.
 #[macro_export]
@@ -44,17 +33,6 @@ macro_rules! report_token_err {
 macro_rules! fmt_err {
     ($program:expr, $($arg:tt)+) => {{
         format!("\x1b[1;1m{}\x1b[0m: \x1b[1;31merror:\x1b[0m {}", $program, format!($($arg)+))
-    }};
-}
-
-/// Format a generic error message with context into a `String`.
-#[macro_export]
-macro_rules! fmt_ctx_err {
-    ($file:expr, $line:expr, $col:expr, $($arg:tt)+) => {{
-        format!(
-            "\x1b[1;1m{}:{}:{}:\x1b[0m \x1b[1;31merror:\x1b[0m {}",
-            $file, $line, $col, format!($($arg)+)
-        )
     }};
 }
 

@@ -1,4 +1,4 @@
-//! Module for parsing command-line arguments passed to the compiler.
+//! Parsing for the compiler's command-line arguments.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -63,7 +63,7 @@ impl Args {
                         ["-o", "--output"] => match args.next() {
                             Some(path) => out_path = PathBuf::from(&path),
                             None => {
-                                report_err!(&program, "missing file name after '-o'|'--output'");
+                                report_err!(&program, "missing file path after '-o'|'--output'");
                                 print_usage(&program);
                             }
                         },
@@ -77,14 +77,12 @@ impl Args {
                     report_err!(&program, "invalid flag: '{flag_name}'");
                     print_usage(&program);
                 }
+            } else if in_path.is_empty() {
+                // Input file can come before or after option flags.
+                in_path = args.next().expect("next argument should be present");
             } else {
-                if in_path.is_empty() {
-                    // Input file can come before or after flags.
-                    in_path = args.next().expect("next argument should be present");
-                } else {
-                    report_err!(&program, "invalid arg: '{arg}'");
-                    print_usage(&program);
-                }
+                report_err!(&program, "invalid argument: '{arg}'");
+                print_usage(&program);
             }
         }
 

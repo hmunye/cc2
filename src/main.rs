@@ -12,7 +12,7 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::{fs, process};
 
-/// Context for each compilation phase.
+/// Information about the current program.
 #[derive(Debug)]
 pub struct Context<'a> {
     /// Name of the program.
@@ -79,16 +79,18 @@ fn main() {
             let mir = compiler::mir::generate_mir(&ir);
 
             let output: Box<dyn Write> = if stage == "asm" {
+                // Print the assembly that would have been emitted to `stdout`.
                 Box::new(io::stdout().lock())
             } else {
-                Box::new(fs::File::create(ctx.out_path).unwrap_or_else(|err| {
+                let f = fs::File::create(ctx.out_path).unwrap_or_else(|err| {
                     report_err!(
                         &ctx.program,
                         "failed to create output file '{}': {err}",
                         ctx.in_path.display()
                     );
                     process::exit(1);
-                }))
+                });
+                Box::new(f)
             };
 
             compiler::emit::emit_asm(&ctx, &mir, output);

@@ -32,21 +32,6 @@ pub enum OperatorKind {
     Decrement,
 }
 
-impl fmt::Debug for OperatorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OperatorKind::BitwiseNot => write!(f, "~"),
-            OperatorKind::Minus => write!(f, "-"),
-            OperatorKind::Plus => write!(f, "+"),
-            OperatorKind::Asterisk => write!(f, "*"),
-            OperatorKind::Division => write!(f, "/"),
-            OperatorKind::Modulo => write!(f, "-"),
-            OperatorKind::Increment => write!(f, "++"),
-            OperatorKind::Decrement => write!(f, "--"),
-        }
-    }
-}
-
 impl fmt::Display for OperatorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -58,6 +43,21 @@ impl fmt::Display for OperatorKind {
             OperatorKind::Modulo => write!(f, "op('-')"),
             OperatorKind::Increment => write!(f, "op('++')"),
             OperatorKind::Decrement => write!(f, "op('--')"),
+        }
+    }
+}
+
+impl fmt::Debug for OperatorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OperatorKind::BitwiseNot => write!(f, "~"),
+            OperatorKind::Minus => write!(f, "-"),
+            OperatorKind::Plus => write!(f, "+"),
+            OperatorKind::Asterisk => write!(f, "*"),
+            OperatorKind::Division => write!(f, "/"),
+            OperatorKind::Modulo => write!(f, "-"),
+            OperatorKind::Increment => write!(f, "++"),
+            OperatorKind::Decrement => write!(f, "--"),
         }
     }
 }
@@ -77,22 +77,6 @@ pub enum TokenType {
     Semicolon,
 }
 
-impl fmt::Debug for TokenType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TokenType::Keyword(s) => write!(f, "{s}"),
-            TokenType::Ident(i) => write!(f, "{i}"),
-            TokenType::ConstantInt(v) => write!(f, "{v}"),
-            TokenType::Operator(op) => fmt::Debug::fmt(op, f),
-            TokenType::ParenOpen => write!(f, "("),
-            TokenType::ParenClose => write!(f, ")"),
-            TokenType::BraceOpen => write!(f, "{{"),
-            TokenType::BraceClose => write!(f, "}}"),
-            TokenType::Semicolon => write!(f, ";"),
-        }
-    }
-}
-
 impl fmt::Display for TokenType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -105,6 +89,22 @@ impl fmt::Display for TokenType {
             TokenType::BraceOpen => write!(f, "'{{'"),
             TokenType::BraceClose => write!(f, "'}}'"),
             TokenType::Semicolon => write!(f, "';'"),
+        }
+    }
+}
+
+impl fmt::Debug for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenType::Keyword(s) => write!(f, "{s}"),
+            TokenType::Ident(i) => write!(f, "{i}"),
+            TokenType::ConstantInt(v) => write!(f, "{v}"),
+            TokenType::Operator(op) => fmt::Debug::fmt(op, f),
+            TokenType::ParenOpen => write!(f, "("),
+            TokenType::ParenClose => write!(f, ")"),
+            TokenType::BraceOpen => write!(f, "{{"),
+            TokenType::BraceClose => write!(f, "}}"),
+            TokenType::Semicolon => write!(f, ";"),
         }
     }
 }
@@ -132,15 +132,15 @@ pub struct Token<'a> {
     pub loc: Location<'a>,
 }
 
-impl fmt::Debug for Token<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.ty)
-    }
-}
-
 impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}\t    {}", self.loc, self.ty)
+    }
+}
+
+impl fmt::Debug for Token<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.ty)
     }
 }
 
@@ -186,7 +186,8 @@ impl<'a> Lexer<'a> {
                 self.cur - self.bol
             };
 
-            // Capture the first line's contents (before encountering any '\n').
+            // Capture the first line's contents (must be done separately since
+            // no '\n' has been encountered yet).
             if !first_line_captured {
                 let mut i = 0;
                 while i < self.src.len() && self.src[i] != b'\n' {
@@ -534,7 +535,7 @@ impl<'a> Lexer<'a> {
         self.tokens.is_empty()
     }
 
-    /// Returns the byte from `src` at the current cursor position. Does not
+    /// Returns the byte from `src` at the current cursor position. Does **not**
     /// update the cursor position.
     ///
     /// # Panic
@@ -557,7 +558,6 @@ impl fmt::Display for Lexer<'_> {
         for tok in &self.tokens {
             writeln!(f, "{}", tok)?;
         }
-
         Ok(())
     }
 }

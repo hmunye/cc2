@@ -165,20 +165,22 @@ fn parse_statement(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Statement
 /// Parse an _AST_ function/object type from the provided `Lexer`.
 fn parse_type(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Type, String> {
     if let Some(token) = lexer.next_token() {
-        let tok_str = format!("{token:?}");
+        match token.ty {
+            TokenType::Keyword(ref s) if s == "int" => Ok(Type::Int),
+            TokenType::Keyword(ref s) if s == "void" => Ok(Type::Void),
+            _ => {
+                let tok_str = format!("{token:?}");
 
-        match tok_str.as_str() {
-            "int" => Ok(Type::Int),
-            "void" => Ok(Type::Void),
-            t => Err(fmt_token_err!(
-                token.loc.file_path.display(),
-                token.loc.line,
-                token.loc.col,
-                t,
-                t.len() - 1,
-                token.loc.line_content,
-                "unknown type name '{t}'",
-            )),
+                Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    token.loc.line_content,
+                    "unknown type name '{tok_str}'",
+                ))
+            }
         }
     } else {
         Err(fmt_err!(
@@ -193,8 +195,8 @@ fn parse_ident(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Ident, String
     if let Some(token) = lexer.next_token() {
         match token.ty {
             TokenType::Ident(ref s) => Ok(s.clone()),
-            t => {
-                let tok_str = format!("{t:?}");
+            tok => {
+                let tok_str = format!("{tok:?}");
 
                 Err(fmt_token_err!(
                     token.loc.file_path.display(),
@@ -234,7 +236,7 @@ fn parse_expression(
             | OperatorKind::Modulo,
         ) = token.ty
     {
-        let op = match token.ty {
+        let binop = match token.ty {
             TokenType::Operator(OperatorKind::Plus) => BinaryOperator::Add,
             TokenType::Operator(OperatorKind::Minus) => BinaryOperator::Subtract,
             TokenType::Operator(OperatorKind::Asterisk) => BinaryOperator::Multiply,
@@ -245,17 +247,17 @@ fn parse_expression(
 
         // Higher-precedence operators will be evaluated first, making
         // the resulting AST left-associative.
-        if op.precedence() < min_precedence {
+        if binop.precedence() < min_precedence {
             break;
         }
 
         // Consume the matched binary operator.
         let _ = lexer.next_token();
 
-        let rhs = parse_expression(ctx, lexer, op.precedence() + 1)?;
+        let rhs = parse_expression(ctx, lexer, binop.precedence() + 1)?;
 
         lhs = Expression::Binary {
-            op,
+            op: binop,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
         };
@@ -273,7 +275,7 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
         match token.ty {
             TokenType::ConstantInt(v) => Ok(Expression::ConstantInt(v)),
             TokenType::Operator(OperatorKind::BitwiseNot | OperatorKind::Minus) => {
-                let op = match token.ty {
+                let unop = match token.ty {
                     TokenType::Operator(OperatorKind::BitwiseNot) => UnaryOperator::Complement,
                     TokenType::Operator(OperatorKind::Minus) => UnaryOperator::Negate,
                     _ => unreachable!(),
@@ -283,7 +285,7 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
                 // being applied to.
                 let inner_fct = parse_factor(ctx, lexer)?;
                 Ok(Expression::Unary {
-                    op,
+                    op: unop,
                     expr: Box::new(inner_fct),
                 })
             }
@@ -293,10 +295,10 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
                 expect_token(ctx, lexer, TokenType::ParenClose)?;
                 Ok(inner_expr)
             }
-            t => {
-                let tok_str = format!("{t:?}");
+            tok => {
+                let tok_str = format!("{tok:?}");
 
-                let err_msg = if let TokenType::ParenClose = t {
+                let err_msg = if let TokenType::ParenClose = tok {
                     format!("expected expression before '{tok_str}' token")
                 } else {
                     format!("'{tok_str}' undeclared")
@@ -330,6 +332,7 @@ fn expect_token(
 ) -> Result<(), String> {
     if let Some(token) = lexer.peek() {
         if token.ty == expected {
+            // Consume the token.
             let _ = lexer.next_token();
             Ok(())
         } else {
