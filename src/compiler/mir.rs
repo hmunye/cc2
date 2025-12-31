@@ -539,6 +539,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                     }
                 }
             }
+            _ => todo!(),
         }
     }
 

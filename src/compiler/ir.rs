@@ -73,6 +73,21 @@ pub enum Instruction {
         dst: Value,
         sign: Signedness,
     },
+    /// Copies the value from `src` into `dst`.
+    #[allow(missing_docs)]
+    Copy { src: Value, dst: Value },
+    /// Unconditionally jumps to the point in code labeled by an "identifier".
+    Jump(Ident),
+    /// Conditionally jumps to the point in code labeled by an "identifier" if
+    /// the condition evaluates to zero.
+    #[allow(missing_docs)]
+    JumpIfZero { cond: Value, target: Ident },
+    /// Conditionally jumps to the point in code labeled by an "identifier" if
+    /// the condition does not evaluates to zero.
+    #[allow(missing_docs)]
+    JumpIfNotZero { cond: Value, target: Ident },
+    /// Associates an "identifier" with a location in the program.
+    Label(Ident),
 }
 
 impl fmt::Display for Instruction {
@@ -130,6 +145,53 @@ impl fmt::Display for Instruction {
                     width = width
                 )
             }
+            Instruction::Copy { src, dst } => {
+                let src_str = format!("{src}");
+                let len = src_str.len();
+
+                let max_width: usize = 32;
+                let width = max_width.saturating_sub(len);
+
+                write!(
+                    f,
+                    "{:<17}{src_str} {:>width$}  {dst}",
+                    "Copy",
+                    "->",
+                    width = width
+                )
+            }
+            Instruction::Jump(i) => write!(f, "{:<17}{:?}", "Jump", i),
+            Instruction::JumpIfZero { cond, target } => {
+                let cond_str = format!("{cond}");
+                let len = cond_str.len();
+
+                let max_width: usize = 32;
+                let width = max_width.saturating_sub(len);
+
+                write!(
+                    f,
+                    "{:<17}{cond_str} {:>width$}  {target:?}",
+                    "JumpIfZero",
+                    "->",
+                    width = width
+                )
+            }
+            Instruction::JumpIfNotZero { cond, target } => {
+                let cond_str = format!("{cond}");
+                let len = cond_str.len();
+
+                let max_width: usize = 32;
+                let width = max_width.saturating_sub(len);
+
+                write!(
+                    f,
+                    "{:<17}{cond_str} {:>width$}  {target:?}",
+                    "JumpIfNotZero",
+                    "->",
+                    width = width
+                )
+            }
+            Instruction::Label(i) => write!(f, "{:<17}{:?}", "Label", i),
         }
     }
 }
@@ -156,7 +218,9 @@ impl fmt::Display for Value {
 /// instructions.
 struct TACBuilder<'a> {
     instructions: Vec<Instruction>,
-    count: usize,
+    tmp_count: usize,
+    label_count: usize,
+    // Function label.
     label: &'a str,
 }
 
@@ -166,9 +230,18 @@ impl TACBuilder<'_> {
         // The `.` in temporary identifiers guarantees they won’t conflict
         // with user-defined identifiers, since the _C_ standard forbids `.` in
         // identifiers.
-        let ident = format!("{}.tmp.{}", self.label, self.count);
-        self.count += 1;
+        let ident = format!("{}.tmp.{}", self.label, self.tmp_count);
+        self.tmp_count += 1;
         ident
+    }
+
+    /// Allocates and returns a fresh label identifier.
+    fn new_label(&mut self, suffix: &str) -> Ident {
+        // The `.` in labels  guarantees they won’t conflict with user-defined
+        // identifiers, since the _C_ standard forbids `.` in identifiers.
+        let label = format!("{}.lbl.{}.{suffix}", self.label, self.label_count);
+        self.label_count += 1;
+        label
     }
 }
 
@@ -191,7 +264,8 @@ fn generate_ir_function(func: &parser::Function) -> Function {
 
     let mut builder = TACBuilder {
         instructions: vec![],
-        count: 0,
+        tmp_count: 0,
+        label_count: 0,
         label: &label,
     };
 
@@ -253,24 +327,90 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                 _ => Signedness::Unsigned,
             };
 
-            // _C17_ 5.1.2.3 (Program execution)
-            //
-            // Sub-expressions of the same operation are _unsequenced_ (few
-            // exceptions). This means either the `lhs` or the `rhs` can be
-            // processed first.
-            let lhs = generate_ir_value(lhs, builder);
-            let rhs = generate_ir_value(rhs, builder);
-            let dst = Value::Var(builder.new_tmp());
+            match op {
+                // Need to short-circuit if the `lhs` is 0 for `&&`, or `lhs` is
+                // non-zero for `||`.
+                parser::BinaryOperator::LogAnd => {
+                    let lhs = generate_ir_value(lhs, builder);
+                    let rhs = generate_ir_value(rhs, builder);
+                    let dst = Value::Var(builder.new_tmp());
 
-            builder.instructions.push(Instruction::Binary {
-                op: *op,
-                lhs,
-                rhs,
-                dst: dst.clone(),
-                sign,
-            });
+                    let instructions = if let parser::BinaryOperator::LogAnd = op {
+                        let f_lbl = builder.new_label("and.false");
+                        let e_lbl = builder.new_label("and.end");
 
-            dst
+                        [
+                            Instruction::JumpIfZero {
+                                cond: lhs,
+                                target: f_lbl.clone(),
+                            },
+                            Instruction::JumpIfZero {
+                                cond: rhs,
+                                target: f_lbl.clone(),
+                            },
+                            Instruction::Copy {
+                                src: Value::ConstantInt(1),
+                                dst: dst.clone(),
+                            },
+                            Instruction::Jump(e_lbl.clone()),
+                            Instruction::Label(f_lbl),
+                            Instruction::Copy {
+                                src: Value::ConstantInt(0),
+                                dst: dst.clone(),
+                            },
+                            Instruction::Label(e_lbl),
+                        ]
+                    } else {
+                        let t_lbl = builder.new_label("or.true");
+                        let e_lbl = builder.new_label("or.end");
+
+                        [
+                            Instruction::JumpIfNotZero {
+                                cond: lhs,
+                                target: t_lbl.clone(),
+                            },
+                            Instruction::JumpIfNotZero {
+                                cond: rhs,
+                                target: t_lbl.clone(),
+                            },
+                            Instruction::Copy {
+                                src: Value::ConstantInt(0),
+                                dst: dst.clone(),
+                            },
+                            Instruction::Jump(e_lbl.clone()),
+                            Instruction::Label(t_lbl),
+                            Instruction::Copy {
+                                src: Value::ConstantInt(1),
+                                dst: dst.clone(),
+                            },
+                            Instruction::Label(e_lbl),
+                        ]
+                    };
+
+                    builder.instructions.extend(instructions);
+                    dst
+                }
+                _ => {
+                    // _C17_ 5.1.2.3 (Program execution)
+                    //
+                    // Sub-expressions of the same operation are _unsequenced_
+                    // (few exceptions). This means either the `lhs` or the
+                    // `rhs` can be processed first.
+                    let lhs = generate_ir_value(lhs, builder);
+                    let rhs = generate_ir_value(rhs, builder);
+                    let dst = Value::Var(builder.new_tmp());
+
+                    builder.instructions.push(Instruction::Binary {
+                        op: *op,
+                        lhs,
+                        rhs,
+                        dst: dst.clone(),
+                        sign,
+                    });
+
+                    dst
+                }
+            }
         }
     }
 }
