@@ -10,7 +10,7 @@ pub mod error;
 
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::{fs, process};
+use std::{env, fs, process};
 
 /// Information about the current program.
 #[derive(Debug)]
@@ -24,23 +24,19 @@ pub struct Context<'a> {
 }
 
 fn main() {
-    let mut args = args::Args::parse();
-    let metadata = args.in_file.metadata().unwrap_or_else(|err| {
-        report_err!(
-            &args.program,
-            "failed to query input file '{}': {err}",
-            args.in_path.display()
-        );
+    let args = args::Args::parse();
+    let mut f = preprocess_input(&args);
+
+    let metadata = f.metadata().unwrap_or_else(|err| {
+        report_err!(&args.program, "failed to query preprocessed file: {err}");
         process::exit(1);
     });
 
     let mut src = Vec::with_capacity(metadata.len() as usize);
-
-    args.in_file.read_to_end(&mut src).unwrap_or_else(|err| {
+    f.read_to_end(&mut src).unwrap_or_else(|err| {
         report_err!(
             &args.program,
-            "failed to read from input file '{}': {err}",
-            args.in_path.display()
+            "failed to read from preprocessed file: {err}"
         );
         process::exit(1);
     });
@@ -96,4 +92,50 @@ fn main() {
             compiler::emit::emit_asm(&ctx, &mir, output);
         }
     }
+}
+
+/// Perform preprocessing on the input _C_ source code, expanding macros,
+/// handling include directives, removing comments, etc., returning the file
+/// handle of the preprocessed file. [Exits] on error with non-zero status.
+///
+/// [Exits]: std::process::exit
+fn preprocess_input(args: &args::Args) -> fs::File {
+    let tmp_dir = env::temp_dir();
+    let tmp_path = tmp_dir.join("input.i");
+
+    let tmp_file = fs::File::options()
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(&tmp_path)
+        .unwrap_or_else(|err| {
+            report_err!(&args.program, "failed to create preprocessed file: {err}");
+            process::exit(1);
+        });
+
+    let output = process::Command::new("gcc")
+        .arg("-E") // Run only the preprocessor (cpp).
+        .arg("-P") // Omit linemarkers.
+        .arg(args.in_path)
+        .arg("-o")
+        .arg(tmp_path)
+        .output()
+        .unwrap_or_else(|err| {
+            report_err!(
+                &args.program,
+                "failed to preprocess input file '{}': {err}",
+                args.in_path.display()
+            );
+            process::exit(1);
+        });
+
+    if !output.status.success() {
+        io::stderr()
+            .write_all(&output.stderr)
+            .expect("failed to write gcc 'stderr' contents");
+        process::exit(output.status.code().unwrap_or(1));
+    }
+
+    tmp_file
 }

@@ -1,6 +1,5 @@
 //! Parsing for the compiler's command-line arguments.
 
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -13,9 +12,7 @@ pub struct Args {
     pub program: String,
     /// Compilation phase to terminate at.
     pub stage: String,
-    /// Input file containing C source code (required).
-    pub in_file: File,
-    /// Path to input file.
+    /// Path to input file (required).
     pub in_path: &'static Path,
     /// Output path for assembly code emission.
     pub out_path: PathBuf,
@@ -90,11 +87,19 @@ impl Args {
         // error reporting during runtime. Could use `PathBuf` instead but the
         // path will not be mutated.
         let path = Path::new(in_path.leak());
-
-        let in_file = File::open(path).unwrap_or_else(|err| {
-            report_err!(&program, "failed to open input file: {err}");
+        if !path.exists() {
+            report_err!(&program, "'{}': no such file or directory", path.display());
             process::exit(1);
-        });
+        }
+
+        if path == out_path.as_path() {
+            report_err!(
+                &program,
+                "input file '{}' is the same as output file",
+                path.display()
+            );
+            process::exit(1);
+        }
 
         // No output path was provided - use default output path name.
         if out_path.capacity() == 0 {
@@ -104,7 +109,6 @@ impl Args {
         Self {
             program,
             stage,
-            in_file,
             in_path: path,
             out_path,
         }
