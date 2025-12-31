@@ -132,9 +132,6 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
         //
         // 3. Return control to the caller, jumping to the return address stored
         // on the caller's stack frame.
-        //
-        // NOTE: If any stack memory was allocated in the current stack frame,
-        // it should deallocated before returning to the caller.
         mir::Instruction::Ret => {
             if alloc == 0 {
                 "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into()

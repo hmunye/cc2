@@ -93,7 +93,7 @@ pub enum BinaryOperator {
     /// `/` binary operator.
     Divide,
     /// `%` binary operator.
-    Remainder,
+    Modulo,
     /// `&` binary operator.
     BitAnd,
     /// `|` binary operator.
@@ -109,8 +109,8 @@ pub enum BinaryOperator {
 /// Currently used to determine the signedness of an expression, particularly
 /// for logical or arithmetic right shifts.
 ///
-/// NOTE: Any unary negation or binary subtraction will treat an expression as
-/// signed.
+/// Any unary negation or binary subtraction operator will change the
+/// interpretation of an expression to signed.
 #[derive(Debug, Clone, Copy)]
 #[allow(missing_docs)]
 pub enum Signedness {
@@ -140,7 +140,7 @@ impl BinaryOperator {
             // _C17_ 6.5.6 (additive-expression)
             BinaryOperator::Add | BinaryOperator::Subtract => 13,
             // _C17_ 6.5.5 (multiplicative-expression)
-            BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Remainder => 14,
+            BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => 14,
         }
     }
 }
@@ -182,7 +182,7 @@ fn parse_function(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Function, 
 
     expect_token(ctx, lexer, TokenType::ParenOpen)?;
 
-    // NOTE: Currently do not process function parameters.
+    // NOTE: Currently not processing function parameters.
     expect_token(ctx, lexer, TokenType::Keyword("void".into()))?;
 
     expect_token(ctx, lexer, TokenType::ParenClose)?;
@@ -274,6 +274,8 @@ fn parse_expression(
             break;
         };
 
+        // Any subtraction results in the entire expression being interpreted
+        // as signed.
         let sign = if let BinaryOperator::Subtract = binop {
             Signedness::Signed
         } else {
@@ -286,7 +288,7 @@ fn parse_expression(
             break;
         }
 
-        // Consume the matched binary operator.
+        // Consume the matched token.
         let _ = lexer.next_token();
 
         let rhs = parse_expression(ctx, lexer, binop.precedence() + 1)?;
@@ -317,6 +319,8 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
                     _ => unreachable!(),
                 };
 
+                // Negation results in the entire expression being interpreted
+                // as signed.
                 let sign = if let UnaryOperator::Negate = unop {
                     Signedness::Signed
                 } else {
@@ -326,6 +330,7 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
                 // Recursively parse the factor on which the unary operator is
                 // being applied to.
                 let inner_fct = parse_factor(ctx, lexer)?;
+
                 Ok(Expression::Unary {
                     op: unop,
                     expr: Box::new(inner_fct),
@@ -335,7 +340,9 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
             TokenType::ParenOpen => {
                 // Recursively parse the expression within parenthesis.
                 let inner_expr = parse_expression(ctx, lexer, 0)?;
+
                 expect_token(ctx, lexer, TokenType::ParenClose)?;
+
                 Ok(inner_expr)
             }
             tok => {
@@ -408,7 +415,7 @@ fn is_binop(ty: &TokenType) -> Option<BinaryOperator> {
         TokenType::Operator(OperatorKind::Minus) => Some(BinaryOperator::Subtract),
         TokenType::Operator(OperatorKind::Asterisk) => Some(BinaryOperator::Multiply),
         TokenType::Operator(OperatorKind::Division) => Some(BinaryOperator::Divide),
-        TokenType::Operator(OperatorKind::Modulo) => Some(BinaryOperator::Remainder),
+        TokenType::Operator(OperatorKind::Modulo) => Some(BinaryOperator::Modulo),
         TokenType::Operator(OperatorKind::Ampersand) => Some(BinaryOperator::BitAnd),
         TokenType::Operator(OperatorKind::BitOr) => Some(BinaryOperator::BitOr),
         TokenType::Operator(OperatorKind::BitXor) => Some(BinaryOperator::BitXor),

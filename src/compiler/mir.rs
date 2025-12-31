@@ -25,7 +25,7 @@ impl MIR {
     fn replace_pseudo_registers(&mut self) -> i32 {
         let mut map: HashMap<Ident, i32> = Default::default();
 
-        // NOTE: Currently "allocating" in 4-byte offsets.
+        // NOTE: Currently allocating in 4-byte offsets.
         let mut stack_offset = 0;
 
         // Either increment the current stack offset, or use the stored offset
@@ -200,14 +200,17 @@ impl MIR {
                             // instructions inserted are skipped.
                             i += 2;
                         }
-                        // `shl` or `shr` instruction that uses a memory address
-                        // or register not `%cl` as source operand (illegal).
+                        // `shl` or `shr`/`sar` instruction that uses a memory
+                        // address or register not `%cl` as source operand
+                        // (illegal).
                         Instruction::Binary(op, lhs, rhs)
-                            if matches!(op, BinaryOperator::Shl | BinaryOperator::Shr)
-                                && !matches!(
-                                    lhs,
-                                    Operand::Imm32(_) | Operand::Register(Reg::CX)
-                                ) =>
+                            if matches!(
+                                op,
+                                BinaryOperator::Shl | BinaryOperator::Shr | BinaryOperator::Sar
+                            ) && !matches!(
+                                lhs,
+                                Operand::Imm32(_) | Operand::Register(Reg::CX)
+                            ) =>
                         {
                             let lhs = lhs.clone();
                             let rhs = rhs.clone();
@@ -424,7 +427,7 @@ impl TryFrom<&parser::BinaryOperator> for BinaryOperator {
             parser::BinaryOperator::BitOr => Ok(BinaryOperator::Or),
             parser::BinaryOperator::BitXor => Ok(BinaryOperator::Xor),
             parser::BinaryOperator::ShiftLeft => Ok(BinaryOperator::Shl),
-            // Defaults to logical `shr` operator.
+            // Defaults to logical `shr` operator instead of arithmetic.
             parser::BinaryOperator::ShiftRight => Ok(BinaryOperator::Shr),
             _ => Err(()),
         }
@@ -486,7 +489,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 let dst = generate_mir_operand(dst);
 
                 match op {
-                    parser::BinaryOperator::Divide | parser::BinaryOperator::Remainder => {
+                    parser::BinaryOperator::Divide | parser::BinaryOperator::Modulo => {
                         instructions.push(Instruction::Mov(
                             generate_mir_operand(lhs),
                             Operand::Register(Reg::AX),

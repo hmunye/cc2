@@ -195,7 +195,7 @@ impl<'a> Lexer<'a> {
     ///
     /// [Exits]: std::process::exit
     pub fn lex(&mut self, ctx: &Context<'_>) {
-        let mut first_line_captured = false;
+        let mut fl_captured = false;
         let mut line_content = "";
 
         while self.has_next() {
@@ -208,7 +208,7 @@ impl<'a> Lexer<'a> {
 
             // Capture the first line's contents (must be done separately since
             // no '\n' has been encountered yet).
-            if !first_line_captured {
+            if !fl_captured {
                 let mut i = 0;
                 while i < self.src.len() && self.src[i] != b'\n' {
                     i += 1;
@@ -217,7 +217,7 @@ impl<'a> Lexer<'a> {
                 line_content = std::str::from_utf8(&self.src[self.bol..i])
                     .expect("ASCII bytes should be valid UTF-8");
 
-                first_line_captured = true;
+                fl_captured = true;
             }
 
             match self.first() {

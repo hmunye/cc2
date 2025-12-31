@@ -53,7 +53,7 @@ pub enum Instruction {
     Return(Value),
     /// Perform a unary operation on `src`, storing the result in `dst`.
     ///
-    /// NOTE: The `dst` of any unary instruction must be `Value::Var`.
+    /// The `dst` of any unary instruction must be `Value::Var`.
     #[allow(missing_docs)]
     Unary {
         op: UnaryOperator,
@@ -64,7 +64,7 @@ pub enum Instruction {
     /// Perform a binary operation on `lhs` and `rhs`, storing the result in
     /// `dst`.
     ///
-    /// NOTE: The `dst` of any binary instruction must be `Value::Var`.
+    /// The `dst` of any binary instruction must be `Value::Var`.
     #[allow(missing_docs)]
     Binary {
         op: BinaryOperator,
@@ -197,8 +197,8 @@ fn generate_ir_function(func: &parser::Function) -> Function {
 
     match func.body {
         parser::Statement::Return(ref expr) => {
-            let ir_expr = generate_ir_expression(expr, &mut builder);
-            builder.instructions.push(Instruction::Return(ir_expr));
+            let ir_val = generate_ir_value(expr, &mut builder);
+            builder.instructions.push(Instruction::Return(ir_val));
         }
     }
 
@@ -208,8 +208,8 @@ fn generate_ir_function(func: &parser::Function) -> Function {
     }
 }
 
-/// Generate an _IR_ expression from the provided _AST_ expression.
-fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_>) -> Value {
+/// Generate an _IR_ value from the provided _AST_ expression.
+fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) -> Value {
     match expr {
         parser::Expression::ConstantInt(v) => Value::ConstantInt(*v),
         parser::Expression::Unary { op, expr, .. } => {
@@ -227,7 +227,7 @@ fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_
             // Recursively process the expression until the base case
             // (`ConstantInt`) is reached. This ensures the inner expression is
             // processed initially before unwinding.
-            let src = generate_ir_expression(expr, builder);
+            let src = generate_ir_value(expr, builder);
             let dst = Value::Var(builder.new_tmp());
 
             builder.instructions.push(Instruction::Unary {
@@ -258,8 +258,8 @@ fn generate_ir_expression(expr: &parser::Expression, builder: &mut TACBuilder<'_
             // Sub-expressions of the same operation are _unsequenced_ (few
             // exceptions). This means either the `lhs` or the `rhs` can be
             // processed first.
-            let lhs = generate_ir_expression(lhs, builder);
-            let rhs = generate_ir_expression(rhs, builder);
+            let lhs = generate_ir_value(lhs, builder);
+            let rhs = generate_ir_value(rhs, builder);
             let dst = Value::Var(builder.new_tmp());
 
             builder.instructions.push(Instruction::Binary {

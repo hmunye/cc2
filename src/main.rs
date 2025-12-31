@@ -79,7 +79,7 @@ fn main() {
             let mir = compiler::mir::generate_mir(&ir);
 
             let output: Box<dyn Write> = if stage == "asm" {
-                // Print the assembly that would have been emitted to `stdout`.
+                // Print to `stdout`, the assembly that would have been emitted.
                 Box::new(io::stdout().lock())
             } else {
                 let f = fs::File::create(ctx.out_path).unwrap_or_else(|err| {
