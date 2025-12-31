@@ -388,6 +388,7 @@ impl From<&parser::UnaryOperator> for UnaryOperator {
         match unop {
             parser::UnaryOperator::Complement => UnaryOperator::Not,
             parser::UnaryOperator::Negate => UnaryOperator::Neg,
+            parser::UnaryOperator::Not => todo!(),
         }
     }
 }

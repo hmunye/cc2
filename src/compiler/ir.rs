@@ -78,7 +78,7 @@ pub enum Instruction {
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Instruction::Return(v) => write!(f, "{:<15}{}", "Return", v),
+            Instruction::Return(v) => write!(f, "{:<17}{}", "Return", v),
             Instruction::Unary { op, src, dst, sign } => {
                 let src_str = format!("{src}");
                 let len = src_str.len();
@@ -88,7 +88,7 @@ impl fmt::Display for Instruction {
 
                 write!(
                     f,
-                    "{:<15}{src_str} {:>width$}  {dst}",
+                    "{:<17}{src_str} {:>width$}  {dst}",
                     format!(
                         "{op:?}({})",
                         if let Signedness::Signed = sign {
@@ -117,7 +117,7 @@ impl fmt::Display for Instruction {
 
                 write!(
                     f,
-                    "{:<15}{lhs_str}, {rhs_str} {:>width$}  {dst}",
+                    "{:<17}{lhs_str}, {rhs_str} {:>width$}  {dst}",
                     format!(
                         "{op:?}({})",
                         if let Signedness::Signed = sign {

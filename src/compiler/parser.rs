@@ -79,6 +79,8 @@ pub enum UnaryOperator {
     Complement,
     /// `-` unary operator.
     Negate,
+    /// `!` unary operator.
+    Not,
 }
 
 /// _AST_ binary operators.
@@ -104,6 +106,22 @@ pub enum BinaryOperator {
     ShiftLeft,
     /// `>>` binary operator.
     ShiftRight,
+    /// `&&` binary operator.
+    LogAnd,
+    /// `||` binary operator.
+    LogOr,
+    /// `==` binary operator.
+    Eq,
+    /// `!=` binary operator.
+    NotEq,
+    /// `<` binary operator.
+    OrdLess,
+    /// `<=` binary operator.
+    OrdLessEq,
+    /// `>` binary operator.
+    OrdGreater,
+    /// `>=` binary operator.
+    OrdGreaterEq,
 }
 
 /// Currently used to determine the signedness of an expression, particularly
@@ -125,6 +143,10 @@ impl BinaryOperator {
     /// Derived from the structure of the _C17_ expression grammar.
     pub fn precedence(&self) -> u8 {
         match self {
+            // _C17_ 6.5.14 (logical-OR-expression)
+            BinaryOperator::LogOr => 5,
+            // _C17_ 6.5.13 (logical-AND-expression)
+            BinaryOperator::LogAnd => 6,
             // _C17_ 6.5.12 (inclusive-OR-expression)
             BinaryOperator::BitOr => 7,
             // _C17_ 6.5.11 (exclusive-OR-expression)
@@ -132,9 +154,12 @@ impl BinaryOperator {
             // _C17_ 6.5.10 (AND-expression)
             BinaryOperator::BitAnd => 9,
             // _C17_ 6.5.9 (equality-expression)
-            // => 10
+            BinaryOperator::Eq | BinaryOperator::NotEq => 10,
             // _C17_ 6.5.8 (relational-expression)
-            // => 11
+            BinaryOperator::OrdLess
+            | BinaryOperator::OrdLessEq
+            | BinaryOperator::OrdGreater
+            | BinaryOperator::OrdGreaterEq => 11,
             // _C17_ 6.5.7 (shift-expression)
             BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight => 12,
             // _C17_ 6.5.6 (additive-expression)
@@ -312,10 +337,13 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
     if let Some(token) = lexer.next_token() {
         match token.ty {
             TokenType::ConstantInt(v) => Ok(Expression::ConstantInt(v)),
-            TokenType::Operator(OperatorKind::BitNot | OperatorKind::Minus) => {
+            TokenType::Operator(
+                OperatorKind::BitNot | OperatorKind::Minus | OperatorKind::LogNot,
+            ) => {
                 let unop = match token.ty {
                     TokenType::Operator(OperatorKind::BitNot) => UnaryOperator::Complement,
                     TokenType::Operator(OperatorKind::Minus) => UnaryOperator::Negate,
+                    TokenType::Operator(OperatorKind::LogNot) => UnaryOperator::Not,
                     _ => unreachable!(),
                 };
 
@@ -421,6 +449,14 @@ fn is_binop(ty: &TokenType) -> Option<BinaryOperator> {
         TokenType::Operator(OperatorKind::BitXor) => Some(BinaryOperator::BitXor),
         TokenType::Operator(OperatorKind::ShiftLeft) => Some(BinaryOperator::ShiftLeft),
         TokenType::Operator(OperatorKind::ShiftRight) => Some(BinaryOperator::ShiftRight),
+        TokenType::Operator(OperatorKind::LogAnd) => Some(BinaryOperator::LogAnd),
+        TokenType::Operator(OperatorKind::LogOr) => Some(BinaryOperator::LogOr),
+        TokenType::Operator(OperatorKind::Eq) => Some(BinaryOperator::Eq),
+        TokenType::Operator(OperatorKind::NotEq) => Some(BinaryOperator::NotEq),
+        TokenType::Operator(OperatorKind::LessThan) => Some(BinaryOperator::OrdLess),
+        TokenType::Operator(OperatorKind::LessThanEq) => Some(BinaryOperator::OrdLessEq),
+        TokenType::Operator(OperatorKind::GreaterThan) => Some(BinaryOperator::OrdGreater),
+        TokenType::Operator(OperatorKind::GreaterThanEq) => Some(BinaryOperator::OrdGreaterEq),
         _ => None,
     }
 }
