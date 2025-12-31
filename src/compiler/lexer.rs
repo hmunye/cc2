@@ -36,10 +36,28 @@ pub enum OperatorKind {
     BitOr,
     /// `^` bitwise XOR operator.
     BitXor,
+    /// `<` less-than relational operator.
+    LessThan,
+    /// `>` greater-than relational operator.
+    GreaterThan,
+    /// `<=` less-than-or-equal relational operator.
+    LessThanEq,
+    /// `>=` greater-than-or-equal relational operator.
+    GreaterThanEq,
     /// `<<` bitwise left-shift operator.
     ShiftLeft,
     /// `>>` bitwise right-shift operator.
     ShiftRight,
+    /// `!` logical NOT operator.
+    LogNot,
+    /// `&&` logical AND operator.
+    LogAnd,
+    /// `||` logical OR operator.
+    LogOr,
+    /// `==` equal-to relational operator.
+    Eq,
+    /// `!=` not-equal relational operator.
+    NotEq,
 }
 
 impl fmt::Display for OperatorKind {
@@ -56,8 +74,17 @@ impl fmt::Display for OperatorKind {
             OperatorKind::Ampersand => write!(f, "op('&')"),
             OperatorKind::BitOr => write!(f, "op('|')"),
             OperatorKind::BitXor => write!(f, "op('^')"),
+            OperatorKind::LessThan => write!(f, "op('<')"),
+            OperatorKind::GreaterThan => write!(f, "op('>')"),
+            OperatorKind::LessThanEq => write!(f, "op('<=')"),
+            OperatorKind::GreaterThanEq => write!(f, "op('>=')"),
             OperatorKind::ShiftLeft => write!(f, "op('<<')"),
             OperatorKind::ShiftRight => write!(f, "op('>>')"),
+            OperatorKind::LogNot => write!(f, "op('!')"),
+            OperatorKind::LogAnd => write!(f, "op('&&')"),
+            OperatorKind::LogOr => write!(f, "op('||')"),
+            OperatorKind::Eq => write!(f, "op('==')"),
+            OperatorKind::NotEq => write!(f, "op('!=')"),
         }
     }
 }
@@ -76,8 +103,17 @@ impl fmt::Debug for OperatorKind {
             OperatorKind::Ampersand => write!(f, "&"),
             OperatorKind::BitOr => write!(f, "|"),
             OperatorKind::BitXor => write!(f, "^"),
+            OperatorKind::LessThan => write!(f, "<"),
+            OperatorKind::GreaterThan => write!(f, ">"),
+            OperatorKind::LessThanEq => write!(f, "<="),
+            OperatorKind::GreaterThanEq => write!(f, ">="),
             OperatorKind::ShiftLeft => write!(f, "<<"),
             OperatorKind::ShiftRight => write!(f, ">>"),
+            OperatorKind::LogNot => write!(f, "!"),
+            OperatorKind::LogAnd => write!(f, "&&"),
+            OperatorKind::LogOr => write!(f, "||"),
+            OperatorKind::Eq => write!(f, "=="),
+            OperatorKind::NotEq => write!(f, "!="),
         }
     }
 }
@@ -413,22 +449,44 @@ impl<'a> Lexer<'a> {
                     self.cur += 1;
                 }
                 b'&' => {
-                    self.add_token(
-                        TokenType::Operator(OperatorKind::Ampersand),
-                        line_content,
-                        ctx.in_path,
-                        col,
-                    );
                     self.cur += 1;
+
+                    if self.has_next() && self.first() == b'&' {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::LogAnd),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                        self.cur += 1;
+                    } else {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::Ampersand),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                    }
                 }
                 b'|' => {
-                    self.add_token(
-                        TokenType::Operator(OperatorKind::BitOr),
-                        line_content,
-                        ctx.in_path,
-                        col,
-                    );
                     self.cur += 1;
+
+                    if self.has_next() && self.first() == b'|' {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::LogOr),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                        self.cur += 1;
+                    } else {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::BitOr),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                    }
                 }
                 b'^' => {
                     self.add_token(
@@ -450,8 +508,21 @@ impl<'a> Lexer<'a> {
                             col,
                         );
                         self.cur += 1;
+                    } else if self.has_next() && self.first() == b'=' {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::LessThanEq),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                        self.cur += 1;
                     } else {
-                        // TODO: Add `<` relational operator.
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::LessThan),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
                     }
                 }
                 b'>' => {
@@ -465,8 +536,56 @@ impl<'a> Lexer<'a> {
                             col,
                         );
                         self.cur += 1;
+                    } else if self.has_next() && self.first() == b'=' {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::GreaterThanEq),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                        self.cur += 1;
                     } else {
-                        // TODO: Add `>` relational operator.
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::GreaterThan),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                    }
+                }
+                b'!' => {
+                    self.cur += 1;
+
+                    if self.has_next() && self.first() == b'=' {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::NotEq),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                        self.cur += 1;
+                    } else {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::LogNot),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                    }
+                }
+                b'=' => {
+                    self.cur += 1;
+
+                    if self.has_next() && self.first() == b'=' {
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::Eq),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
+                        self.cur += 1;
+                    } else {
+                        todo!("assignment unsupported")
                     }
                 }
                 b'(' => {
