@@ -330,7 +330,7 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
             match op {
                 // Need to short-circuit if the `lhs` is 0 for `&&`, or `lhs` is
                 // non-zero for `||`.
-                parser::BinaryOperator::LogAnd => {
+                parser::BinaryOperator::LogAnd | parser::BinaryOperator::LogOr => {
                     let lhs = generate_ir_value(lhs, builder);
                     let rhs = generate_ir_value(rhs, builder);
                     let dst = Value::Var(builder.new_tmp());

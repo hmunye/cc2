@@ -69,6 +69,19 @@ impl MIR {
                                 *div = Operand::Stack(get_offset(ident));
                             }
                         }
+                        Instruction::Cmp(src, dst) => {
+                            if let Operand::Pseudo(ident) = src {
+                                *src = Operand::Stack(get_offset(ident));
+                            }
+                            if let Operand::Pseudo(ident) = dst {
+                                *dst = Operand::Stack(get_offset(ident));
+                            }
+                        }
+                        Instruction::SetC(_, dst) => {
+                            if let Operand::Pseudo(ident) = dst {
+                                *dst = Operand::Stack(get_offset(ident));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -229,6 +242,39 @@ impl MIR {
                             // inserted are skipped.
                             i += 1;
                         }
+                        // `cmp` instruction that uses a memory address for both
+                        // operands or immediate value as destination operand
+                        // (illegal).
+                        Instruction::Cmp(src, dst)
+                            if (matches!(src, Operand::Stack(_))
+                                && matches!(dst, Operand::Stack(_)))
+                                || matches!(dst, Operand::Imm32(_)) =>
+                        {
+                            let src = src.clone();
+                            let dst = dst.clone();
+
+                            if let Operand::Imm32(_) = dst {
+                                func.instructions.splice(
+                                    i..=i,
+                                    [
+                                        Instruction::Mov(dst, Operand::Register(Reg::R11)),
+                                        Instruction::Cmp(src, Operand::Register(Reg::R11)),
+                                    ],
+                                );
+                            } else {
+                                func.instructions.splice(
+                                    i..=i,
+                                    [
+                                        Instruction::Mov(src, Operand::Register(Reg::R10)),
+                                        Instruction::Cmp(Operand::Register(Reg::R10), dst),
+                                    ],
+                                );
+                            }
+
+                            // Increment `i` to ensure the two new instructions
+                            // inserted are skipped.
+                            i += 1;
+                        }
                         _ => {}
                     }
 
@@ -278,12 +324,26 @@ pub enum Instruction {
     Unary(UnaryOperator, Operand),
     /// Apply the given binary operator to both operands.
     Binary(BinaryOperator, Operand, Operand),
+    /// Compares both operands (operand.1 - operand.0), and updates the relevant
+    /// `RFLAGS`.
+    Cmp(Operand, Operand),
     /// Perform a signed division operation where the dividend is in `edx:eax`
     /// and the divisor is the operand.
     Idiv(Operand),
     /// Sign-extend the 32-bit value in `eax` to a 64-bit signed value across
     /// `edx:eax`.
     Cdq,
+    /// Unconditionally jump to the point instructions after the label
+    /// identifier.
+    Jmp(Ident),
+    /// Conditionally jump to the point instructions after the label
+    /// identifier, based on the conditional code.
+    JmpC(CondCode, Ident),
+    /// Move the value of the bit in `RFLAGS` based on the conditional code to
+    /// the operand destination (1-byte).
+    SetC(CondCode, Operand),
+    /// Associates an "identifier" with instruction(s).
+    Label(Ident),
     /// Subtract the specified number of bytes from `rsp` register.
     StackAlloc(i32),
     /// Yields control back to the caller.
@@ -297,7 +357,7 @@ impl fmt::Display for Instruction {
                 let src_str = format!("{src}");
                 let len = src_str.len();
 
-                let max_width: usize = 13;
+                let max_width: usize = 32;
                 let width = max_width.saturating_sub(len);
 
                 write!(
@@ -313,7 +373,7 @@ impl fmt::Display for Instruction {
                 let lhstr = format!("{lhs}");
                 let len = lhstr.len();
 
-                let max_width: usize = 14;
+                let max_width: usize = 33;
                 let width = max_width.saturating_sub(len);
 
                 write!(
@@ -324,8 +384,27 @@ impl fmt::Display for Instruction {
                     width = width
                 )
             }
+            Instruction::Cmp(lhs, rhs) => {
+                let lhstr = format!("{lhs}");
+                let len = lhstr.len();
+
+                let max_width: usize = 32;
+                let width = max_width.saturating_sub(len);
+
+                write!(
+                    f,
+                    "{:<15}{lhstr} {:>width$}  {rhs}",
+                    "Cmp",
+                    "->",
+                    width = width
+                )
+            }
             Instruction::Idiv(div) => write!(f, "{:<15}{div}", "Idiv"),
             Instruction::Cdq => write!(f, "Cdq"),
+            Instruction::Jmp(i) => write!(f, "{:<15}{i}", "Jmp"),
+            Instruction::JmpC(code, i) => write!(f, "{:<15}{i}", format!("Jmp{code:?}")),
+            Instruction::SetC(code, o) => write!(f, "{:<15}{o}", format!("Set{code:?}")),
+            Instruction::Label(i) => write!(f, "{:<15}{i}", "Label"),
             Instruction::StackAlloc(v) => write!(f, "{:<15}{v}", "StackAlloc"),
             Instruction::Ret => write!(f, "Ret"),
         }
@@ -374,6 +453,36 @@ pub enum Reg {
     R11,
 }
 
+/// _MIR x86-64_ conditional codes.
+#[derive(Debug, Copy, Clone)]
+pub enum CondCode {
+    /// Equal.
+    E,
+    /// Not-equal.
+    NE,
+    /// Greater.
+    G,
+    /// Greater-or-equal.
+    GE,
+    /// Less.
+    L,
+    /// Less-or-equal.
+    LE,
+}
+
+impl fmt::Display for CondCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CondCode::E => write!(f, "e"),
+            CondCode::NE => write!(f, "ne"),
+            CondCode::G => write!(f, "g"),
+            CondCode::GE => write!(f, "ge"),
+            CondCode::L => write!(f, "l"),
+            CondCode::LE => write!(f, "le"),
+        }
+    }
+}
+
 /// _MIR_ unary operators.
 #[derive(Debug, Copy, Clone)]
 pub enum UnaryOperator {
@@ -381,16 +490,6 @@ pub enum UnaryOperator {
     Not,
     /// Instruction for two's complement negation.
     Neg,
-}
-
-impl From<&parser::UnaryOperator> for UnaryOperator {
-    fn from(unop: &parser::UnaryOperator) -> UnaryOperator {
-        match unop {
-            parser::UnaryOperator::Complement => UnaryOperator::Not,
-            parser::UnaryOperator::Negate => UnaryOperator::Neg,
-            parser::UnaryOperator::Not => todo!(),
-        }
-    }
 }
 
 /// _MIR_ binary operators.
@@ -477,8 +576,26 @@ fn generate_mir_function(func: &ir::Function) -> Function {
             ir::Instruction::Unary { op, src, dst, .. } => {
                 let dst = generate_mir_operand(dst);
 
-                instructions.push(Instruction::Mov(generate_mir_operand(src), dst.clone()));
-                instructions.push(Instruction::Unary(op.into(), dst));
+                if let parser::UnaryOperator::Not = op {
+                    instructions.push(Instruction::Cmp(
+                        Operand::Imm32(0),
+                        generate_mir_operand(src),
+                    ));
+
+                    // Zero-out the destination.
+                    instructions.push(Instruction::Mov(Operand::Imm32(0), dst.clone()));
+
+                    instructions.push(Instruction::SetC(CondCode::E, dst));
+                } else {
+                    let unop = match op {
+                        parser::UnaryOperator::Complement => UnaryOperator::Not,
+                        parser::UnaryOperator::Negate => UnaryOperator::Neg,
+                        _ => unreachable!(),
+                    };
+
+                    instructions.push(Instruction::Mov(generate_mir_operand(src), dst.clone()));
+                    instructions.push(Instruction::Unary(unop, dst));
+                }
             }
             ir::Instruction::Binary {
                 op,
@@ -507,6 +624,31 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                         };
 
                         instructions.push(Instruction::Mov(src, dst));
+                    }
+                    parser::BinaryOperator::OrdGreater
+                    | parser::BinaryOperator::OrdLess
+                    | parser::BinaryOperator::OrdLessEq
+                    | parser::BinaryOperator::OrdGreaterEq
+                    | parser::BinaryOperator::Eq
+                    | parser::BinaryOperator::NotEq => {
+                        let cond_code = match op {
+                            parser::BinaryOperator::OrdGreater => CondCode::G,
+                            parser::BinaryOperator::OrdLess => CondCode::L,
+                            parser::BinaryOperator::OrdLessEq => CondCode::LE,
+                            parser::BinaryOperator::OrdGreaterEq => CondCode::GE,
+                            parser::BinaryOperator::Eq => CondCode::E,
+                            parser::BinaryOperator::NotEq => CondCode::NE,
+                            _ => unreachable!(),
+                        };
+
+                        instructions.push(Instruction::Cmp(
+                            generate_mir_operand(rhs),
+                            generate_mir_operand(lhs),
+                        ));
+
+                        // Zero-out the destination.
+                        instructions.push(Instruction::Mov(Operand::Imm32(0), dst.clone()));
+                        instructions.push(Instruction::SetC(cond_code, dst));
                     }
                     _ => {
                         let binop = if let parser::BinaryOperator::ShiftRight = op
@@ -539,7 +681,32 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                     }
                 }
             }
-            _ => todo!(),
+            ir::Instruction::Copy { src, dst } => {
+                instructions.push(Instruction::Mov(
+                    generate_mir_operand(src),
+                    generate_mir_operand(dst),
+                ));
+            }
+            ir::Instruction::Jump(label) => {
+                instructions.push(Instruction::Jmp(label.clone()));
+            }
+            ir::Instruction::JumpIfZero { cond, target } => {
+                instructions.push(Instruction::Cmp(
+                    Operand::Imm32(0),
+                    generate_mir_operand(cond),
+                ));
+                instructions.push(Instruction::JmpC(CondCode::E, target.clone()));
+            }
+            ir::Instruction::JumpIfNotZero { cond, target } => {
+                instructions.push(Instruction::Cmp(
+                    Operand::Imm32(0),
+                    generate_mir_operand(cond),
+                ));
+                instructions.push(Instruction::JmpC(CondCode::NE, target.clone()));
+            }
+            ir::Instruction::Label(label) => {
+                instructions.push(Instruction::Label(label.clone()));
+            }
         }
     }
 

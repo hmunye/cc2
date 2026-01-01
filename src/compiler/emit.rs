@@ -72,6 +72,14 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
             alloc += *b;
         }
 
+        if let mir::Instruction::Label(label) = inst {
+            writeln!(&mut asm, ".L{label}:").unwrap_or_else(|err| {
+                report_err!(ctx.program, "failed to emit assembly: {err}");
+                process::exit(1);
+            });
+            continue;
+        }
+
         writeln!(&mut asm, "\t{}", emit_asm_instruction(inst, alloc)).unwrap_or_else(|err| {
             report_err!(ctx.program, "failed to emit assembly: {err}");
             process::exit(1);
@@ -120,6 +128,15 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
         }
         mir::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div, 4)),
         mir::Instruction::Cdq => "cdq".into(),
+        mir::Instruction::Cmp(src, dst) => format!(
+            "cmpl\t{}, {}",
+            emit_asm_operand(src, 4),
+            emit_asm_operand(dst, 4)
+        ),
+        // `.L` is the local label prefix for Linux.
+        mir::Instruction::Jmp(label) => format!("jmp\t.L{label}"),
+        mir::Instruction::JmpC(code, label) => format!("j{code}\t.L{label}"),
+        mir::Instruction::SetC(code, dst) => format!("set{code}\t{}", emit_asm_operand(dst, 1)),
         mir::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
         // Include the function epilogue before returning to the caller:
         //
@@ -138,6 +155,9 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
             } else {
                 format!("addq\t${alloc}, %rsp\n\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")
             }
+        }
+        mir::Instruction::Label(_) => {
+            unreachable!("arm should be handled outside the function for proper formatting")
         }
     }
 }

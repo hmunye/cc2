@@ -124,18 +124,6 @@ pub enum BinaryOperator {
     OrdGreaterEq,
 }
 
-/// Currently used to determine the signedness of an expression, particularly
-/// for logical or arithmetic right shifts.
-///
-/// Any unary negation or binary subtraction operator will change the
-/// interpretation of an expression to signed.
-#[derive(Debug, Clone, Copy)]
-#[allow(missing_docs)]
-pub enum Signedness {
-    Signed,
-    Unsigned,
-}
-
 impl BinaryOperator {
     /// Returns the _precedence_ level of the binary operator (higher numbers
     /// indicate tighter binding).
@@ -168,6 +156,18 @@ impl BinaryOperator {
             BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => 14,
         }
     }
+}
+
+/// Currently used to determine the signedness of an expression, particularly
+/// for logical or arithmetic right shifts.
+///
+/// Any unary negation or binary subtraction operator will change the
+/// interpretation of an expression to signed.
+#[derive(Debug, Clone, Copy)]
+#[allow(missing_docs)]
+pub enum Signedness {
+    Signed,
+    Unsigned,
 }
 
 /// Parses an abstract syntax tree (_AST_) from the provided `Lexer`. [Exits] on
@@ -301,6 +301,8 @@ fn parse_expression(
 
         // Any subtraction results in the entire expression being interpreted
         // as signed.
+        //
+        // NOTE: Temporary fix, still do not properly track sign of expressions.
         let sign = if let BinaryOperator::Subtract = binop {
             Signedness::Signed
         } else {
@@ -349,6 +351,9 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
 
                 // Negation results in the entire expression being interpreted
                 // as signed.
+                //
+                // NOTE: Temporary fix, still do not properly track sign of
+                // expressions.
                 let sign = if let UnaryOperator::Negate = unop {
                     Signedness::Signed
                 } else {
