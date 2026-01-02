@@ -58,6 +58,8 @@ pub enum OperatorKind {
     Eq,
     /// `!=` not-equal relational operator.
     NotEq,
+    /// `=` assignment operator.
+    Assign,
 }
 
 impl fmt::Display for OperatorKind {
@@ -85,6 +87,7 @@ impl fmt::Display for OperatorKind {
             OperatorKind::LogOr => write!(f, "op('||')"),
             OperatorKind::Eq => write!(f, "op('==')"),
             OperatorKind::NotEq => write!(f, "op('!=')"),
+            OperatorKind::Assign => write!(f, "op('=')"),
         }
     }
 }
@@ -114,6 +117,7 @@ impl fmt::Debug for OperatorKind {
             OperatorKind::LogOr => write!(f, "||"),
             OperatorKind::Eq => write!(f, "=="),
             OperatorKind::NotEq => write!(f, "!="),
+            OperatorKind::Assign => write!(f, "="),
         }
     }
 }
@@ -585,7 +589,12 @@ impl<'a> Lexer<'a> {
                         );
                         self.cur += 1;
                     } else {
-                        todo!("assignment unsupported")
+                        self.add_token(
+                            TokenType::Operator(OperatorKind::Assign),
+                            line_content,
+                            ctx.in_path,
+                            col,
+                        );
                     }
                 }
                 b'(' => {

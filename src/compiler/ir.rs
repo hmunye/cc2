@@ -269,10 +269,16 @@ fn generate_ir_function(func: &parser::Function) -> Function {
         label: &label,
     };
 
-    match func.body {
-        parser::Statement::Return(ref expr) => {
-            let ir_val = generate_ir_value(expr, &mut builder);
-            builder.instructions.push(Instruction::Return(ir_val));
+    for body in &func.body {
+        match body {
+            parser::Block::S(s) => match s {
+                parser::Statement::Return(expr) => {
+                    let ir_val = generate_ir_value(expr, &mut builder);
+                    builder.instructions.push(Instruction::Return(ir_val));
+                }
+                _ => todo!(),
+            },
+            parser::Block::D(_d) => todo!(),
         }
     }
 
@@ -412,5 +418,6 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                 }
             }
         }
+        _ => todo!(),
     }
 }

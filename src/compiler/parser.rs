@@ -26,21 +26,19 @@ impl fmt::Debug for AST {
 
 /// _AST_ function definition.
 #[derive(Debug)]
-#[allow(missing_docs)]
 pub struct Function {
-    // NOTE: Currently unused.
-    pub ty: Type,
+    /// Function identifier.
     pub ident: Ident,
-    pub body: Statement,
+    /// Compound statement.
+    pub body: Vec<Block>,
 }
 
-/// _AST_ function/object types.
+/// _AST_ block.
 #[derive(Debug)]
-pub enum Type {
-    /// Integer type.
-    Int,
-    /// Absence of a type.
-    Void,
+#[allow(missing_docs)]
+pub enum Block {
+    S(Statement),
+    D(Declaration),
 }
 
 /// _AST_ statements.
@@ -48,6 +46,18 @@ pub enum Type {
 #[allow(missing_docs)]
 pub enum Statement {
     Return(Expression),
+    Expression(Expression),
+    // Expression statements without an expression.
+    Null,
+}
+
+/// _AST_ declarations.
+#[derive(Debug)]
+#[allow(missing_docs)]
+pub struct Declaration {
+    ident: Ident,
+    // Optional initializer.
+    init: Option<Expression>,
 }
 
 /// _AST_ expressions.
@@ -55,6 +65,8 @@ pub enum Statement {
 pub enum Expression {
     /// Constant int value (32-bit).
     ConstantInt(i32),
+    /// Variable expression.
+    Var(Ident),
     /// Unary operator applied to an expression.
     #[allow(missing_docs)]
     Unary {
@@ -70,6 +82,8 @@ pub enum Expression {
         rhs: Box<Expression>,
         sign: Signedness,
     },
+    /// An `lvalue` being assigned to an `rvalue`.
+    Assignment(Box<Expression>, Box<Expression>),
 }
 
 /// _AST_ unary operators.
@@ -122,6 +136,8 @@ pub enum BinaryOperator {
     OrdGreater,
     /// `>=` binary operator.
     OrdGreaterEq,
+    /// `=` binary operator.
+    Assign,
 }
 
 impl BinaryOperator {
@@ -131,6 +147,10 @@ impl BinaryOperator {
     /// Derived from the structure of the _C17_ expression grammar.
     pub fn precedence(&self) -> u8 {
         match self {
+            // _C17_ 6.5.16 (assignment-expression)
+            BinaryOperator::Assign => 3,
+            // _C17_ 6.5.15 (conditional-expression)
+            // => 4
             // _C17_ 6.5.14 (logical-OR-expression)
             BinaryOperator::LogOr => 5,
             // _C17_ 6.5.13 (logical-AND-expression)
@@ -156,6 +176,15 @@ impl BinaryOperator {
             BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => 14,
         }
     }
+}
+
+/// _AST_ function/object types.
+#[derive(Debug, Clone, Copy)]
+pub enum Type {
+    /// Integer type.
+    Int,
+    /// Absence of a type.
+    Void,
 }
 
 /// Currently used to determine the signedness of an expression, particularly
@@ -197,62 +226,110 @@ pub fn parse_program(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> AST {
         process::exit(1);
     }
 
+    // TODO: Perform passes
+
     AST::Program(func)
 }
 
 /// Parses an _AST_ function definition from the provided `Lexer`.
 fn parse_function(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Function, String> {
-    let ty = parse_type(ctx, lexer)?;
+    // NOTE: Currently only support the `int` type.
+    expect_token(ctx, lexer, TokenType::Keyword("int".into()))?;
     let ident = parse_ident(ctx, lexer)?;
 
     expect_token(ctx, lexer, TokenType::ParenOpen)?;
-
     // NOTE: Currently not processing function parameters.
     expect_token(ctx, lexer, TokenType::Keyword("void".into()))?;
-
     expect_token(ctx, lexer, TokenType::ParenClose)?;
+
     expect_token(ctx, lexer, TokenType::BraceOpen)?;
 
-    let body = parse_statement(ctx, lexer)?;
+    let mut body = vec![];
+
+    // Process all block items as the function's body.
+    while let Some(tok) = lexer.peek() {
+        if let TokenType::BraceClose = tok.ty {
+            break;
+        }
+
+        let block = parse_block(ctx, lexer)?;
+        body.push(block);
+    }
 
     expect_token(ctx, lexer, TokenType::BraceClose)?;
 
-    Ok(Function { ty, ident, body })
+    Ok(Function { ident, body })
+}
+
+/// Parse an _AST_ block from the provided `Lexer`.
+fn parse_block(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Block, String> {
+    if let Some(tok) = lexer.peek() {
+        match tok.ty {
+            // Parse this as a declaration (starts with a type).
+            TokenType::Keyword(ref s) if s == "int" => Ok(Block::D(parse_decl(ctx, lexer)?)),
+            // Parse this as a statement.
+            _ => Ok(Block::S(parse_statement(ctx, lexer)?)),
+        }
+    } else {
+        Err(fmt_err!(
+            ctx.in_path.display(),
+            "expected '<block>' at end of input",
+        ))
+    }
+}
+
+/// Parse an _AST_ declaration from the provided `Lexer`.
+fn parse_decl(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Declaration, String> {
+    // NOTE: Currently only support the `int` type.
+    expect_token(ctx, lexer, TokenType::Keyword("int".into()))?;
+
+    let ident = parse_ident(ctx, lexer)?;
+
+    let mut init = None;
+
+    // We expect an assignment
+    if let Some(tok) = lexer.peek()
+        && let TokenType::Operator(OperatorKind::Assign) = tok.ty
+    {
+        // Consume the operator before consuming the expression.
+        let _ = lexer.next_token();
+        init = Some(parse_expression(ctx, lexer, 0)?);
+    }
+
+    expect_token(ctx, lexer, TokenType::Semicolon)?;
+
+    Ok(Declaration { ident, init })
 }
 
 /// Parse an _AST_ statement from the provided `Lexer`.
 fn parse_statement(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Statement, String> {
-    expect_token(ctx, lexer, TokenType::Keyword("return".into()))?;
-    let ret_val = parse_expression(ctx, lexer, 0)?;
-    expect_token(ctx, lexer, TokenType::Semicolon)?;
+    if let Some(tok) = lexer.peek() {
+        match tok.ty {
+            TokenType::Keyword(ref s) if s == "return" => {
+                // Consume the "return".
+                let _ = lexer.next_token();
 
-    Ok(Statement::Return(ret_val))
-}
+                let expr = parse_expression(ctx, lexer, 0)?;
+                expect_token(ctx, lexer, TokenType::Semicolon)?;
 
-/// Parse an _AST_ function/object type from the provided `Lexer`.
-fn parse_type(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Type, String> {
-    if let Some(token) = lexer.next_token() {
-        match token.ty {
-            TokenType::Keyword(ref s) if s == "int" => Ok(Type::Int),
-            TokenType::Keyword(ref s) if s == "void" => Ok(Type::Void),
+                Ok(Statement::Return(expr))
+            }
+            TokenType::Semicolon => {
+                // Consume the semicolon.
+                let _ = lexer.next_token();
+                Ok(Statement::Null)
+            }
             _ => {
-                let tok_str = format!("{token:?}");
+                let expr = parse_expression(ctx, lexer, 0)?;
+                expect_token(ctx, lexer, TokenType::Semicolon)?;
 
-                Err(fmt_token_err!(
-                    token.loc.file_path.display(),
-                    token.loc.line,
-                    token.loc.col,
-                    tok_str,
-                    tok_str.len() - 1,
-                    token.loc.line_content,
-                    "unknown type name '{tok_str}'",
-                ))
+                Ok(Statement::Expression(expr))
             }
         }
     } else {
         Err(fmt_err!(
             ctx.in_path.display(),
-            "expected '<type>' at end of input",
+            "expected '<statement>' at end of input",
         ))
     }
 }
@@ -299,6 +376,10 @@ fn parse_expression(
             break;
         };
 
+        if binop.precedence() < min_precedence {
+            break;
+        }
+
         // Any subtraction results in the entire expression being interpreted
         // as signed.
         //
@@ -309,23 +390,27 @@ fn parse_expression(
             Signedness::Unsigned
         };
 
-        // Higher-precedence operators will be evaluated first, making
-        // the resulting AST left-associative.
-        if binop.precedence() < min_precedence {
-            break;
-        }
-
         // Consume the matched token.
         let _ = lexer.next_token();
 
-        let rhs = parse_expression(ctx, lexer, binop.precedence() + 1)?;
+        if let BinaryOperator::Assign = binop {
+            // This ensures we can handle right-associative operators like `=`,
+            // since operators of the same precedence still are evaluated
+            // together.
+            let rhs = parse_expression(ctx, lexer, binop.precedence())?;
+            lhs = Expression::Assignment(Box::new(lhs), Box::new(rhs));
+        } else {
+            // Handle other binary operators as left-associative by allowing
+            // higher-precedence operators to be evaluated first.
+            let rhs = parse_expression(ctx, lexer, binop.precedence() + 1)?;
 
-        lhs = Expression::Binary {
-            op: binop,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-            sign,
-        };
+            lhs = Expression::Binary {
+                op: binop,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                sign,
+            };
+        }
 
         next = lexer.peek();
     }
@@ -339,6 +424,7 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
     if let Some(token) = lexer.next_token() {
         match token.ty {
             TokenType::ConstantInt(v) => Ok(Expression::ConstantInt(v)),
+            TokenType::Ident(s) => Ok(Expression::Var(s.clone())),
             TokenType::Operator(
                 OperatorKind::BitNot | OperatorKind::Minus | OperatorKind::LogNot,
             ) => {
@@ -406,6 +492,35 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
     }
 }
 
+/// Parse an _AST_ function/object type from the provided `Lexer`.
+#[allow(dead_code)]
+fn parse_type(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Type, String> {
+    if let Some(token) = lexer.next_token() {
+        match token.ty {
+            TokenType::Keyword(ref s) if s == "int" => Ok(Type::Int),
+            TokenType::Keyword(ref s) if s == "void" => Ok(Type::Void),
+            _ => {
+                let tok_str = format!("{token:?}");
+
+                Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    token.loc.line_content,
+                    "unknown type name '{tok_str}'",
+                ))
+            }
+        }
+    } else {
+        Err(fmt_err!(
+            ctx.in_path.display(),
+            "expected '<type>' at end of input",
+        ))
+    }
+}
+
 /// Consumes the current token from the `Lexer` if it matches the expected token
 /// type.
 fn expect_token(
@@ -462,6 +577,7 @@ fn is_binop(ty: &TokenType) -> Option<BinaryOperator> {
         TokenType::Operator(OperatorKind::LessThanEq) => Some(BinaryOperator::OrdLessEq),
         TokenType::Operator(OperatorKind::GreaterThan) => Some(BinaryOperator::OrdGreater),
         TokenType::Operator(OperatorKind::GreaterThanEq) => Some(BinaryOperator::OrdGreaterEq),
+        TokenType::Operator(OperatorKind::Assign) => Some(BinaryOperator::Assign),
         _ => None,
     }
 }
