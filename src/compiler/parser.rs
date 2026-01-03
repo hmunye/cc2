@@ -3,6 +3,7 @@
 //! Compiler pass that parses a stream of tokens into an abstract syntax tree
 //! (_AST_).
 
+use std::collections::HashMap;
 use std::{fmt, process};
 
 use crate::compiler::lexer::{Lexer, OperatorKind, TokenType};
@@ -10,10 +11,145 @@ use crate::{Context, fmt_err, fmt_token_err, report_err};
 
 type Ident = String;
 
+/// Helper for resolving variable identifiers with more unique ones
+struct VarResolve {
+    map: HashMap<Ident, Ident>,
+    var_count: usize,
+}
+
+impl VarResolve {
+    /// Allocates and returns a fresh temporary variable identifier, appending
+    /// the provided prefix.
+    fn new_tmp(&mut self, prefix: &str) -> Ident {
+        // The `.` in temporary identifiers guarantees they won’t conflict
+        // with user-defined identifiers, since the _C_ standard forbids `.` in
+        // identifiers.
+        let ident = format!("{prefix}.{}", self.var_count);
+        self.var_count += 1;
+        ident
+    }
+}
+
 /// Abstract Syntax Tree (_AST_).
 pub enum AST {
     /// Function that represent the structure of the program.
     Program(Function),
+}
+
+impl AST {
+    /// Ensure each variable identifier is unique within the _AST_, handling
+    /// semantic errors such as duplicate declarations within the same scope.
+    fn resolve_vars(&mut self, ctx: &Context<'_>, resolver: &mut VarResolve) -> Result<(), String> {
+        // TODO: Handle mutations in-place instead of making copies.
+        match self {
+            AST::Program(func) => {
+                for block in &mut func.body {
+                    match block {
+                        Block::Stmt(stmt) => *stmt = AST::resolve_statement(stmt, ctx, resolver)?,
+                        Block::Decl(decl) => *decl = AST::resolve_decl(decl, ctx, resolver)?,
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn resolve_decl(
+        decl: &Declaration,
+        ctx: &Context<'_>,
+        resolver: &mut VarResolve,
+    ) -> Result<Declaration, String> {
+        if resolver.map.contains_key(&decl.ident) {
+            // TODO: Update to use `fmt_token_err`.
+            return Err(fmt_err!(
+                ctx.program,
+                "duplicate variable declaration '{}'",
+                &decl.ident
+            ));
+        }
+
+        let resolved_ident = resolver.new_tmp(&decl.ident);
+        resolver
+            .map
+            .insert(decl.ident.clone(), resolved_ident.clone());
+
+        let mut resolved_init = None;
+
+        if let Some(init) = &decl.init {
+            resolved_init = Some(AST::resolve_expression(init, ctx, resolver)?);
+        }
+
+        Ok(Declaration {
+            ident: resolved_ident,
+            init: resolved_init,
+        })
+    }
+
+    fn resolve_statement(
+        stmt: &Statement,
+        ctx: &Context<'_>,
+        resolver: &mut VarResolve,
+    ) -> Result<Statement, String> {
+        match stmt {
+            Statement::Return(e) => Ok(Statement::Return(AST::resolve_expression(
+                e, ctx, resolver,
+            )?)),
+            Statement::Expression(e) => Ok(Statement::Expression(AST::resolve_expression(
+                e, ctx, resolver,
+            )?)),
+            Statement::Null => Ok(Statement::Null),
+        }
+    }
+
+    fn resolve_expression(
+        expr: &Expression,
+        ctx: &Context<'_>,
+        resolver: &mut VarResolve,
+    ) -> Result<Expression, String> {
+        match expr {
+            Expression::Assignment(lvalue, rvalue) => {
+                if let Expression::Var(_) = **lvalue {
+                    let lvalue = AST::resolve_expression(lvalue, ctx, resolver)?;
+                    let rvalue = AST::resolve_expression(rvalue, ctx, resolver)?;
+
+                    Ok(Expression::Assignment(Box::new(lvalue), Box::new(rvalue)))
+                } else {
+                    // TODO: Update to use `fmt_token_err`.
+                    Err(fmt_err!(ctx.program, "invalid lvalue '{:?}'", **lvalue))
+                }
+            }
+            Expression::Var(v) => {
+                if let Some(ident) = resolver.map.get(v) {
+                    Ok(Expression::Var(ident.clone()))
+                } else {
+                    // TODO: Update to use `fmt_token_err`.
+                    Err(fmt_err!(ctx.program, "undeclared variable '{}'", v))
+                }
+            }
+            Expression::ConstantInt(i) => Ok(Expression::ConstantInt(*i)),
+            Expression::Unary { op, expr, sign } => {
+                let expr = AST::resolve_expression(expr, ctx, resolver)?;
+
+                Ok(Expression::Unary {
+                    op: *op,
+                    expr: Box::new(expr),
+                    sign: *sign,
+                })
+            }
+            Expression::Binary { op, lhs, rhs, sign } => {
+                let lhs = AST::resolve_expression(lhs, ctx, resolver)?;
+                let rhs = AST::resolve_expression(rhs, ctx, resolver)?;
+
+                Ok(Expression::Binary {
+                    op: *op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    sign: *sign,
+                })
+            }
+        }
+    }
 }
 
 impl fmt::Debug for AST {
@@ -37,8 +173,8 @@ pub struct Function {
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub enum Block {
-    S(Statement),
-    D(Declaration),
+    Stmt(Statement),
+    Decl(Declaration),
 }
 
 /// _AST_ statements.
@@ -55,13 +191,13 @@ pub enum Statement {
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct Declaration {
-    ident: Ident,
+    pub ident: Ident,
     // Optional initializer.
-    init: Option<Expression>,
+    pub init: Option<Expression>,
 }
 
 /// _AST_ expressions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expression {
     /// Constant int value (32-bit).
     ConstantInt(i32),
@@ -226,9 +362,24 @@ pub fn parse_program(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> AST {
         process::exit(1);
     }
 
-    // TODO: Perform passes
+    let mut ast = AST::Program(func);
 
-    AST::Program(func)
+    let mut resolver = VarResolve {
+        map: Default::default(),
+        var_count: 0,
+    };
+
+    // Pass 1 - Variable resolution.
+    ast.resolve_vars(ctx, &mut resolver).unwrap_or_else(|err| {
+        if cfg!(test) {
+            panic!("{err}");
+        }
+
+        eprintln!("{err}");
+        process::exit(1);
+    });
+
+    ast
 }
 
 /// Parses an _AST_ function definition from the provided `Lexer`.
@@ -266,9 +417,9 @@ fn parse_block(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Block, String
     if let Some(tok) = lexer.peek() {
         match tok.ty {
             // Parse this as a declaration (starts with a type).
-            TokenType::Keyword(ref s) if s == "int" => Ok(Block::D(parse_decl(ctx, lexer)?)),
+            TokenType::Keyword(ref s) if s == "int" => Ok(Block::Decl(parse_decl(ctx, lexer)?)),
             // Parse this as a statement.
-            _ => Ok(Block::S(parse_statement(ctx, lexer)?)),
+            _ => Ok(Block::Stmt(parse_statement(ctx, lexer)?)),
         }
     } else {
         Err(fmt_err!(

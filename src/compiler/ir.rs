@@ -269,18 +269,46 @@ fn generate_ir_function(func: &parser::Function) -> Function {
         label: &label,
     };
 
-    for body in &func.body {
-        match body {
-            parser::Block::S(s) => match s {
+    for block in &func.body {
+        match block {
+            parser::Block::Stmt(stmt) => match stmt {
                 parser::Statement::Return(expr) => {
                     let ir_val = generate_ir_value(expr, &mut builder);
                     builder.instructions.push(Instruction::Return(ir_val));
                 }
-                _ => todo!(),
+                parser::Statement::Expression(expr) => {
+                    // Generate and append any instructions needed to encode the
+                    // expression.
+                    let _ = generate_ir_value(expr, &mut builder);
+                }
+                parser::Statement::Null => {}
             },
-            parser::Block::D(_d) => todo!(),
+            parser::Block::Decl(decl) => {
+                if let Some(init) = &decl.init {
+                    // Generate and append any instructions needed to encode the
+                    // declaration's initializer.
+                    let ir_val = generate_ir_value(init, &mut builder);
+
+                    builder.instructions.push(Instruction::Copy {
+                        src: ir_val,
+                        dst: Value::Var(decl.ident.clone()),
+                    });
+                }
+            }
         }
     }
+
+    // According to the _C_ standard, the "main" function without a return
+    // statement implicitly returns 0. For other functions that declare a return
+    // type but have no return statement, the use of that return value by the
+    // caller is undefined behavior.
+    //
+    // As a hack, just appending an extra `Instruction::Return` handles the edge
+    // cases of the return value being used by the caller or ignored (no
+    // undefined behavior if the value is never used).
+    builder
+        .instructions
+        .push(Instruction::Return(Value::ConstantInt(0)));
 
     Function {
         instructions: builder.instructions,
@@ -292,6 +320,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
 fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) -> Value {
     match expr {
         parser::Expression::ConstantInt(v) => Value::ConstantInt(*v),
+        parser::Expression::Var(v) => Value::Var(v.clone()),
         parser::Expression::Unary { op, expr, .. } => {
             // The sign of an _IR_ instruction is determined by the
             // sub-expressions (here `expr`), not by when the operator is
@@ -418,6 +447,20 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                 }
             }
         }
-        _ => todo!(),
+        parser::Expression::Assignment(lvalue, rvalue) => {
+            let dst = match &**lvalue {
+                parser::Expression::Var(v) => Value::Var(v.clone()),
+                _ => panic!("lvalue of an expression should be an AST var"),
+            };
+
+            let result = generate_ir_value(rvalue, builder);
+
+            builder.instructions.push(Instruction::Copy {
+                src: result,
+                dst: dst.clone(),
+            });
+
+            dst
+        }
     }
 }
