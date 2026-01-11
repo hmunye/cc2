@@ -12,15 +12,23 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::{env, fs, process};
 
-/// Information about the current program.
+/// Information about the current program context.
 #[derive(Debug)]
 pub struct Context<'a> {
     /// Name of the program.
     pub program: &'a str,
     /// Path of the input file.
     pub in_path: &'static Path,
-    /// Path of the output file.
-    pub out_path: &'a Path,
+    /// Reference to input file bytes.
+    pub src: &'a [u8],
+}
+
+impl<'a> Context<'a> {
+    /// Returns the text representation for the given byte range from `src`.
+    #[inline]
+    pub fn src_slice(&self, range: std::ops::Range<usize>) -> &str {
+        std::str::from_utf8(&self.src[range]).expect("ASCII bytes should be valid UTF-8")
+    }
 }
 
 fn main() {
@@ -44,41 +52,39 @@ fn main() {
     let ctx = Context {
         program: &args.program,
         in_path: args.in_path,
-        out_path: args.out_path.as_path(),
+        src: &src,
     };
 
-    let mut lexer = compiler::lexer::Lexer::new(&src);
-    lexer.lex(&ctx);
+    let lexer = compiler::lexer::Lexer::new(&ctx);
 
     match args.stage.as_str() {
         "lex" => {
             print!("{lexer}");
         }
         "parse" => {
-            let ast = compiler::parser::parse_program(&ctx, &mut lexer);
+            let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
             println!("{ast:#?}");
         }
         "ir" => {
-            let ast = compiler::parser::parse_program(&ctx, &mut lexer);
+            let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
             print!("{ir}");
         }
         "mir" => {
-            let ast = compiler::parser::parse_program(&ctx, &mut lexer);
+            let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
             let mir = compiler::mir::generate_mir(&ir);
             print!("{mir}");
         }
         stage => {
-            let ast = compiler::parser::parse_program(&ctx, &mut lexer);
+            let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
             let mir = compiler::mir::generate_mir(&ir);
 
             let output: Box<dyn Write> = if stage == "asm" {
-                // Print to `stdout`, the assembly that would have been emitted.
                 Box::new(io::stdout().lock())
             } else {
-                let f = fs::File::create(ctx.out_path).unwrap_or_else(|err| {
+                let f = fs::File::create(&args.out_path).unwrap_or_else(|err| {
                     report_err!(
                         &ctx.program,
                         "failed to create output file '{}': {err}",
@@ -94,9 +100,9 @@ fn main() {
     }
 }
 
-/// Perform preprocessing on the input _C_ source code, expanding macros,
-/// handling include directives, removing comments, etc., returning the file
-/// handle of the preprocessed file. [Exits] on error with non-zero status.
+/// Perform preprocessing on the input _C_ translation unit (expanding macros,
+/// handling include directives, removing comments, etc.), returning a file
+/// handle. [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
 fn preprocess_input(args: &args::Args) -> fs::File {
@@ -110,7 +116,11 @@ fn preprocess_input(args: &args::Args) -> fs::File {
         .create(true)
         .open(&tmp_path)
         .unwrap_or_else(|err| {
-            report_err!(&args.program, "failed to create preprocessed file: {err}");
+            report_err!(
+                &args.program,
+                "failed to create preprocessed file '{}': {err}",
+                tmp_path.display()
+            );
             process::exit(1);
         });
 
@@ -131,9 +141,7 @@ fn preprocess_input(args: &args::Args) -> fs::File {
         });
 
     if !output.status.success() {
-        io::stderr()
-            .write_all(&output.stderr)
-            .expect("failed to write gcc 'stderr' contents");
+        eprintln!("{:?}", &output.stderr);
         process::exit(output.status.code().unwrap_or(1));
     }
 

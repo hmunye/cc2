@@ -1,11 +1,11 @@
-//! Parsing for the compiler's command-line arguments.
+//! Module for parsing command-line arguments.
 
 use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::report_err;
 
-/// Compiler command-line arguments.
+/// Compiler's command-line arguments.
 #[derive(Debug)]
 pub struct Args {
     /// Name of the program.
@@ -20,7 +20,7 @@ pub struct Args {
 
 impl Args {
     /// Parses command-line arguments from `std::env::args()`, [exiting] on
-    /// error.
+    /// error with non-zero status.
     ///
     /// [exiting]: std::process::exit
     pub fn parse() -> Self {
@@ -48,7 +48,6 @@ impl Args {
                                 stage = args.next().expect("next argument should be present");
                             }
                             Some(s) => {
-                                // Already peeked the next argument.
                                 report_err!(&program, "invalid stage: '{s}'");
                                 print_usage(&program);
                             }
@@ -75,7 +74,7 @@ impl Args {
                     print_usage(&program);
                 }
             } else if in_path.is_empty() {
-                // Input file can come before or after option flags.
+                // Input file path can come before or after flags.
                 in_path = args.next().expect("next argument should be present");
             } else {
                 report_err!(&program, "invalid argument: '{arg}'");
@@ -101,7 +100,7 @@ impl Args {
             process::exit(1);
         }
 
-        // No output path was provided - use default output path name.
+        // No output path was provided.
         if out_path.capacity() == 0 {
             out_path = path.with_extension("s");
         }

@@ -3,22 +3,22 @@
 //! Compiler pass that parses a stream of tokens into an abstract syntax tree
 //! (_AST_).
 
-use std::collections::HashMap;
 use std::{fmt, process};
 
-use crate::compiler::lexer::{Lexer, OperatorKind, TokenType};
+use crate::compiler::lexer::{OperatorKind, Token, TokenType};
 use crate::{Context, fmt_err, fmt_token_err, report_err};
 
 type Ident = String;
+type TokenResult = Result<Token, String>;
 
-/// Helper for resolving variable identifiers with more unique ones
-struct VarResolve {
-    map: HashMap<Ident, Ident>,
+/// Helper for resolving variable identifiers.
+struct Resolver {
+    map: std::collections::HashMap<Ident, Ident>,
     var_count: usize,
 }
 
-impl VarResolve {
-    /// Allocates and returns a fresh temporary variable identifier, appending
+impl Resolver {
+    /// Allocates and returns a fresh temporary variable identifier, prepending
     /// the provided prefix.
     fn new_tmp(&mut self, prefix: &str) -> Ident {
         // The `.` in temporary identifiers guarantees they won’t conflict
@@ -37,16 +37,15 @@ pub enum AST {
 }
 
 impl AST {
-    /// Ensure each variable identifier is unique within the _AST_, handling
-    /// semantic errors such as duplicate declarations within the same scope.
-    fn resolve_vars(&mut self, ctx: &Context<'_>, resolver: &mut VarResolve) -> Result<(), String> {
-        // TODO: Handle mutations in-place instead of making copies.
+    /// Ensures all variables are uniquely identified and checks for semantic
+    /// errors.
+    fn resolve_vars(&mut self, ctx: &Context<'_>, resolver: &mut Resolver) -> Result<(), String> {
         match self {
             AST::Program(func) => {
                 for block in &mut func.body {
                     match block {
-                        Block::Stmt(stmt) => *stmt = AST::resolve_statement(stmt, ctx, resolver)?,
-                        Block::Decl(decl) => *decl = AST::resolve_decl(decl, ctx, resolver)?,
+                        Block::Stmt(stmt) => AST::resolve_statement(stmt, ctx, resolver)?,
+                        Block::Decl(decl) => AST::resolve_declaration(decl, ctx, resolver)?,
                     }
                 }
             }
@@ -55,17 +54,25 @@ impl AST {
         Ok(())
     }
 
-    fn resolve_decl(
-        decl: &Declaration,
+    fn resolve_declaration(
+        decl: &mut Declaration,
         ctx: &Context<'_>,
-        resolver: &mut VarResolve,
-    ) -> Result<Declaration, String> {
+        resolver: &mut Resolver,
+    ) -> Result<(), String> {
         if resolver.map.contains_key(&decl.ident) {
-            // TODO: Update to use `fmt_token_err`.
-            return Err(fmt_err!(
-                ctx.program,
-                "duplicate variable declaration '{}'",
-                &decl.ident
+            let token = &decl.token;
+
+            let tok_str = format!("{token:?}");
+            let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+            return Err(fmt_token_err!(
+                token.loc.file_path.display(),
+                token.loc.line,
+                token.loc.col,
+                tok_str,
+                tok_str.len() - 1,
+                line_content,
+                "redeclaration of '{tok_str}'",
             ));
         }
 
@@ -74,60 +81,86 @@ impl AST {
             .map
             .insert(decl.ident.clone(), resolved_ident.clone());
 
-        let mut resolved_init = None;
+        decl.ident = resolved_ident;
 
         if let Some(init) = &decl.init {
-            resolved_init = Some(AST::resolve_expression(init, ctx, resolver)?);
+            decl.init = Some(AST::resolve_expression(init, ctx, resolver)?);
         }
 
-        Ok(Declaration {
-            ident: resolved_ident,
-            init: resolved_init,
-        })
+        Ok(())
     }
 
     fn resolve_statement(
-        stmt: &Statement,
+        stmt: &mut Statement,
         ctx: &Context<'_>,
-        resolver: &mut VarResolve,
-    ) -> Result<Statement, String> {
-        match stmt {
-            Statement::Return(e) => Ok(Statement::Return(AST::resolve_expression(
-                e, ctx, resolver,
-            )?)),
-            Statement::Expression(e) => Ok(Statement::Expression(AST::resolve_expression(
-                e, ctx, resolver,
-            )?)),
-            Statement::Null => Ok(Statement::Null),
-        }
+        resolver: &mut Resolver,
+    ) -> Result<(), String> {
+        *stmt = match stmt {
+            Statement::Return(expr) => {
+                Statement::Return(AST::resolve_expression(expr, ctx, resolver)?)
+            }
+            Statement::Expression(expr) => {
+                Statement::Expression(AST::resolve_expression(expr, ctx, resolver)?)
+            }
+            Statement::Null => Statement::Null,
+        };
+
+        Ok(())
     }
 
     fn resolve_expression(
         expr: &Expression,
         ctx: &Context<'_>,
-        resolver: &mut VarResolve,
+        resolver: &mut Resolver,
     ) -> Result<Expression, String> {
         match expr {
-            Expression::Assignment(lvalue, rvalue) => {
-                if let Expression::Var(_) = **lvalue {
+            Expression::Assignment(lvalue, rvalue, token) => match **lvalue {
+                Expression::Var(_) => {
                     let lvalue = AST::resolve_expression(lvalue, ctx, resolver)?;
                     let rvalue = AST::resolve_expression(rvalue, ctx, resolver)?;
 
-                    Ok(Expression::Assignment(Box::new(lvalue), Box::new(rvalue)))
-                } else {
-                    // TODO: Update to use `fmt_token_err`.
-                    Err(fmt_err!(ctx.program, "invalid lvalue '{:?}'", **lvalue))
+                    Ok(Expression::Assignment(
+                        Box::new(lvalue),
+                        Box::new(rvalue),
+                        token.clone(),
+                    ))
                 }
-            }
+                _ => {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "lvalue required as left operand of assignment",
+                    ))
+                }
+            },
             Expression::Var(v) => {
-                if let Some(ident) = resolver.map.get(v) {
-                    Ok(Expression::Var(ident.clone()))
+                if resolver.map.contains_key(&v.0) {
+                    Ok(Expression::Var(v.clone()))
                 } else {
-                    // TODO: Update to use `fmt_token_err`.
-                    Err(fmt_err!(ctx.program, "undeclared variable '{}'", v))
+                    let token = &v.1;
+                    let tok_str = format!("{token:?}");
+
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "'{tok_str}' undeclared",
+                    ))
                 }
             }
-            Expression::ConstantInt(i) => Ok(Expression::ConstantInt(*i)),
+            Expression::Constant(i) => Ok(Expression::Constant(*i)),
             Expression::Unary { op, expr, sign } => {
                 let expr = AST::resolve_expression(expr, ctx, resolver)?;
 
@@ -183,7 +216,7 @@ pub enum Block {
 pub enum Statement {
     Return(Expression),
     Expression(Expression),
-    // Expression statements without an expression.
+    // Expression statement without an expression.
     Null,
 }
 
@@ -192,6 +225,7 @@ pub enum Statement {
 #[allow(missing_docs)]
 pub struct Declaration {
     pub ident: Ident,
+    pub token: Token,
     // Optional initializer.
     pub init: Option<Expression>,
 }
@@ -200,9 +234,9 @@ pub struct Declaration {
 #[derive(Debug, Clone)]
 pub enum Expression {
     /// Constant int value (32-bit).
-    ConstantInt(i32),
+    Constant(i32),
     /// Variable expression.
-    Var(Ident),
+    Var((Ident, Token)),
     /// Unary operator applied to an expression.
     #[allow(missing_docs)]
     Unary {
@@ -218,8 +252,8 @@ pub enum Expression {
         rhs: Box<Expression>,
         sign: Signedness,
     },
-    /// An `lvalue` being assigned to an `rvalue`.
-    Assignment(Box<Expression>, Box<Expression>),
+    /// Assigns an `rvalue` to an `lvalue`.
+    Assignment(Box<Expression>, Box<Expression>, Token),
 }
 
 /// _AST_ unary operators.
@@ -314,20 +348,7 @@ impl BinaryOperator {
     }
 }
 
-/// _AST_ function/object types.
-#[derive(Debug, Clone, Copy)]
-pub enum Type {
-    /// Integer type.
-    Int,
-    /// Absence of a type.
-    Void,
-}
-
-/// Currently used to determine the signedness of an expression, particularly
-/// for logical or arithmetic right shifts.
-///
-/// Any unary negation or binary subtraction operator will change the
-/// interpretation of an expression to signed.
+// NOTE: Temporary hack for arithmetic right shift.
 #[derive(Debug, Clone, Copy)]
 #[allow(missing_docs)]
 pub enum Signedness {
@@ -335,12 +356,15 @@ pub enum Signedness {
     Unsigned,
 }
 
-/// Parses an abstract syntax tree (_AST_) from the provided `Lexer`. [Exits] on
-/// error with non-zero status.
+/// Parses an abstract syntax tree (_AST_) from the provided `Token` iterator.
+/// [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn parse_program(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> AST {
-    let func = parse_function(ctx, lexer).unwrap_or_else(|err| {
+pub fn parse_program<I: Iterator<Item = TokenResult>>(
+    ctx: &Context<'_>,
+    mut iter: std::iter::Peekable<I>,
+) -> AST {
+    let func = parse_function(ctx, &mut iter).unwrap_or_else(|err| {
         if cfg!(test) {
             panic!("{err}");
         }
@@ -349,22 +373,18 @@ pub fn parse_program(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> AST {
         process::exit(1);
     });
 
-    if !lexer.is_empty() {
+    if iter.peek().is_some() {
         if cfg!(test) {
-            panic!("tokens remaining after parsing: {}", lexer.len());
+            panic!("tokens remaining after parsing");
         }
 
-        report_err!(
-            ctx.in_path.display(),
-            "tokens remaining after parsing: {}",
-            lexer.len()
-        );
+        report_err!(ctx.in_path.display(), "tokens remaining after parsing");
         process::exit(1);
     }
 
     let mut ast = AST::Program(func);
 
-    let mut resolver = VarResolve {
+    let mut resolver = Resolver {
         map: Default::default(),
         var_count: 0,
     };
@@ -382,44 +402,52 @@ pub fn parse_program(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> AST {
     ast
 }
 
-/// Parses an _AST_ function definition from the provided `Lexer`.
-fn parse_function(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Function, String> {
+/// Parses an _AST_ function definition from the provided `Token` iterator.
+fn parse_function<I: Iterator<Item = TokenResult>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Function, String> {
     // NOTE: Currently only support the `int` type.
-    expect_token(ctx, lexer, TokenType::Keyword("int".into()))?;
-    let ident = parse_ident(ctx, lexer)?;
+    expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
+    let (ident, _) = parse_ident(ctx, iter)?;
 
-    expect_token(ctx, lexer, TokenType::ParenOpen)?;
+    expect_token(ctx, iter, TokenType::ParenOpen)?;
     // NOTE: Currently not processing function parameters.
-    expect_token(ctx, lexer, TokenType::Keyword("void".into()))?;
-    expect_token(ctx, lexer, TokenType::ParenClose)?;
+    expect_token(ctx, iter, TokenType::Keyword("void".into()))?;
+    expect_token(ctx, iter, TokenType::ParenClose)?;
 
-    expect_token(ctx, lexer, TokenType::BraceOpen)?;
+    expect_token(ctx, iter, TokenType::BraceOpen)?;
 
     let mut body = vec![];
 
     // Process all block items as the function's body.
-    while let Some(tok) = lexer.peek() {
-        if let TokenType::BraceClose = tok.ty {
+    while let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        if let TokenType::BraceClose = token.ty {
             break;
         }
 
-        let block = parse_block(ctx, lexer)?;
+        let block = parse_block(ctx, iter)?;
         body.push(block);
     }
 
-    expect_token(ctx, lexer, TokenType::BraceClose)?;
+    expect_token(ctx, iter, TokenType::BraceClose)?;
 
     Ok(Function { ident, body })
 }
 
-/// Parse an _AST_ block from the provided `Lexer`.
-fn parse_block(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Block, String> {
-    if let Some(tok) = lexer.peek() {
-        match tok.ty {
+/// Parse an _AST_ block from the provided `Token` iterator.
+fn parse_block<I: Iterator<Item = TokenResult>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Block, String> {
+    if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        match token.ty {
             // Parse this as a declaration (starts with a type).
-            TokenType::Keyword(ref s) if s == "int" => Ok(Block::Decl(parse_decl(ctx, lexer)?)),
+            TokenType::Keyword(ref s) if s == "int" => {
+                Ok(Block::Decl(parse_declaration(ctx, iter)?))
+            }
             // Parse this as a statement.
-            _ => Ok(Block::Stmt(parse_statement(ctx, lexer)?)),
+            _ => Ok(Block::Stmt(parse_statement(ctx, iter)?)),
         }
     } else {
         Err(fmt_err!(
@@ -429,50 +457,55 @@ fn parse_block(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Block, String
     }
 }
 
-/// Parse an _AST_ declaration from the provided `Lexer`.
-fn parse_decl(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Declaration, String> {
+/// Parse an _AST_ declaration from the provided `Token` iterator.
+fn parse_declaration<I: Iterator<Item = TokenResult>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Declaration, String> {
     // NOTE: Currently only support the `int` type.
-    expect_token(ctx, lexer, TokenType::Keyword("int".into()))?;
+    expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
 
-    let ident = parse_ident(ctx, lexer)?;
+    let (ident, token) = parse_ident(ctx, iter)?;
 
     let mut init = None;
 
-    // We expect an assignment
-    if let Some(tok) = lexer.peek()
-        && let TokenType::Operator(OperatorKind::Assign) = tok.ty
+    if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
+        && let TokenType::Operator(OperatorKind::Assign) = token.ty
     {
-        // Consume the operator before consuming the expression.
-        let _ = lexer.next_token();
-        init = Some(parse_expression(ctx, lexer, 0)?);
+        // Consume the "=" token.
+        let _ = iter.next();
+        init = Some(parse_expression(ctx, iter, 0)?);
     }
 
-    expect_token(ctx, lexer, TokenType::Semicolon)?;
+    expect_token(ctx, iter, TokenType::Semicolon)?;
 
-    Ok(Declaration { ident, init })
+    Ok(Declaration { ident, token, init })
 }
 
-/// Parse an _AST_ statement from the provided `Lexer`.
-fn parse_statement(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Statement, String> {
-    if let Some(tok) = lexer.peek() {
-        match tok.ty {
+/// Parse an _AST_ statement from the provided `Token` iterator.
+fn parse_statement<I: Iterator<Item = TokenResult>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Statement, String> {
+    if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        match token.ty {
             TokenType::Keyword(ref s) if s == "return" => {
-                // Consume the "return".
-                let _ = lexer.next_token();
+                // Consume the "return" token.
+                let _ = iter.next();
 
-                let expr = parse_expression(ctx, lexer, 0)?;
-                expect_token(ctx, lexer, TokenType::Semicolon)?;
+                let expr = parse_expression(ctx, iter, 0)?;
+                expect_token(ctx, iter, TokenType::Semicolon)?;
 
                 Ok(Statement::Return(expr))
             }
             TokenType::Semicolon => {
-                // Consume the semicolon.
-                let _ = lexer.next_token();
+                // Consume the "semicolon" token.
+                let _ = iter.next();
                 Ok(Statement::Null)
             }
             _ => {
-                let expr = parse_expression(ctx, lexer, 0)?;
-                expect_token(ctx, lexer, TokenType::Semicolon)?;
+                let expr = parse_expression(ctx, iter, 0)?;
+                expect_token(ctx, iter, TokenType::Semicolon)?;
 
                 Ok(Statement::Expression(expr))
             }
@@ -485,13 +518,19 @@ fn parse_statement(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Statement
     }
 }
 
-/// Parse an _AST_ identifier from the provided `Lexer`.
-fn parse_ident(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Ident, String> {
-    if let Some(token) = lexer.next_token() {
+/// Parse an _AST_ identifier from the provided `Token` iterator.
+fn parse_ident<I: Iterator<Item = TokenResult>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<(Ident, Token), String> {
+    if let Some(token) = iter.next() {
+        let token = token?;
+
         match token.ty {
-            TokenType::Ident(ref s) => Ok(s.clone()),
+            TokenType::Ident(ref s) => Ok((s.clone(), token)),
             tok => {
                 let tok_str = format!("{tok:?}");
+                let line_content = ctx.src_slice(token.loc.line_span);
 
                 Err(fmt_token_err!(
                     token.loc.file_path.display(),
@@ -499,7 +538,7 @@ fn parse_ident(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Ident, String
                     token.loc.col,
                     tok_str,
                     tok_str.len() - 1,
-                    token.loc.line_content,
+                    line_content,
                     "expected identifier",
                 ))
             }
@@ -512,18 +551,18 @@ fn parse_ident(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Ident, String
     }
 }
 
-/// Parse an _AST_ expression from the provided `Lexer` using precedence
-/// climbing.
-fn parse_expression(
+/// Parse an _AST_ expression from the provided `Token` iterator using
+/// `precedence climbing`.
+fn parse_expression<I: Iterator<Item = TokenResult>>(
     ctx: &Context<'_>,
-    lexer: &mut Lexer<'_>,
+    iter: &mut std::iter::Peekable<I>,
     min_precedence: u8,
 ) -> Result<Expression, String> {
-    let mut lhs = parse_factor(ctx, lexer)?;
-    let mut next = lexer.peek();
+    let mut lhs = parse_factor(ctx, iter)?;
+    let mut next = iter.peek().map(Result::as_ref).transpose()?;
 
     while let Some(token) = next {
-        let Some(binop) = is_binop(&token.ty) else {
+        let Some(binop) = ty_to_binop(&token.ty) else {
             break;
         };
 
@@ -531,66 +570,60 @@ fn parse_expression(
             break;
         }
 
-        // Any subtraction results in the entire expression being interpreted
-        // as signed.
-        //
-        // NOTE: Temporary fix, still do not properly track sign of expressions.
-        let sign = if let BinaryOperator::Subtract = binop {
-            Signedness::Signed
-        } else {
-            Signedness::Unsigned
-        };
-
-        // Consume the matched token.
-        let _ = lexer.next_token();
+        // Consume the peeked token.
+        let token = iter.next();
 
         if let BinaryOperator::Assign = binop {
             // This ensures we can handle right-associative operators like `=`,
             // since operators of the same precedence still are evaluated
             // together.
-            let rhs = parse_expression(ctx, lexer, binop.precedence())?;
-            lhs = Expression::Assignment(Box::new(lhs), Box::new(rhs));
+            let rhs = parse_expression(ctx, iter, binop.precedence())?;
+            lhs = Expression::Assignment(
+                Box::new(lhs),
+                Box::new(rhs),
+                token
+                    .expect("next token should be present")
+                    .expect("next token should be valid"),
+            );
         } else {
             // Handle other binary operators as left-associative by allowing
             // higher-precedence operators to be evaluated first.
-            let rhs = parse_expression(ctx, lexer, binop.precedence() + 1)?;
+            let rhs = parse_expression(ctx, iter, binop.precedence() + 1)?;
 
             lhs = Expression::Binary {
                 op: binop,
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
-                sign,
+                // NOTE: Temporary hack for arithmetic right shift.
+                sign: Signedness::Unsigned,
             };
         }
 
-        next = lexer.peek();
+        next = iter.peek().map(Result::as_ref).transpose()?;
     }
 
     Ok(lhs)
 }
 
 /// Parse an _AST_ expression or sub-expression (factor) from the provided
-/// `Lexer`.
-fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, String> {
-    if let Some(token) = lexer.next_token() {
+/// `Token` iterator.
+fn parse_factor<I: Iterator<Item = TokenResult>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Expression, String> {
+    if let Some(token) = iter.next() {
+        let token = token?;
+
         match token.ty {
-            TokenType::ConstantInt(v) => Ok(Expression::ConstantInt(v)),
-            TokenType::Ident(s) => Ok(Expression::Var(s.clone())),
+            TokenType::Constant(v) => Ok(Expression::Constant(v)),
+            TokenType::Ident(ref s) => Ok(Expression::Var((s.clone(), token))),
             TokenType::Operator(
                 OperatorKind::BitNot | OperatorKind::Minus | OperatorKind::LogNot,
             ) => {
-                let unop = match token.ty {
-                    TokenType::Operator(OperatorKind::BitNot) => UnaryOperator::Complement,
-                    TokenType::Operator(OperatorKind::Minus) => UnaryOperator::Negate,
-                    TokenType::Operator(OperatorKind::LogNot) => UnaryOperator::Not,
-                    _ => unreachable!(),
-                };
+                let unop = ty_to_unop(&token.ty)
+                    .expect("expected unary operator when parsing factor (OperatorKind::BitNot | OperatorKind::Minus | OperatorKind::LogNot)");
 
-                // Negation results in the entire expression being interpreted
-                // as signed.
-                //
-                // NOTE: Temporary fix, still do not properly track sign of
-                // expressions.
+                // NOTE: Temporary hack for arithmetic right shift.
                 let sign = if let UnaryOperator::Negate = unop {
                     Signedness::Signed
                 } else {
@@ -599,7 +632,7 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
 
                 // Recursively parse the factor on which the unary operator is
                 // being applied to.
-                let inner_fct = parse_factor(ctx, lexer)?;
+                let inner_fct = parse_factor(ctx, iter)?;
 
                 Ok(Expression::Unary {
                     op: unop,
@@ -609,19 +642,20 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
             }
             TokenType::ParenOpen => {
                 // Recursively parse the expression within parenthesis.
-                let inner_expr = parse_expression(ctx, lexer, 0)?;
+                let inner_expr = parse_expression(ctx, iter, 0)?;
 
-                expect_token(ctx, lexer, TokenType::ParenClose)?;
+                expect_token(ctx, iter, TokenType::ParenClose)?;
 
                 Ok(inner_expr)
             }
             tok => {
                 let tok_str = format!("{tok:?}");
+                let line_content = ctx.src_slice(token.loc.line_span);
 
                 let err_msg = if let TokenType::ParenClose = tok {
                     format!("expected expression before '{tok_str}' token")
                 } else {
-                    format!("'{tok_str}' undeclared")
+                    format!("unexpected token '{tok_str}' in expression")
                 };
 
                 Err(fmt_token_err!(
@@ -630,7 +664,7 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
                     token.loc.col,
                     tok_str,
                     tok_str.len() - 1,
-                    token.loc.line_content,
+                    line_content,
                     "{err_msg}",
                 ))
             }
@@ -643,49 +677,20 @@ fn parse_factor(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Expression, 
     }
 }
 
-/// Parse an _AST_ function/object type from the provided `Lexer`.
-#[allow(dead_code)]
-fn parse_type(ctx: &Context<'_>, lexer: &mut Lexer<'_>) -> Result<Type, String> {
-    if let Some(token) = lexer.next_token() {
-        match token.ty {
-            TokenType::Keyword(ref s) if s == "int" => Ok(Type::Int),
-            TokenType::Keyword(ref s) if s == "void" => Ok(Type::Void),
-            _ => {
-                let tok_str = format!("{token:?}");
-
-                Err(fmt_token_err!(
-                    token.loc.file_path.display(),
-                    token.loc.line,
-                    token.loc.col,
-                    tok_str,
-                    tok_str.len() - 1,
-                    token.loc.line_content,
-                    "unknown type name '{tok_str}'",
-                ))
-            }
-        }
-    } else {
-        Err(fmt_err!(
-            ctx.in_path.display(),
-            "expected '<type>' at end of input",
-        ))
-    }
-}
-
-/// Consumes the current token from the `Lexer` if it matches the expected token
-/// type.
-fn expect_token(
+/// Advance the `Token` iterator if it matches the expected token type.
+fn expect_token<I: Iterator<Item = TokenResult>>(
     ctx: &Context<'_>,
-    lexer: &mut Lexer<'_>,
+    iter: &mut std::iter::Peekable<I>,
     expected: TokenType,
 ) -> Result<(), String> {
-    if let Some(token) = lexer.peek() {
+    if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         if token.ty == expected {
-            // Consume the token.
-            let _ = lexer.next_token();
+            // Consume the peeked token.
+            let _ = iter.next();
             Ok(())
         } else {
             let tok_str = format!("{token:?}");
+            let line_content = ctx.src_slice(token.loc.line_span.clone());
 
             Err(fmt_token_err!(
                 token.loc.file_path.display(),
@@ -693,7 +698,7 @@ fn expect_token(
                 token.loc.col,
                 tok_str,
                 tok_str.len() - 1,
-                token.loc.line_content,
+                line_content,
                 "expected '{expected:?}', but found '{tok_str}'",
             ))
         }
@@ -706,15 +711,26 @@ fn expect_token(
     }
 }
 
-/// Returns the conversion of `TokenType` to BinaryOperator, or `None` if the
+/// Returns the conversion of `TokenType` to `UnaryOperator`, or `None` if the
+/// token type is not a unary operator.
+fn ty_to_unop(ty: &TokenType) -> Option<UnaryOperator> {
+    match ty {
+        TokenType::Operator(OperatorKind::BitNot) => Some(UnaryOperator::Complement),
+        TokenType::Operator(OperatorKind::Minus) => Some(UnaryOperator::Negate),
+        TokenType::Operator(OperatorKind::LogNot) => Some(UnaryOperator::Not),
+        _ => None,
+    }
+}
+
+/// Returns the conversion of `TokenType` to `BinaryOperator`, or `None` if the
 /// token type is not a binary operator.
-fn is_binop(ty: &TokenType) -> Option<BinaryOperator> {
+fn ty_to_binop(ty: &TokenType) -> Option<BinaryOperator> {
     match ty {
         TokenType::Operator(OperatorKind::Plus) => Some(BinaryOperator::Add),
         TokenType::Operator(OperatorKind::Minus) => Some(BinaryOperator::Subtract),
         TokenType::Operator(OperatorKind::Asterisk) => Some(BinaryOperator::Multiply),
         TokenType::Operator(OperatorKind::Division) => Some(BinaryOperator::Divide),
-        TokenType::Operator(OperatorKind::Modulo) => Some(BinaryOperator::Modulo),
+        TokenType::Operator(OperatorKind::Remainder) => Some(BinaryOperator::Modulo),
         TokenType::Operator(OperatorKind::Ampersand) => Some(BinaryOperator::BitAnd),
         TokenType::Operator(OperatorKind::BitOr) => Some(BinaryOperator::BitOr),
         TokenType::Operator(OperatorKind::BitXor) => Some(BinaryOperator::BitXor),
@@ -736,34 +752,26 @@ fn is_binop(ty: &TokenType) -> Option<BinaryOperator> {
 // Reference: https://github.com/nlsandler/writing-a-c-compiler-tests
 #[cfg(test)]
 mod tests {
-    use std::panic::{self, AssertUnwindSafe};
     use std::path::Path;
 
     use super::*;
     use crate::Context;
 
-    fn test_ctx() -> Context<'static> {
+    fn test_ctx(src: &'static [u8]) -> Context<'static> {
         Context {
             program: "cc2",
             in_path: Path::new("test.c"),
-            out_path: Path::new("test.s"),
+            src,
         }
     }
 
     #[test]
     fn parser_valid_bitwise_complement() {
         let source = b"int main(void) {\n    return ~12;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
@@ -771,386 +779,218 @@ mod tests {
         // Take the bitwise complement of the largest negative integer
         // that can be safely negated in a 32-bit signed integer (-2147483647).
         let source = b"int main(void) {\n    return ~-2147483647;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bitwise_complement_zero() {
         let source = b"int main(void) {\n    return ~0;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_negation() {
         let source = b"int main(void) {\n    return -5;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_negation_zero() {
         let source = b"int main(void) {\n    return -0;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_negation_i32_max() {
         let source = b"int main(void) {\n    return -2147483647;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_nested_unary_ops() {
         let source = b"int main(void) {\n    return ~-3;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_parenthesize_constant() {
         let source = b"int main(void) {\n    return (2);\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_redundant_parens() {
         let source = b"int main(void) {\n    return -((((10))));\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_add() {
         let source = b"int main(void) {\n    return 1 + 2;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_div() {
         let source = b"int main(void) {\n    return 1 / 2;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_div_neg() {
         let source = b"int main(void) {\n    return (-12) / 2;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_mod() {
         let source = b"int main(void) {\n    return 12 % 2;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_mul() {
         let source = b"int main(void) {\n    return 12 * 2;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_parens() {
         let source = b"int main(void) {\n    return 2 * (3 + 4);\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_sub() {
         let source = b"int main(void) {\n    return 2 - 1;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_unary_add() {
         let source = b"int main(void) {\n    return ~2 + 1;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_unary_parens() {
         let source = b"int main(void) {\n    return ~(1 + 1);\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_associativity() {
         let source = b"int main(void) {\n    return (3 / 2 * 4) + (5 - 4 + 3);\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_associativity_and_precedence() {
         let source = b"int main(void) {\n    return 5 * 4 / 2 - 3 % (2 + 1);\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_bit_and() {
         let source = b"int main(void) {\n    return 3 & 5;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_bit_or() {
         let source = b"int main(void) {\n    return 1 | 2;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_bit_precedence() {
         let source = b"int main(void) {\n    return 80 >> 2 | 1 ^ 5 & 7 << 1;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     fn parser_valid_bin_bit_shift() {
         let source = b"int main(void) {\n    return 33 << 4 >> 2;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_no_expr() {
         let source = b"int main(void) {\n    return";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
@@ -1159,17 +999,10 @@ mod tests {
         // Single identifier outside of a declaration is not a valid top-level
         // construct.
         let source = b"int main(void) {\n    return 2;\n}\nfoo";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
@@ -1177,34 +1010,20 @@ mod tests {
     fn parser_invalid_function_ident() {
         // Functions must have an identifier as a name.
         let source = b"int 3 (void) {\n    return 0;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_case_sensitive_keyword() {
         let source = b"int main(void) {\n    RETURN 0;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
@@ -1213,373 +1032,219 @@ mod tests {
         // Because of backwards compatibility, `GCC` and `Clang` will compile
         // this program with a warning.
         let source = b"main(void) {\n    return 0;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_keyword() {
         let source = b"int main(void) {\n    returns 0;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_missing_semicolon() {
         let source = b"int main(void) {\n    return 0\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_expression() {
         let source = b"int main(void) {\n    return int;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_keyword_space() {
         let source = b"int main(void) {\n    retur n 0;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_parens_fn() {
         let source = b"int main)void( {\n    return 0;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_unclosed_brace_fn() {
         let source = b"int main(void) {\n    return 0;";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_unclosed_paren_fn() {
         let source = b"int main(void {\n    return 0;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_extra_paren() {
         let source = b"int main(void)\n{\n    return (3));\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_missing_constant() {
         let source = b"int main(void) {\n    return ~;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_nested_missing_constant() {
         let source = b"int main(void)\n{\n    return -~;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_parenthesize_operand() {
         let source = b"int main(void) {\n   return (-)3;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_unclose_paren_expr() {
         let source = b"int main(void) {\n   return (1;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_negation_postfix() {
         let source = b"int main(void) {\n   return 4-;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_bin_expr_missing_semicolon() {
         let source = b"int main(void) {\n   return 2*2\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_bin_expr_missing_rhs() {
         let source = b"int main(void) {\n   return 1 / ;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_bin_expr_missing_open_paren() {
         let source = b"int main(void) {\n   return 1+2);\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_bin_expr_missing_closing_paren() {
         let source = b"int main(void) {\n   return (1+2;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_bin_expr_missing_lhs() {
         let source = b"int main(void) {\n   return / 3;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_bin_expr_misplaced_semicolon() {
         let source = b"int main(void) {\n   return 1 + (2;)\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_bin_expr_missing_op() {
         let source = b"int main(void) {\n   return 2 (- 3);\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 
     #[test]
     #[should_panic]
     fn parser_invalid_bin_expr_double_op() {
         let source = b"int main(void) {\n   return 2 * / 2;\n}";
-        let mut lexer = crate::compiler::lexer::Lexer::new(source);
+        let ctx = test_ctx(source);
 
-        let ctx = test_ctx();
-
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            lexer.lex(&ctx);
-        }));
-
-        assert!(result.is_ok(), "lexer should not panic in parser test");
-
-        parse_program(&ctx, &mut lexer);
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
     }
 }

@@ -319,8 +319,8 @@ fn generate_ir_function(func: &parser::Function) -> Function {
 /// Generate an _IR_ value from the provided _AST_ expression.
 fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) -> Value {
     match expr {
-        parser::Expression::ConstantInt(v) => Value::ConstantInt(*v),
-        parser::Expression::Var(v) => Value::Var(v.clone()),
+        parser::Expression::Constant(v) => Value::ConstantInt(*v),
+        parser::Expression::Var((v, _)) => Value::Var(v.clone()),
         parser::Expression::Unary { op, expr, .. } => {
             // The sign of an _IR_ instruction is determined by the
             // sub-expressions (here `expr`), not by when the operator is
@@ -447,9 +447,9 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                 }
             }
         }
-        parser::Expression::Assignment(lvalue, rvalue) => {
+        parser::Expression::Assignment(lvalue, rvalue, _) => {
             let dst = match &**lvalue {
-                parser::Expression::Var(v) => Value::Var(v.clone()),
+                parser::Expression::Var((v, _)) => Value::Var(v.clone()),
                 _ => panic!("lvalue of an expression should be an AST var"),
             };
 

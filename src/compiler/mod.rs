@@ -1,4 +1,5 @@
-//! Multi-stage pipeline for compiling C source code into textual assembly.
+//! Multi-stage pipeline for compiling _C_ translation unit into textual
+//! assembly.
 
 pub mod emit;
 pub mod ir;
