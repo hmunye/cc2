@@ -61,6 +61,26 @@ pub enum OperatorKind {
     NotEq,
     /// `=` assignment operator.
     Assign,
+    /// `+=` assignment operator.
+    AssignPlus,
+    /// `-=` assignment operator.
+    AssignMinus,
+    /// `*=` assignment operator.
+    AssignAsterisk,
+    /// `/=` assignment operator.
+    AssignDivision,
+    /// `%=` assignment operator.
+    AssignRemainder,
+    /// `&=` assignment operator.
+    AssignAmpersand,
+    /// `|=` assignment operator.
+    AssignBitOr,
+    /// `^=` assignment operator.
+    AssignBitXor,
+    /// `<<=` assignment operator.
+    AssignShiftLeft,
+    /// `>>=` assignment operator.
+    AssignShiftRight,
 }
 
 impl fmt::Display for OperatorKind {
@@ -89,6 +109,16 @@ impl fmt::Display for OperatorKind {
             OperatorKind::Eq => write!(f, "op('==')"),
             OperatorKind::NotEq => write!(f, "op('!=')"),
             OperatorKind::Assign => write!(f, "op('=')"),
+            OperatorKind::AssignPlus => write!(f, "op('+=')"),
+            OperatorKind::AssignMinus => write!(f, "op('-=')"),
+            OperatorKind::AssignAsterisk => write!(f, "op('*=')"),
+            OperatorKind::AssignDivision => write!(f, "op('/=')"),
+            OperatorKind::AssignRemainder => write!(f, "op('%=')"),
+            OperatorKind::AssignAmpersand => write!(f, "op('&=')"),
+            OperatorKind::AssignBitOr => write!(f, "op('|=')"),
+            OperatorKind::AssignBitXor => write!(f, "op('^=')"),
+            OperatorKind::AssignShiftLeft => write!(f, "op('<<=')"),
+            OperatorKind::AssignShiftRight => write!(f, "op('>>=')"),
         }
     }
 }
@@ -119,6 +149,16 @@ impl fmt::Debug for OperatorKind {
             OperatorKind::Eq => write!(f, "=="),
             OperatorKind::NotEq => write!(f, "!="),
             OperatorKind::Assign => write!(f, "="),
+            OperatorKind::AssignPlus => write!(f, "+="),
+            OperatorKind::AssignMinus => write!(f, "-="),
+            OperatorKind::AssignAsterisk => write!(f, "*="),
+            OperatorKind::AssignDivision => write!(f, "/="),
+            OperatorKind::AssignRemainder => write!(f, "%="),
+            OperatorKind::AssignAmpersand => write!(f, "&="),
+            OperatorKind::AssignBitOr => write!(f, "|="),
+            OperatorKind::AssignBitXor => write!(f, "^="),
+            OperatorKind::AssignShiftLeft => write!(f, "<<="),
+            OperatorKind::AssignShiftRight => write!(f, ">>="),
         }
     }
 }
@@ -413,6 +453,13 @@ impl Iterator for Lexer<'_> {
                             ty: TokenType::Operator(OperatorKind::Decrement),
                             loc: self.token_loc(col),
                         }));
+                    } else if self.has_next() && self.first() == b'=' {
+                        self.cur += 1;
+
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::AssignMinus),
+                            loc: self.token_loc(col),
+                        }));
                     } else {
                         return Some(Ok(Token {
                             ty: TokenType::Operator(OperatorKind::Minus),
@@ -430,6 +477,13 @@ impl Iterator for Lexer<'_> {
                             ty: TokenType::Operator(OperatorKind::Increment),
                             loc: self.token_loc(col),
                         }));
+                    } else if self.has_next() && self.first() == b'=' {
+                        self.cur += 1;
+
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::AssignPlus),
+                            loc: self.token_loc(col),
+                        }));
                     } else {
                         return Some(Ok(Token {
                             ty: TokenType::Operator(OperatorKind::Plus),
@@ -440,26 +494,53 @@ impl Iterator for Lexer<'_> {
                 b'*' => {
                     self.cur += 1;
 
-                    return Some(Ok(Token {
-                        ty: TokenType::Operator(OperatorKind::Asterisk),
-                        loc: self.token_loc(col),
-                    }));
+                    if self.has_next() && self.first() == b'=' {
+                        self.cur += 1;
+
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::AssignAsterisk),
+                            loc: self.token_loc(col),
+                        }));
+                    } else {
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::Asterisk),
+                            loc: self.token_loc(col),
+                        }));
+                    }
                 }
                 b'/' => {
                     self.cur += 1;
 
-                    return Some(Ok(Token {
-                        ty: TokenType::Operator(OperatorKind::Division),
-                        loc: self.token_loc(col),
-                    }));
+                    if self.has_next() && self.first() == b'=' {
+                        self.cur += 1;
+
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::AssignDivision),
+                            loc: self.token_loc(col),
+                        }));
+                    } else {
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::Division),
+                            loc: self.token_loc(col),
+                        }));
+                    }
                 }
                 b'%' => {
                     self.cur += 1;
 
-                    return Some(Ok(Token {
-                        ty: TokenType::Operator(OperatorKind::Remainder),
-                        loc: self.token_loc(col),
-                    }));
+                    if self.has_next() && self.first() == b'=' {
+                        self.cur += 1;
+
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::AssignRemainder),
+                            loc: self.token_loc(col),
+                        }));
+                    } else {
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::Remainder),
+                            loc: self.token_loc(col),
+                        }));
+                    }
                 }
                 b'&' => {
                     self.cur += 1;
@@ -469,6 +550,13 @@ impl Iterator for Lexer<'_> {
 
                         return Some(Ok(Token {
                             ty: TokenType::Operator(OperatorKind::LogAnd),
+                            loc: self.token_loc(col),
+                        }));
+                    } else if self.has_next() && self.first() == b'=' {
+                        self.cur += 1;
+
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::AssignAmpersand),
                             loc: self.token_loc(col),
                         }));
                     } else {
@@ -488,6 +576,13 @@ impl Iterator for Lexer<'_> {
                             ty: TokenType::Operator(OperatorKind::LogOr),
                             loc: self.token_loc(col),
                         }));
+                    } else if self.has_next() && self.first() == b'=' {
+                        self.cur += 1;
+
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::AssignBitOr),
+                            loc: self.token_loc(col),
+                        }));
                     } else {
                         return Some(Ok(Token {
                             ty: TokenType::Operator(OperatorKind::BitOr),
@@ -498,10 +593,19 @@ impl Iterator for Lexer<'_> {
                 b'^' => {
                     self.cur += 1;
 
-                    return Some(Ok(Token {
-                        ty: TokenType::Operator(OperatorKind::BitXor),
-                        loc: self.token_loc(col),
-                    }));
+                    if self.has_next() && self.first() == b'=' {
+                        self.cur += 1;
+
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::AssignBitXor),
+                            loc: self.token_loc(col),
+                        }));
+                    } else {
+                        return Some(Ok(Token {
+                            ty: TokenType::Operator(OperatorKind::BitXor),
+                            loc: self.token_loc(col),
+                        }));
+                    }
                 }
                 b'<' => {
                     self.cur += 1;
@@ -509,10 +613,19 @@ impl Iterator for Lexer<'_> {
                     if self.has_next() && self.first() == b'<' {
                         self.cur += 1;
 
-                        return Some(Ok(Token {
-                            ty: TokenType::Operator(OperatorKind::ShiftLeft),
-                            loc: self.token_loc(col),
-                        }));
+                        if self.has_next() && self.first() == b'=' {
+                            self.cur += 1;
+
+                            return Some(Ok(Token {
+                                ty: TokenType::Operator(OperatorKind::AssignShiftLeft),
+                                loc: self.token_loc(col),
+                            }));
+                        } else {
+                            return Some(Ok(Token {
+                                ty: TokenType::Operator(OperatorKind::ShiftLeft),
+                                loc: self.token_loc(col),
+                            }));
+                        }
                     } else if self.has_next() && self.first() == b'=' {
                         self.cur += 1;
 
@@ -533,10 +646,19 @@ impl Iterator for Lexer<'_> {
                     if self.has_next() && self.first() == b'>' {
                         self.cur += 1;
 
-                        return Some(Ok(Token {
-                            ty: TokenType::Operator(OperatorKind::ShiftRight),
-                            loc: self.token_loc(col),
-                        }));
+                        if self.has_next() && self.first() == b'=' {
+                            self.cur += 1;
+
+                            return Some(Ok(Token {
+                                ty: TokenType::Operator(OperatorKind::AssignShiftRight),
+                                loc: self.token_loc(col),
+                            }));
+                        } else {
+                            return Some(Ok(Token {
+                                ty: TokenType::Operator(OperatorKind::ShiftRight),
+                                loc: self.token_loc(col),
+                            }));
+                        }
                     } else if self.has_next() && self.first() == b'=' {
                         self.cur += 1;
 
