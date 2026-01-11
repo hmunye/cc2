@@ -311,6 +311,26 @@ pub enum BinaryOperator {
     OrdGreaterEq,
     /// `=` binary operator.
     Assign,
+    /// `+=` binary operator.
+    AssignAdd,
+    /// `-=` binary operator.
+    AssignSubtract,
+    /// `*=` binary operator.
+    AssignMultiply,
+    /// `/=` binary operator.
+    AssignDivide,
+    /// `%=` binary operator.
+    AssignModulo,
+    /// `&=` binary operator.
+    AssignBitAnd,
+    /// `|=` binary operator.
+    AssignBitOr,
+    /// `^=` binary operator.
+    AssignBitXor,
+    /// `<<=` binary operator.
+    AssignShiftLeft,
+    /// `>>=` binary operator.
+    AssignShiftRight,
 }
 
 impl BinaryOperator {
@@ -321,7 +341,17 @@ impl BinaryOperator {
     pub fn precedence(&self) -> u8 {
         match self {
             // _C17_ 6.5.16 (assignment-expression)
-            BinaryOperator::Assign => 3,
+            BinaryOperator::Assign
+            | BinaryOperator::AssignAdd
+            | BinaryOperator::AssignSubtract
+            | BinaryOperator::AssignMultiply
+            | BinaryOperator::AssignDivide
+            | BinaryOperator::AssignModulo
+            | BinaryOperator::AssignBitAnd
+            | BinaryOperator::AssignBitOr
+            | BinaryOperator::AssignBitXor
+            | BinaryOperator::AssignShiftLeft
+            | BinaryOperator::AssignShiftRight => 3,
             // _C17_ 6.5.15 (conditional-expression)
             // => 4
             // _C17_ 6.5.14 (logical-OR-expression)
@@ -574,32 +604,71 @@ fn parse_expression<I: Iterator<Item = TokenResult>>(
         }
 
         // Consume the peeked token.
-        let token = iter.next();
+        let token = iter
+            .next()
+            .expect("next token should be present")
+            .expect("next token should be valid");
 
-        if let BinaryOperator::Assign = binop {
-            // This ensures we can handle right-associative operators like `=`,
-            // since operators of the same precedence still are evaluated
-            // together.
-            let rhs = parse_expression(ctx, iter, binop.precedence())?;
-            lhs = Expression::Assignment(
-                Box::new(lhs),
-                Box::new(rhs),
-                token
-                    .expect("next token should be present")
-                    .expect("next token should be valid"),
-            );
-        } else {
-            // Handle other binary operators as left-associative by allowing
-            // higher-precedence operators to be evaluated first.
-            let rhs = parse_expression(ctx, iter, binop.precedence() + 1)?;
+        match binop {
+            BinaryOperator::Assign => {
+                // This ensures we can handle right-associative operators like
+                // `=`, since operators of the same precedence still are
+                // evaluated together.
+                let rhs = parse_expression(ctx, iter, binop.precedence())?;
+                lhs = Expression::Assignment(Box::new(lhs), Box::new(rhs), token);
+            }
+            BinaryOperator::AssignAdd
+            | BinaryOperator::AssignSubtract
+            | BinaryOperator::AssignMultiply
+            | BinaryOperator::AssignDivide
+            | BinaryOperator::AssignModulo
+            | BinaryOperator::AssignBitAnd
+            | BinaryOperator::AssignBitOr
+            | BinaryOperator::AssignBitXor
+            | BinaryOperator::AssignShiftLeft
+            | BinaryOperator::AssignShiftRight => {
+                let op = match binop {
+                    BinaryOperator::AssignAdd => BinaryOperator::Add,
+                    BinaryOperator::AssignSubtract => BinaryOperator::Subtract,
+                    BinaryOperator::AssignMultiply => BinaryOperator::Multiply,
+                    BinaryOperator::AssignDivide => BinaryOperator::Divide,
+                    BinaryOperator::AssignModulo => BinaryOperator::Modulo,
+                    BinaryOperator::AssignBitAnd => BinaryOperator::BitAnd,
+                    BinaryOperator::AssignBitOr => BinaryOperator::BitOr,
+                    BinaryOperator::AssignBitXor => BinaryOperator::BitXor,
+                    BinaryOperator::AssignShiftLeft => BinaryOperator::ShiftLeft,
+                    BinaryOperator::AssignShiftRight => BinaryOperator::ShiftRight,
+                    _ => unreachable!(),
+                };
 
-            lhs = Expression::Binary {
-                op: binop,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-                // NOTE: Temporary hack for arithmetic right shift.
-                sign: Signedness::Unsigned,
-            };
+                // This ensures we can handle right-associative operators since
+                // operators of the same precedence still are evaluated
+                // together.
+                let rhs = parse_expression(ctx, iter, binop.precedence())?;
+
+                let rhs = Expression::Binary {
+                    op,
+                    lhs: Box::new(lhs.clone()),
+                    rhs: Box::new(rhs),
+                    // NOTE: Temporary hack for arithmetic right shift.
+                    sign: Signedness::Unsigned,
+                };
+
+                lhs = Expression::Assignment(Box::new(lhs), Box::new(rhs), token);
+            }
+            binop => {
+                // Handle other binary operators as left-associative by allowing
+                // higher-precedence operators to be evaluated first.
+                let rhs = parse_expression(ctx, iter, binop.precedence() + 1)?;
+
+                lhs = Expression::Binary {
+                    op: binop,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    // NOTE: Temporary hack for arithmetic right shift.
+                    sign: Signedness::Unsigned,
+                };
+            }
         }
 
         next = iter.peek().map(Result::as_ref).transpose()?;
@@ -623,8 +692,8 @@ fn parse_factor<I: Iterator<Item = TokenResult>>(
             TokenType::Operator(
                 OperatorKind::BitNot | OperatorKind::Minus | OperatorKind::LogNot,
             ) => {
-                let unop = ty_to_unop(&token.ty)
-                    .expect("expected unary operator when parsing factor (OperatorKind::BitNot | OperatorKind::Minus | OperatorKind::LogNot)");
+                let unop =
+                    ty_to_unop(&token.ty).expect("expected unary operator when parsing factor");
 
                 // NOTE: Temporary hack for arithmetic right shift.
                 let sign = if let UnaryOperator::Negate = unop {
@@ -748,6 +817,18 @@ fn ty_to_binop(ty: &TokenType) -> Option<BinaryOperator> {
         TokenType::Operator(OperatorKind::GreaterThan) => Some(BinaryOperator::OrdGreater),
         TokenType::Operator(OperatorKind::GreaterThanEq) => Some(BinaryOperator::OrdGreaterEq),
         TokenType::Operator(OperatorKind::Assign) => Some(BinaryOperator::Assign),
+        TokenType::Operator(OperatorKind::AssignPlus) => Some(BinaryOperator::AssignAdd),
+        TokenType::Operator(OperatorKind::AssignMinus) => Some(BinaryOperator::AssignSubtract),
+        TokenType::Operator(OperatorKind::AssignAsterisk) => Some(BinaryOperator::AssignMultiply),
+        TokenType::Operator(OperatorKind::AssignDivision) => Some(BinaryOperator::AssignDivide),
+        TokenType::Operator(OperatorKind::AssignRemainder) => Some(BinaryOperator::AssignModulo),
+        TokenType::Operator(OperatorKind::AssignAmpersand) => Some(BinaryOperator::AssignBitAnd),
+        TokenType::Operator(OperatorKind::AssignBitOr) => Some(BinaryOperator::AssignBitOr),
+        TokenType::Operator(OperatorKind::AssignBitXor) => Some(BinaryOperator::AssignBitXor),
+        TokenType::Operator(OperatorKind::AssignShiftLeft) => Some(BinaryOperator::AssignShiftLeft),
+        TokenType::Operator(OperatorKind::AssignShiftRight) => {
+            Some(BinaryOperator::AssignShiftRight)
+        }
         _ => None,
     }
 }

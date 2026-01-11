@@ -109,8 +109,8 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
                 BinaryOperator::Sub => ("subl", 4),
                 BinaryOperator::Imul => ("imull", 4),
                 BinaryOperator::And => ("andl", 4),
-                BinaryOperator::Or => ("or", 4),
-                BinaryOperator::Xor => ("xor", 4),
+                BinaryOperator::Or => ("orl", 4),
+                BinaryOperator::Xor => ("xorl", 4),
                 // `l` suffix on shift mnemonics indicates the destination
                 // operand is 32-bit. 1 indicates the source operand is 8-bit
                 // "%cl" register or immediate value.
