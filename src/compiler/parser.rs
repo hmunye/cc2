@@ -223,11 +223,12 @@ pub enum Statement {
 
 /// _AST_ declarations.
 #[derive(Debug)]
-#[allow(missing_docs)]
 pub struct Declaration {
+    /// Identifier of the declared variable.
     pub ident: Ident,
+    /// Token of the identifier.
     pub token: Token,
-    // Optional initializer.
+    /// Optional initializer.
     pub init: Option<Expression>,
 }
 
@@ -236,7 +237,7 @@ pub struct Declaration {
 pub enum Expression {
     /// Constant int value (32-bit).
     Constant(i32),
-    /// Variable expression.
+    /// Variable expression with derived token.
     Var((Ident, Token)),
     /// Unary operator applied to an expression.
     #[allow(missing_docs)]
@@ -253,7 +254,8 @@ pub enum Expression {
         rhs: Box<Expression>,
         sign: Signedness,
     },
-    /// Assigns an `rvalue` to an `lvalue`.
+    /// Assigns an `rvalue` to an `lvalue`. Also includes derived assignment
+    /// token.
     Assignment(Box<Expression>, Box<Expression>, Token),
 }
 
@@ -349,7 +351,7 @@ impl BinaryOperator {
     }
 }
 
-// NOTE: Temporary hack for arithmetic right shift.
+/// NOTE: Temporary hack for arithmetic right shift.
 #[derive(Debug, Clone, Copy)]
 #[allow(missing_docs)]
 pub enum Signedness {

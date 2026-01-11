@@ -218,7 +218,9 @@ impl fmt::Display for Value {
 /// instructions.
 struct TACBuilder<'a> {
     instructions: Vec<Instruction>,
+    // For temporary variables.
     tmp_count: usize,
+    // For `jmp` labels.
     label_count: usize,
     // Function label.
     label: &'a str,
@@ -289,6 +291,8 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                     // declaration's initializer.
                     let ir_val = generate_ir_value(init, &mut builder);
 
+                    // Ensure the initializer expression result is copied to the
+                    // correct destination.
                     builder.instructions.push(Instruction::Copy {
                         src: ir_val,
                         dst: Value::Var(decl.ident.clone()),
@@ -333,9 +337,9 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                 _ => Signedness::Unsigned,
             };
 
-            // Recursively process the expression until the base case
-            // (`ConstantInt`) is reached. This ensures the inner expression is
-            // processed initially before unwinding.
+            // Recursively process the expression until the base case is
+            // reached. This ensures the inner expression is processed initially
+            // before unwinding.
             let src = generate_ir_value(expr, builder);
             let dst = Value::Var(builder.new_tmp());
 
@@ -447,10 +451,10 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                 }
             }
         }
-        parser::Expression::Assignment(lvalue, rvalue, _) => {
+        parser::Expression::Assignment(lvalue, rvalue, ..) => {
             let dst = match &**lvalue {
                 parser::Expression::Var((v, _)) => Value::Var(v.clone()),
-                _ => panic!("lvalue of an expression should be an AST var"),
+                _ => panic!("lvalue of an expression should be an `Expression::Var`"),
             };
 
             let result = generate_ir_value(rvalue, builder);
