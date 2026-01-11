@@ -3,6 +3,7 @@
 //! Compiler pass that parses a stream of tokens into an abstract syntax tree
 //! (_AST_).
 
+use std::collections::HashMap;
 use std::{fmt, process};
 
 use crate::compiler::lexer::{OperatorKind, Token, TokenType};
@@ -13,7 +14,7 @@ type TokenResult = Result<Token, String>;
 
 /// Helper for resolving variable identifiers.
 struct Resolver {
-    map: std::collections::HashMap<Ident, Ident>,
+    map: HashMap<Ident, Ident>,
     var_count: usize,
 }
 
@@ -140,13 +141,13 @@ impl AST {
                     ))
                 }
             },
-            Expression::Var(v) => {
-                if resolver.map.contains_key(&v.0) {
-                    Ok(Expression::Var(v.clone()))
+            Expression::Var((v, token)) => {
+                if let Some(ident) = resolver.map.get(v) {
+                    // Use the unique variable identifier mapped from the
+                    // original identifier.
+                    Ok(Expression::Var((ident.clone(), token.clone())))
                 } else {
-                    let token = &v.1;
                     let tok_str = format!("{token:?}");
-
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
 
                     Err(fmt_token_err!(

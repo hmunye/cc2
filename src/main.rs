@@ -24,7 +24,7 @@ pub struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    /// Returns the text representation for the given byte range from `src`.
+    /// Returns the UTF-8 representation for the given byte range from `src`.
     #[inline]
     pub fn src_slice(&self, range: std::ops::Range<usize>) -> &str {
         std::str::from_utf8(&self.src[range]).expect("ASCII bytes should be valid UTF-8")
