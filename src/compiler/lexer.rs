@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::{Context, compiler::Result, fmt_token_err};
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
-const KEYWORDS: [&str; 3] = ["int", "void", "return"];
+const KEYWORDS: [&str; 5] = ["int", "void", "return", "if", "else"];
 
 /// Types of operators.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -175,6 +175,10 @@ pub enum TokenType {
     ParenClose,
     BraceOpen,
     BraceClose,
+    // `?` - part of conditional expression.
+    Question,
+    // `:` - part of conditional expression.
+    Colon,
     Semicolon,
 }
 
@@ -189,6 +193,8 @@ impl fmt::Display for TokenType {
             TokenType::ParenClose => write!(f, "')'"),
             TokenType::BraceOpen => write!(f, "'{{'"),
             TokenType::BraceClose => write!(f, "'}}'"),
+            TokenType::Question => write!(f, "'?'"),
+            TokenType::Colon => write!(f, "':'"),
             TokenType::Semicolon => write!(f, "';'"),
         }
     }
@@ -205,6 +211,8 @@ impl fmt::Debug for TokenType {
             TokenType::ParenClose => write!(f, ")"),
             TokenType::BraceOpen => write!(f, "{{"),
             TokenType::BraceClose => write!(f, "}}"),
+            TokenType::Question => write!(f, "?"),
+            TokenType::Colon => write!(f, ":"),
             TokenType::Semicolon => write!(f, ";"),
         }
     }
@@ -736,6 +744,22 @@ impl Iterator for Lexer<'_> {
 
                     return Some(Ok(Token {
                         ty: TokenType::BraceClose,
+                        loc: self.token_loc(col),
+                    }));
+                }
+                b'?' => {
+                    self.cur += 1;
+
+                    return Some(Ok(Token {
+                        ty: TokenType::Question,
+                        loc: self.token_loc(col),
+                    }));
+                }
+                b':' => {
+                    self.cur += 1;
+
+                    return Some(Ok(Token {
+                        ty: TokenType::Colon,
                         loc: self.token_loc(col),
                     }));
                 }
