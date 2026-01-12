@@ -7,10 +7,9 @@ use std::collections::HashMap;
 use std::{fmt, process};
 
 use crate::compiler::lexer::{OperatorKind, Token, TokenType};
-use crate::{Context, fmt_err, fmt_token_err, report_err};
+use crate::{Context, compiler::Result, fmt_err, fmt_token_err, report_err};
 
 type Ident = String;
-type TokenResult = Result<Token, String>;
 
 /// Helper for resolving variable identifiers.
 struct Resolver {
@@ -40,7 +39,7 @@ pub enum AST {
 impl AST {
     /// Ensures all variables are uniquely identified and checks for semantic
     /// errors.
-    fn resolve_vars(&mut self, ctx: &Context<'_>, resolver: &mut Resolver) -> Result<(), String> {
+    fn resolve_vars(&mut self, ctx: &Context<'_>, resolver: &mut Resolver) -> Result<()> {
         match self {
             AST::Program(func) => {
                 for block in &mut func.body {
@@ -59,7 +58,7 @@ impl AST {
         decl: &mut Declaration,
         ctx: &Context<'_>,
         resolver: &mut Resolver,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         if resolver.map.contains_key(&decl.ident) {
             let token = &decl.token;
 
@@ -95,7 +94,7 @@ impl AST {
         stmt: &mut Statement,
         ctx: &Context<'_>,
         resolver: &mut Resolver,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         *stmt = match stmt {
             Statement::Return(expr) => {
                 Statement::Return(AST::resolve_expression(expr, ctx, resolver)?)
@@ -113,7 +112,7 @@ impl AST {
         expr: &Expression,
         ctx: &Context<'_>,
         resolver: &mut Resolver,
-    ) -> Result<Expression, String> {
+    ) -> Result<Expression> {
         match expr {
             Expression::Assignment(lvalue, rvalue, token) => match **lvalue {
                 Expression::Var(_) => {
@@ -162,13 +161,19 @@ impl AST {
                 }
             }
             Expression::Constant(i) => Ok(Expression::Constant(*i)),
-            Expression::Unary { op, expr, sign } => {
+            Expression::Unary {
+                op,
+                expr,
+                sign,
+                prefix,
+            } => {
                 let expr = AST::resolve_expression(expr, ctx, resolver)?;
 
                 Ok(Expression::Unary {
                     op: *op,
                     expr: Box::new(expr),
                     sign: *sign,
+                    prefix: *prefix,
                 })
             }
             Expression::Binary { op, lhs, rhs, sign } => {
@@ -245,6 +250,7 @@ pub enum Expression {
         op: UnaryOperator,
         expr: Box<Expression>,
         sign: Signedness,
+        prefix: bool,
     },
     /// Binary operator applied to two expressions.
     #[allow(missing_docs)]
@@ -268,6 +274,10 @@ pub enum UnaryOperator {
     Negate,
     /// `!` unary operator.
     Not,
+    /// `++` unary operator (postfix or prefix).
+    Increment,
+    /// `--` unary operator (postfix or prefix).
+    Decrement,
 }
 
 /// _AST_ binary operators.
@@ -393,7 +403,7 @@ pub enum Signedness {
 /// [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn parse_program<I: Iterator<Item = TokenResult>>(
+pub fn parse_program<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     mut iter: std::iter::Peekable<I>,
 ) -> AST {
@@ -436,13 +446,13 @@ pub fn parse_program<I: Iterator<Item = TokenResult>>(
 }
 
 /// Parses an _AST_ function definition from the provided `Token` iterator.
-fn parse_function<I: Iterator<Item = TokenResult>>(
+fn parse_function<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Function, String> {
+) -> Result<Function> {
     // NOTE: Currently only support the `int` type.
     expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
-    let (ident, _) = parse_ident(ctx, iter)?;
+    let (ident, _token) = parse_ident(ctx, iter)?;
 
     expect_token(ctx, iter, TokenType::ParenOpen)?;
     // NOTE: Currently not processing function parameters.
@@ -469,10 +479,10 @@ fn parse_function<I: Iterator<Item = TokenResult>>(
 }
 
 /// Parse an _AST_ block from the provided `Token` iterator.
-fn parse_block<I: Iterator<Item = TokenResult>>(
+fn parse_block<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Block, String> {
+) -> Result<Block> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
             // Parse this as a declaration (starts with a type).
@@ -491,10 +501,10 @@ fn parse_block<I: Iterator<Item = TokenResult>>(
 }
 
 /// Parse an _AST_ declaration from the provided `Token` iterator.
-fn parse_declaration<I: Iterator<Item = TokenResult>>(
+fn parse_declaration<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Declaration, String> {
+) -> Result<Declaration> {
     // NOTE: Currently only support the `int` type.
     expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
 
@@ -516,10 +526,10 @@ fn parse_declaration<I: Iterator<Item = TokenResult>>(
 }
 
 /// Parse an _AST_ statement from the provided `Token` iterator.
-fn parse_statement<I: Iterator<Item = TokenResult>>(
+fn parse_statement<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Statement, String> {
+) -> Result<Statement> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
             TokenType::Keyword(ref s) if s == "return" => {
@@ -552,10 +562,10 @@ fn parse_statement<I: Iterator<Item = TokenResult>>(
 }
 
 /// Parse an _AST_ identifier from the provided `Token` iterator.
-fn parse_ident<I: Iterator<Item = TokenResult>>(
+fn parse_ident<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<(Ident, Token), String> {
+) -> Result<(Ident, Token)> {
     if let Some(token) = iter.next() {
         let token = token?;
 
@@ -586,11 +596,11 @@ fn parse_ident<I: Iterator<Item = TokenResult>>(
 
 /// Parse an _AST_ expression from the provided `Token` iterator using
 /// `precedence climbing`.
-fn parse_expression<I: Iterator<Item = TokenResult>>(
+fn parse_expression<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
     min_precedence: u8,
-) -> Result<Expression, String> {
+) -> Result<Expression> {
     let mut lhs = parse_factor(ctx, iter)?;
     let mut next = iter.peek().map(Result::as_ref).transpose()?;
 
@@ -679,21 +689,72 @@ fn parse_expression<I: Iterator<Item = TokenResult>>(
 
 /// Parse an _AST_ expression or sub-expression (factor) from the provided
 /// `Token` iterator.
-fn parse_factor<I: Iterator<Item = TokenResult>>(
+fn parse_factor<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Expression, String> {
+) -> Result<Expression> {
     if let Some(token) = iter.next() {
         let token = token?;
 
         match token.ty {
-            TokenType::Constant(v) => Ok(Expression::Constant(v)),
-            TokenType::Ident(ref s) => Ok(Expression::Var((s.clone(), token))),
+            TokenType::Constant(v) => {
+                if let Some(tok) = iter.peek().map(Result::as_ref).transpose()?
+                    && let TokenType::Operator(OperatorKind::Increment | OperatorKind::Decrement) =
+                        tok.ty
+                {
+                    let tok_str = format!("{tok:?}");
+                    let line_content = ctx.src_slice(tok.loc.line_span.clone());
+
+                    let err_msg = if let TokenType::Operator(OperatorKind::Increment) = tok.ty {
+                        "lvalue required as increment operand"
+                    } else {
+                        "lvalue required as decrement operand"
+                    };
+
+                    Err(fmt_token_err!(
+                        tok.loc.file_path.display(),
+                        tok.loc.line,
+                        tok.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "{err_msg}",
+                    ))
+                } else {
+                    Ok(Expression::Constant(v))
+                }
+            }
+            TokenType::Ident(ref s) => {
+                if let Some(tok) = iter.peek().map(Result::as_ref).transpose()?
+                    && let TokenType::Operator(OperatorKind::Increment | OperatorKind::Decrement) =
+                        tok.ty
+                {
+                    let unop = ty_to_unop(&tok.ty)
+                        .expect("expected postfix increment or decrement when parsing factor");
+
+                    // Consume the postfix increment/decrement operator.
+                    let _ = iter.next();
+
+                    Ok(Expression::Unary {
+                        op: unop,
+                        expr: Box::new(Expression::Var((s.clone(), token))),
+                        sign: Signedness::Unsigned,
+                        // Postfix unary operator.
+                        prefix: false,
+                    })
+                } else {
+                    Ok(Expression::Var((s.clone(), token)))
+                }
+            }
             TokenType::Operator(
-                OperatorKind::BitNot | OperatorKind::Minus | OperatorKind::LogNot,
+                OperatorKind::BitNot
+                | OperatorKind::Minus
+                | OperatorKind::LogNot
+                | OperatorKind::Increment
+                | OperatorKind::Decrement,
             ) => {
-                let unop =
-                    ty_to_unop(&token.ty).expect("expected unary operator when parsing factor");
+                let unop = ty_to_unop(&token.ty)
+                    .expect("expected prefix unary operator when parsing factor");
 
                 // NOTE: Temporary hack for arithmetic right shift.
                 let sign = if let UnaryOperator::Negate = unop {
@@ -706,10 +767,34 @@ fn parse_factor<I: Iterator<Item = TokenResult>>(
                 // being applied to.
                 let inner_fct = parse_factor(ctx, iter)?;
 
+                if let UnaryOperator::Increment | UnaryOperator::Decrement = unop
+                    && !matches!(inner_fct, Expression::Var(_))
+                {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span);
+
+                    let err_msg = if let UnaryOperator::Increment = unop {
+                        "lvalue required as increment operand"
+                    } else {
+                        "lvalue required as decrement operand"
+                    };
+
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "{err_msg}",
+                    ));
+                }
+
                 Ok(Expression::Unary {
                     op: unop,
                     expr: Box::new(inner_fct),
                     sign,
+                    prefix: true,
                 })
             }
             TokenType::ParenOpen => {
@@ -750,11 +835,11 @@ fn parse_factor<I: Iterator<Item = TokenResult>>(
 }
 
 /// Advance the `Token` iterator if it matches the expected token type.
-fn expect_token<I: Iterator<Item = TokenResult>>(
+fn expect_token<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
     expected: TokenType,
-) -> Result<(), String> {
+) -> Result<()> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         if token.ty == expected {
             // Consume the peeked token.
@@ -790,6 +875,8 @@ fn ty_to_unop(ty: &TokenType) -> Option<UnaryOperator> {
         TokenType::Operator(OperatorKind::BitNot) => Some(UnaryOperator::Complement),
         TokenType::Operator(OperatorKind::Minus) => Some(UnaryOperator::Negate),
         TokenType::Operator(OperatorKind::LogNot) => Some(UnaryOperator::Not),
+        TokenType::Operator(OperatorKind::Increment) => Some(UnaryOperator::Increment),
+        TokenType::Operator(OperatorKind::Decrement) => Some(UnaryOperator::Decrement),
         _ => None,
     }
 }

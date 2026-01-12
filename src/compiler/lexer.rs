@@ -7,7 +7,7 @@ use std::fmt;
 use std::ops::Range;
 use std::path::Path;
 
-use crate::{Context, fmt_token_err};
+use crate::{Context, compiler::Result, fmt_token_err};
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
 const KEYWORDS: [&str; 3] = ["int", "void", "return"];
@@ -297,7 +297,7 @@ impl<'a> Lexer<'a> {
 
     /// Skips over an identifier or keyword (starting with an ASCII uppercase/
     /// lowercase letter or '_'), producing a `Token`.
-    fn consume_ident(&mut self) -> Result<Token, String> {
+    fn consume_ident(&mut self) -> Result<Token> {
         let col = self.col();
         let token_start = self.cur;
 
@@ -321,7 +321,7 @@ impl<'a> Lexer<'a> {
     }
 
     /// Skips over an constant, producing a `Token`.
-    fn consume_constant(&mut self) -> Result<Token, String> {
+    fn consume_constant(&mut self) -> Result<Token> {
         let col = self.col();
         let token_start = self.cur;
 
@@ -413,7 +413,7 @@ impl<'a> Lexer<'a> {
 }
 
 impl Iterator for Lexer<'_> {
-    type Item = Result<Token, String>;
+    type Item = Result<Token>;
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.has_next() {

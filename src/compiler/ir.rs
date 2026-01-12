@@ -325,7 +325,9 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
     match expr {
         parser::Expression::Constant(v) => Value::ConstantInt(*v),
         parser::Expression::Var((v, _)) => Value::Var(v.clone()),
-        parser::Expression::Unary { op, expr, .. } => {
+        parser::Expression::Unary {
+            op, expr, prefix, ..
+        } => {
             // The sign of an _IR_ instruction is determined by the
             // sub-expressions (here `expr`), not by when the operator is
             // applied to them. Subsequent instructions that use the result
@@ -343,12 +345,61 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
             let src = generate_ir_value(expr, builder);
             let dst = Value::Var(builder.new_tmp());
 
-            builder.instructions.push(Instruction::Unary {
-                op: *op,
-                src,
-                dst: dst.clone(),
-                sign,
-            });
+            match op {
+                UnaryOperator::Increment | UnaryOperator::Decrement => {
+                    // NOTE: Ensure the `lvalue` is a variable for now.
+                    debug_assert!(matches!(src, Value::Var(_)));
+
+                    let binop = match op {
+                        UnaryOperator::Increment => BinaryOperator::Add,
+                        UnaryOperator::Decrement => BinaryOperator::Subtract,
+                        _ => unreachable!(),
+                    };
+
+                    let tmp = Value::Var(builder.new_tmp());
+
+                    builder.instructions.push(Instruction::Binary {
+                        op: binop,
+                        lhs: src.clone(),
+                        rhs: Value::ConstantInt(1),
+                        dst: tmp.clone(),
+                        sign,
+                    });
+
+                    if *prefix {
+                        builder.instructions.push(Instruction::Copy {
+                            src: tmp,
+                            dst: src.clone(),
+                        });
+
+                        // Prefix - the updated value of `src` is moved to
+                        // `dst`.
+                        builder.instructions.push(Instruction::Copy {
+                            src,
+                            dst: dst.clone(),
+                        });
+                    } else {
+                        // Postfix - the original value of `src` is moved to
+                        // `dst`.
+                        builder.instructions.push(Instruction::Copy {
+                            src: src.clone(),
+                            dst: dst.clone(),
+                        });
+
+                        builder
+                            .instructions
+                            .push(Instruction::Copy { src: tmp, dst: src });
+                    }
+                }
+                op => {
+                    builder.instructions.push(Instruction::Unary {
+                        op: *op,
+                        src,
+                        dst: dst.clone(),
+                        sign,
+                    });
+                }
+            }
 
             // The returned `dst` is used as the new `src` in each unwind of
             // the recursion.
