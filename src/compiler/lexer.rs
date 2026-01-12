@@ -175,9 +175,9 @@ pub enum TokenType {
     ParenClose,
     BraceOpen,
     BraceClose,
-    // `?` - part of conditional expression.
+    /// `?` - part of conditional expression.
     Question,
-    // `:` - part of conditional expression.
+    /// `:` - part of conditional expression.
     Colon,
     Semicolon,
 }

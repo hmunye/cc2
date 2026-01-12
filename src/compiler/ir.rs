@@ -284,6 +284,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                     let _ = generate_ir_value(expr, &mut builder);
                 }
                 parser::Statement::Null => {}
+                _ => todo!(),
             },
             parser::Block::Decl(decl) => {
                 if let Some(init) = &decl.init {
@@ -517,5 +518,6 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
 
             dst
         }
+        _ => todo!(),
     }
 }

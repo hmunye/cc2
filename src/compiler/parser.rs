@@ -44,8 +44,8 @@ impl AST {
             AST::Program(func) => {
                 for block in &mut func.body {
                     match block {
-                        Block::Stmt(stmt) => AST::resolve_statement(stmt, ctx, resolver)?,
-                        Block::Decl(decl) => AST::resolve_declaration(decl, ctx, resolver)?,
+                        Block::Stmt(stmt) => *stmt = AST::resolve_statement(stmt, ctx, resolver)?,
+                        Block::Decl(decl) => *decl = AST::resolve_declaration(decl, ctx, resolver)?,
                     }
                 }
             }
@@ -55,10 +55,10 @@ impl AST {
     }
 
     fn resolve_declaration(
-        decl: &mut Declaration,
+        decl: &Declaration,
         ctx: &Context<'_>,
         resolver: &mut Resolver,
-    ) -> Result<()> {
+    ) -> Result<Declaration> {
         if resolver.map.contains_key(&decl.ident) {
             let token = &decl.token;
 
@@ -81,31 +81,51 @@ impl AST {
             .map
             .insert(decl.ident.clone(), resolved_ident.clone());
 
-        decl.ident = resolved_ident;
+        let mut opt_init = None;
 
         if let Some(init) = &decl.init {
-            decl.init = Some(AST::resolve_expression(init, ctx, resolver)?);
+            opt_init = Some(AST::resolve_expression(init, ctx, resolver)?);
         }
 
-        Ok(())
+        Ok(Declaration {
+            ident: resolved_ident,
+            token: decl.token.clone(),
+            init: opt_init,
+        })
     }
 
     fn resolve_statement(
-        stmt: &mut Statement,
+        stmt: &Statement,
         ctx: &Context<'_>,
         resolver: &mut Resolver,
-    ) -> Result<()> {
-        *stmt = match stmt {
-            Statement::Return(expr) => {
-                Statement::Return(AST::resolve_expression(expr, ctx, resolver)?)
-            }
-            Statement::Expression(expr) => {
-                Statement::Expression(AST::resolve_expression(expr, ctx, resolver)?)
-            }
-            Statement::Null => Statement::Null,
-        };
+    ) -> Result<Statement> {
+        match stmt {
+            Statement::Return(expr) => Ok(Statement::Return(AST::resolve_expression(
+                expr, ctx, resolver,
+            )?)),
+            Statement::Expression(expr) => Ok(Statement::Expression(AST::resolve_expression(
+                expr, ctx, resolver,
+            )?)),
+            Statement::If {
+                cond,
+                then,
+                opt_else,
+            } => {
+                let mut resolved_opt_else = None;
 
-        Ok(())
+                if let Some(stmt) = opt_else {
+                    resolved_opt_else =
+                        Some(Box::new(AST::resolve_statement(stmt, ctx, resolver)?));
+                }
+
+                Ok(Statement::If {
+                    cond: AST::resolve_expression(cond, ctx, resolver)?,
+                    then: Box::new(AST::resolve_statement(then, ctx, resolver)?),
+                    opt_else: resolved_opt_else,
+                })
+            }
+            Statement::Null => Ok(Statement::Null),
+        }
     }
 
     fn resolve_expression(
@@ -187,6 +207,17 @@ impl AST {
                     sign: *sign,
                 })
             }
+            Expression::Conditional(lhs, mid, rhs) => {
+                let lhs = AST::resolve_expression(lhs, ctx, resolver)?;
+                let mid = AST::resolve_expression(mid, ctx, resolver)?;
+                let rhs = AST::resolve_expression(rhs, ctx, resolver)?;
+
+                Ok(Expression::Conditional(
+                    Box::new(lhs),
+                    Box::new(mid),
+                    Box::new(rhs),
+                ))
+            }
         }
     }
 }
@@ -222,6 +253,14 @@ pub enum Block {
 pub enum Statement {
     Return(Expression),
     Expression(Expression),
+    If {
+        /// Controlling expression.
+        cond: Expression,
+        /// Executes when the result of `cond` is non-zero.
+        then: Box<Statement>,
+        /// Optional statement to execute when result of `cond` is zero.
+        opt_else: Option<Box<Statement>>,
+    },
     // Expression statement without an expression.
     Null,
 }
@@ -263,6 +302,9 @@ pub enum Expression {
     /// Assigns an `rvalue` to an `lvalue`. Also includes derived assignment
     /// token.
     Assignment(Box<Expression>, Box<Expression>, Token),
+    /// Ternary expression which evaluates the first expression and
+    /// selects the second if true, otherwise the third.
+    Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
 }
 
 /// _AST_ unary operators.
@@ -341,6 +383,9 @@ pub enum BinaryOperator {
     AssignShiftLeft,
     /// `>>=` binary operator.
     AssignShiftRight,
+    /// `?` ternary operator (parsed as a binary operator, **not** evaluated
+    /// as such).
+    Conditional,
 }
 
 impl BinaryOperator {
@@ -363,7 +408,7 @@ impl BinaryOperator {
             | BinaryOperator::AssignShiftLeft
             | BinaryOperator::AssignShiftRight => 3,
             // _C17_ 6.5.15 (conditional-expression)
-            // => 4
+            BinaryOperator::Conditional => 4,
             // _C17_ 6.5.14 (logical-OR-expression)
             BinaryOperator::LogOr => 5,
             // _C17_ 6.5.13 (logical-AND-expression)
@@ -541,6 +586,33 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 Ok(Statement::Return(expr))
             }
+            TokenType::Keyword(ref s) if s == "if" => {
+                // Consume the "if" token.
+                let _ = iter.next();
+
+                expect_token(ctx, iter, TokenType::ParenOpen)?;
+                let expr = parse_expression(ctx, iter, 0)?;
+                expect_token(ctx, iter, TokenType::ParenClose)?;
+
+                let stmt = parse_statement(ctx, iter)?;
+
+                let mut opt_else = None;
+
+                if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
+                    && let TokenType::Keyword(ref s) = token.ty
+                    && s == "else"
+                {
+                    // Consume the "else" token.
+                    let _ = iter.next();
+                    opt_else = Some(Box::new(parse_statement(ctx, iter)?));
+                }
+
+                Ok(Statement::If {
+                    cond: expr,
+                    then: Box::new(stmt),
+                    opt_else,
+                })
+            }
             TokenType::Semicolon => {
                 // Consume the "semicolon" token.
                 let _ = iter.next();
@@ -665,6 +737,18 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
                 };
 
                 lhs = Expression::Assignment(Box::new(lhs), Box::new(rhs), token);
+            }
+            BinaryOperator::Conditional => {
+                let mid = parse_expression(ctx, iter, 0)?;
+
+                expect_token(ctx, iter, TokenType::Colon)?;
+
+                // This ensures we can handle right-associative operators since
+                // operators of the same precedence still are evaluated
+                // together.
+                let rhs = parse_expression(ctx, iter, binop.precedence())?;
+
+                lhs = Expression::Conditional(Box::new(lhs), Box::new(mid), Box::new(rhs));
             }
             binop => {
                 // Handle other binary operators as left-associative by allowing
@@ -916,6 +1000,7 @@ fn ty_to_binop(ty: &TokenType) -> Option<BinaryOperator> {
         TokenType::Operator(OperatorKind::AssignShiftRight) => {
             Some(BinaryOperator::AssignShiftRight)
         }
+        TokenType::Question => Some(BinaryOperator::Conditional),
         _ => None,
     }
 }
