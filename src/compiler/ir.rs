@@ -262,6 +262,62 @@ pub fn generate_ir(ast: &parser::AST) -> IR {
 
 /// Generate an _IR_ function definition from the provided _AST_ function.
 fn generate_ir_function(func: &parser::Function) -> Function {
+    // Extracted logic for processing _AST_ statements so they can be handled
+    // recursively.
+    fn process_ast_statement(stmt: &parser::Statement, builder: &mut TACBuilder<'_>) {
+        match stmt {
+            parser::Statement::Return(expr) => {
+                let ir_val = generate_ir_value(expr, builder);
+                builder.instructions.push(Instruction::Return(ir_val));
+            }
+            parser::Statement::Expression(expr) => {
+                // Generate and append any instructions needed to encode the
+                // expression.
+                let _ = generate_ir_value(expr, builder);
+            }
+            parser::Statement::If {
+                cond,
+                then,
+                opt_else,
+            } => {
+                let cond = generate_ir_value(cond, builder);
+
+                let e_lbl = builder.new_label("if.end");
+
+                if let Some(else_stmt) = opt_else {
+                    let else_lbl = builder.new_label("else.end");
+
+                    builder.instructions.push(Instruction::JumpIfZero {
+                        cond,
+                        target: else_lbl.clone(),
+                    });
+
+                    // Handle appending instructions for statements recursively.
+                    process_ast_statement(then, builder);
+
+                    builder.instructions.push(Instruction::Jump(e_lbl.clone()));
+                    builder.instructions.push(Instruction::Label(else_lbl));
+
+                    // Handle appending instructions for statements recursively.
+                    process_ast_statement(else_stmt, builder);
+
+                    builder.instructions.push(Instruction::Label(e_lbl));
+                } else {
+                    builder.instructions.push(Instruction::JumpIfZero {
+                        cond,
+                        target: e_lbl.clone(),
+                    });
+
+                    // Handle appending instructions for statements recursively.
+                    process_ast_statement(then, builder);
+
+                    builder.instructions.push(Instruction::Label(e_lbl));
+                }
+            }
+            parser::Statement::Null => {}
+        }
+    }
+
     let label = func.ident.clone();
 
     let mut builder = TACBuilder {
@@ -273,19 +329,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
 
     for block in &func.body {
         match block {
-            parser::Block::Stmt(stmt) => match stmt {
-                parser::Statement::Return(expr) => {
-                    let ir_val = generate_ir_value(expr, &mut builder);
-                    builder.instructions.push(Instruction::Return(ir_val));
-                }
-                parser::Statement::Expression(expr) => {
-                    // Generate and append any instructions needed to encode the
-                    // expression.
-                    let _ = generate_ir_value(expr, &mut builder);
-                }
-                parser::Statement::Null => {}
-                _ => todo!(),
-            },
+            parser::Block::Stmt(stmt) => process_ast_statement(stmt, &mut builder),
             parser::Block::Decl(decl) => {
                 if let Some(init) = &decl.init {
                     // Generate and append any instructions needed to encode the
@@ -518,6 +562,36 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
 
             dst
         }
-        _ => todo!(),
+        parser::Expression::Conditional(lhs, mid, rhs) => {
+            let dst = Value::Var(builder.new_tmp());
+            let e_lbl = builder.new_label("cond.end");
+            let rhs_lbl = builder.new_label("cond.false");
+
+            let cond = generate_ir_value(lhs, builder);
+
+            builder.instructions.push(Instruction::JumpIfZero {
+                cond,
+                target: rhs_lbl.clone(),
+            });
+
+            let e1 = generate_ir_value(mid, builder);
+            builder.instructions.push(Instruction::Copy {
+                src: e1,
+                dst: dst.clone(),
+            });
+
+            builder.instructions.push(Instruction::Jump(e_lbl.clone()));
+            builder.instructions.push(Instruction::Label(rhs_lbl));
+
+            let e2 = generate_ir_value(rhs, builder);
+            builder.instructions.push(Instruction::Copy {
+                src: e2,
+                dst: dst.clone(),
+            });
+
+            builder.instructions.push(Instruction::Label(e_lbl));
+
+            dst
+        }
     }
 }
