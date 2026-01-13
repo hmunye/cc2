@@ -738,20 +738,30 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
                     && let TokenType::Colon = token.ty
                 {
-                    match expr {
-                        Expression::Var((ident, token)) => {
-                            // Consume the ":" token.
-                            let _ = iter.next();
+                    if let Expression::Var((ident, token)) = expr {
+                        // Consume the ":" token.
+                        let _ = iter.next();
 
-                            let stmt = parse_statement(ctx, iter)?;
+                        let stmt = parse_statement(ctx, iter)?;
 
-                            Ok(Statement::Labeled {
-                                label: ident,
-                                token,
-                                stmt: Box::new(stmt),
-                            })
-                        }
-                        _ => unreachable!("all other expressions here should be unreachable"),
+                        Ok(Statement::Labeled {
+                            label: ident,
+                            token,
+                            stmt: Box::new(stmt),
+                        })
+                    } else {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                        Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "expected ';' before '{tok_str}' token",
+                        ))
                     }
                 } else {
                     expect_token(ctx, iter, TokenType::Semicolon)?;
