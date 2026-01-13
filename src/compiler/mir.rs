@@ -14,18 +14,18 @@ type Ident = String;
 
 /// Machine _IR_: structured _x86-64_ assembly representation.
 #[derive(Debug)]
-pub enum MIR {
+pub enum MIRX86 {
     /// Function that represent the structure of the assembly program.
     Program(Function),
 }
 
-impl MIR {
+impl MIRX86 {
     /// Replaces each _pseudoregister_ encountered with a stack offset,
     /// returning the stack offset of the final temporary variable.
     fn replace_pseudo_registers(&mut self) -> i32 {
         let mut map: HashMap<Ident, i32> = Default::default();
 
-        // NOTE: Currently allocating in 4-byte offsets.
+        // Currently allocating in 4-byte offsets.
         let mut stack_offset = 0;
 
         // Either increment the current stack offset, or use the stored offset
@@ -40,7 +40,7 @@ impl MIR {
         };
 
         match self {
-            MIR::Program(func) => {
+            MIRX86::Program(func) => {
                 for inst in &mut func.instructions {
                     match inst {
                         Instruction::Mov(src, dst) => {
@@ -91,22 +91,22 @@ impl MIR {
         stack_offset
     }
 
-    /// Prepends a `StackAlloc` instruction to the current instruction sequence
-    /// given the number of bytes to allocate.
+    /// Prepends a `Instruction::StackAlloc` to the current instruction
+    /// sequence, given the number of bytes to allocate.
     fn emit_stack_allocation(&mut self, bytes: i32) {
         match self {
-            MIR::Program(func) => {
+            MIRX86::Program(func) => {
                 // NOTE: O(n) time complexity.
                 func.instructions.insert(0, Instruction::StackAlloc(bytes));
             }
         }
     }
 
-    /// Normalizes instructions with invalid operand forms into valid
-    /// representations.
+    /// Normalizes instructions with invalid operand forms into valid _x86-64_
+    /// instruction representations.
     fn rewrite_invalid_instructions(&mut self) {
         match self {
-            MIR::Program(func) => {
+            MIRX86::Program(func) => {
                 let mut i = 0;
 
                 while i < func.instructions.len() {
@@ -125,9 +125,9 @@ impl MIR {
                             // Use the `r10d` register as temporary storage for
                             // intermediate values in the new instructions.
                             //
-                            // `r10d`, unlike other hardware registers, serves
-                            // no special purpose, so we are less likely to
-                            // encounter a conflict.
+                            // `r10d`, unlike other hardware registers on
+                            // x86-64, serves no special purpose, so we are less
+                            // likely to encounter a conflict.
                             func.instructions.splice(
                                 i..=i,
                                 [
@@ -285,10 +285,10 @@ impl MIR {
     }
 }
 
-impl fmt::Display for MIR {
+impl fmt::Display for MIRX86 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MIR::Program(func) => {
+            MIRX86::Program(func) => {
                 write!(f, "MIR Program\n{:4}{func}", "")
             }
         }
@@ -297,7 +297,6 @@ impl fmt::Display for MIR {
 
 /// _MIR_ function definition.
 #[derive(Debug)]
-#[allow(missing_docs)]
 pub struct Function {
     pub label: Ident,
     pub instructions: Vec<Instruction>,
@@ -315,7 +314,7 @@ impl fmt::Display for Function {
     }
 }
 
-/// _MIR_ instructions.
+/// _MIR_ instruction.
 #[derive(Debug)]
 pub enum Instruction {
     /// Move instruction (copies `src` to `dst`).
@@ -411,7 +410,7 @@ impl fmt::Display for Instruction {
     }
 }
 
-/// _MIR_ operands.
+/// _MIR_ operand.
 #[derive(Debug, Clone)]
 pub enum Operand {
     /// Immediate value (32-bit).
@@ -534,25 +533,24 @@ impl TryFrom<&parser::BinaryOperator> for BinaryOperator {
     }
 }
 
-/// Generate machine intermediate representation (_MIR_), given intermediate
+/// Generate machine intermediate representation (_MIR_), given an intermediate
 /// representation (_IR_). [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn generate_mir(ir: &IR) -> MIR {
+pub fn generate_mir(ir: &IR) -> MIRX86 {
     match ir {
         IR::Program(func) => {
             let mir_func = generate_mir_function(func);
 
-            // Pass 1 - MIR initialized.
-            let mut mir = MIR::Program(mir_func);
+            let mut mir = MIRX86::Program(mir_func);
 
-            // Pass 2 - Each pseudoregister replace with stack offsets.
+            // Pass 1 - Each pseudoregister replaced with stack offsets.
             let stack_offset = mir.replace_pseudo_registers();
 
-            // Pass 3 - Rewrite invalid instructions.
+            // Pass 2 - Rewrite invalid instructions.
             mir.rewrite_invalid_instructions();
 
-            // Pass 4 - Insert instruction for allocating `stack_offset` bytes.
+            // Pass 3 - Insert instruction for allocating `stack_offset` bytes.
             mir.emit_stack_allocation(stack_offset);
 
             mir
@@ -584,7 +582,6 @@ fn generate_mir_function(func: &ir::Function) -> Function {
 
                     // Zero-out the destination.
                     instructions.push(Instruction::Mov(Operand::Imm32(0), dst.clone()));
-
                     instructions.push(Instruction::SetC(CondCode::E, dst));
                 } else {
                     let unop = match op {
@@ -666,12 +663,9 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                         };
 
                         instructions.push(Instruction::Mov(generate_mir_operand(lhs), dst.clone()));
-                        // In the new instruction, it's `rhs` is the destination
-                        // and it's `lhs` is the source.
-                        //
                         // ```
-                        //     mov lhs -> dst      # copy lhs into destination
-                        //     op  rhs -> dst      # dst = dst op rhs
+                        //     mov lhs, dst      # copy lhs into destination
+                        //     op  rhs, dst      # dst = dst op rhs
                         // ```
                         instructions.push(Instruction::Binary(
                             binop,
@@ -719,7 +713,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
 /// Generate a _MIR_ operand from the provided _IR_ value.
 fn generate_mir_operand(val: &ir::Value) -> Operand {
     match val {
-        ir::Value::ConstantInt(v) => Operand::Imm32(*v),
+        ir::Value::IntConstant(v) => Operand::Imm32(*v),
         ir::Value::Var(v) => Operand::Pseudo(v.clone()),
     }
 }

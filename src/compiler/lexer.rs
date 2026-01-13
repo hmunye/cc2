@@ -7,79 +7,80 @@ use std::fmt;
 use std::ops::Range;
 use std::path::Path;
 
-use crate::{Context, compiler::Result, fmt_token_err};
+use crate::compiler::Result;
+use crate::{Context, fmt_token_err};
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
 const KEYWORDS: [&str; 6] = ["int", "void", "return", "if", "else", "goto"];
 
-/// Types of operators.
+/// Operator symbols that can be emitted.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OperatorKind {
-    /// `~` bitwise NOT operator.
+    /// `~` - bitwise NOT
     BitNot,
-    /// `-` subtraction or negation operator.
+    /// `-` - subtraction or negation
     Minus,
-    /// `+` addition or unary identity operator.
+    /// `+` - addition or unary identity
     Plus,
-    /// `*` multiplication or dereference operator.
+    /// `*` – multiplication or dereference
     Asterisk,
-    /// `/` division operator.
+    /// `/` – division
     Division,
-    /// `%` remainder operator.
+    /// `%` – remainder
     Remainder,
-    /// `++` increment operator.
+    /// `++` – increment
     Increment,
-    /// `--` decrement operator.
+    /// `--` – decrement
     Decrement,
-    /// `&` bitwise AND or address-of operator.
+    /// `&` – bitwise AND or address‑of
     Ampersand,
-    /// `|` bitwise OR operator.
+    /// `|` – bitwise OR
     BitOr,
-    /// `^` bitwise XOR operator.
+    /// `^` – bitwise XOR
     BitXor,
-    /// `<` less-than relational operator.
+    /// `<` – less‑than
     LessThan,
-    /// `>` greater-than relational operator.
+    /// `>` – greater‑than
     GreaterThan,
-    /// `<=` less-than-or-equal relational operator.
+    /// `<=` – less‑than or equal
     LessThanEq,
-    /// `>=` greater-than-or-equal relational operator.
+    /// `>=` – greater‑than or equal
     GreaterThanEq,
-    /// `<<` bitwise left-shift operator.
+    /// `<<` – bitwise left shift
     ShiftLeft,
-    /// `>>` bitwise right-shift operator.
+    /// `>>` – bitwise right shift
     ShiftRight,
-    /// `!` logical NOT operator.
+    /// `!` – logical NOT
     LogNot,
-    /// `&&` logical AND operator.
+    /// `&&` – logical AND
     LogAnd,
-    /// `||` logical OR operator.
+    /// `||` – logical OR
     LogOr,
-    /// `==` equal-to relational operator.
+    /// `==` – equality
     Eq,
-    /// `!=` not-equal relational operator.
+    /// `!=` – inequality
     NotEq,
-    /// `=` assignment operator.
+    /// `=` – simple assignment
     Assign,
-    /// `+=` assignment operator.
+    /// `+=` – add‑and‑assign
     AssignPlus,
-    /// `-=` assignment operator.
+    /// `-=` – sub‑and‑assign
     AssignMinus,
-    /// `*=` assignment operator.
+    /// `*=` – mul‑and‑assign
     AssignAsterisk,
-    /// `/=` assignment operator.
+    /// `/=` – div‑and‑assign
     AssignDivision,
-    /// `%=` assignment operator.
+    /// `%=` – rem‑and‑assign
     AssignRemainder,
-    /// `&=` assignment operator.
+    /// `&=` – and‑and‑assign
     AssignAmpersand,
-    /// `|=` assignment operator.
+    /// `|=` – or‑and‑assign
     AssignBitOr,
-    /// `^=` assignment operator.
+    /// `^=` – xor‑and‑assign
     AssignBitXor,
-    /// `<<=` assignment operator.
+    /// `<<=` – shift‑left‑and‑assign
     AssignShiftLeft,
-    /// `>>=` assignment operator.
+    /// `>>=` – shift‑right‑and‑assign
     AssignShiftRight,
 }
 
@@ -163,22 +164,30 @@ impl fmt::Debug for OperatorKind {
     }
 }
 
-/// Types of lexical elements.
+/// Types of lexical elements that can be emitted.
 #[derive(Clone, PartialEq, Eq)]
-#[allow(missing_docs)]
 pub enum TokenType {
+    /// Reserved word (e.g., `if`, `return`).
     Keyword(String),
+    /// Identifier (variable, function, types).
     Ident(String),
-    Constant(i32),
+    /// Integer literal.
+    IntConstant(i32),
+    /// Generic operator token.
     Operator(OperatorKind),
-    ParenOpen,
-    ParenClose,
-    BraceOpen,
-    BraceClose,
-    /// `?` - part of conditional expression.
+    /// `(`.
+    LParen,
+    /// `)`.
+    RParen,
+    /// `{`.
+    LBrace,
+    /// `}`.
+    RBrace,
+    /// `?`.
     Question,
-    /// `:` - part of conditional expression.
+    /// `:`.
     Colon,
+    /// `;`.
     Semicolon,
 }
 
@@ -187,12 +196,12 @@ impl fmt::Display for TokenType {
         match self {
             TokenType::Keyword(s) => write!(f, "keyword({s:?})"),
             TokenType::Ident(i) => write!(f, "ident({i:?})"),
-            TokenType::Constant(v) => write!(f, "constant(\"{v}\")"),
+            TokenType::IntConstant(v) => write!(f, "constant(\"{v}\")"),
             TokenType::Operator(op) => fmt::Display::fmt(op, f),
-            TokenType::ParenOpen => write!(f, "'('"),
-            TokenType::ParenClose => write!(f, "')'"),
-            TokenType::BraceOpen => write!(f, "'{{'"),
-            TokenType::BraceClose => write!(f, "'}}'"),
+            TokenType::LParen => write!(f, "'('"),
+            TokenType::RParen => write!(f, "')'"),
+            TokenType::LBrace => write!(f, "'{{'"),
+            TokenType::RBrace => write!(f, "'}}'"),
             TokenType::Question => write!(f, "'?'"),
             TokenType::Colon => write!(f, "':'"),
             TokenType::Semicolon => write!(f, "';'"),
@@ -205,12 +214,12 @@ impl fmt::Debug for TokenType {
         match self {
             TokenType::Keyword(s) => write!(f, "{s}"),
             TokenType::Ident(i) => write!(f, "{i}"),
-            TokenType::Constant(v) => write!(f, "{v}"),
+            TokenType::IntConstant(v) => write!(f, "{v}"),
             TokenType::Operator(op) => fmt::Debug::fmt(op, f),
-            TokenType::ParenOpen => write!(f, "("),
-            TokenType::ParenClose => write!(f, ")"),
-            TokenType::BraceOpen => write!(f, "{{"),
-            TokenType::BraceClose => write!(f, "}}"),
+            TokenType::LParen => write!(f, "("),
+            TokenType::RParen => write!(f, ")"),
+            TokenType::LBrace => write!(f, "{{"),
+            TokenType::RBrace => write!(f, "}}"),
             TokenType::Question => write!(f, "?"),
             TokenType::Colon => write!(f, ":"),
             TokenType::Semicolon => write!(f, ";"),
@@ -218,15 +227,14 @@ impl fmt::Debug for TokenType {
     }
 }
 
-/// Location of processed `Token`.
+/// Location of an emitted token.
 #[derive(Debug, Clone)]
-#[allow(missing_docs)]
 pub struct Location {
     pub file_path: &'static Path,
+    // Range of line in source code this token appears.
+    pub line_span: Range<usize>,
     pub line: usize,
     pub col: usize,
-    /// Range of line in source code this token appears.
-    pub line_span: Range<usize>,
 }
 
 impl fmt::Display for Location {
@@ -235,12 +243,11 @@ impl fmt::Display for Location {
     }
 }
 
-/// Minimal lexical element.
+/// Minimal lexical element that can be emitted.
 #[derive(Clone)]
-#[allow(missing_docs)]
 pub struct Token {
-    pub ty: TokenType,
     pub loc: Location,
+    pub ty: TokenType,
 }
 
 impl fmt::Display for Token {
@@ -255,15 +262,15 @@ impl fmt::Debug for Token {
     }
 }
 
-/// Produces tokens lazily from a _C_ translation unit.
+/// Lexer that emits tokens lazily from a _C_ translation unit.
 #[derive(Debug)]
 pub struct Lexer<'a> {
     ctx: &'a Context<'a>,
     cur: usize,
-    // Track source code line spans for each token.
+    // Tracks end of each source code line (index of newline).
     line_end: usize,
-    // Index of the beginning of a newline (to calculate the current column and
-    // line span).
+    // Index after an encountered newline (to calculate the current column and
+    // beginning of line span).
     bol: usize,
     line: usize,
 }
@@ -282,29 +289,8 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Skips over all consecutive whitespace characters.
-    const fn consume_whitespace(&mut self) {
-        while self.has_next() && self.first().is_ascii_whitespace() {
-            self.cur += 1;
-        }
-    }
-
-    /// Skips over a newline, advancing to the start of the next line.
-    const fn consume_newline(&mut self) {
-        self.cur += 1;
-        self.bol = self.cur;
-        self.line += 1;
-
-        let mut i = self.cur;
-        while i < self.ctx.src.len() && self.ctx.src[i] != b'\n' {
-            i += 1;
-        }
-
-        self.line_end = i;
-    }
-
-    /// Skips over an identifier or keyword (starting with an ASCII uppercase/
-    /// lowercase letter or '_'), producing a `Token`.
+    /// Skips over an identifier or keyword (_ASCII_ uppercase/lowercase letter
+    /// or '_'), returning a token.
     fn consume_ident(&mut self) -> Result<Token> {
         let col = self.col();
         let token_start = self.cur;
@@ -328,7 +314,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Skips over an constant, producing a `Token`.
+    /// Skips over an integer constant, returning a token.
     fn consume_constant(&mut self) -> Result<Token> {
         let col = self.col();
         let token_start = self.cur;
@@ -380,12 +366,33 @@ impl<'a> Lexer<'a> {
         };
 
         Ok(Token {
-            ty: TokenType::Constant(integer),
+            ty: TokenType::IntConstant(integer),
             loc: self.token_loc(col),
         })
     }
 
-    /// Returns the source location for a token at `col`.
+    /// Skips over all consecutive whitespace characters.
+    const fn consume_whitespace(&mut self) {
+        while self.has_next() && self.first().is_ascii_whitespace() {
+            self.cur += 1;
+        }
+    }
+
+    /// Skips over a newline, advancing to the start of the next line.
+    const fn consume_newline(&mut self) {
+        self.cur += 1;
+        self.bol = self.cur;
+        self.line += 1;
+
+        let mut i = self.cur;
+        while i < self.ctx.src.len() && self.ctx.src[i] != b'\n' {
+            i += 1;
+        }
+
+        self.line_end = i;
+    }
+
+    /// Returns the location for a token beginning at `col` within the source.
     #[inline]
     const fn token_loc(&self, col: usize) -> Location {
         Location {
@@ -396,14 +403,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Returns the current column in the line.
+    /// Returns the current column number (1‑based).
     #[inline]
     const fn col(&self) -> usize {
         self.cur - self.bol + 1
     }
 
-    /// Returns the byte from `src` at the current cursor position. Does **not**
-    /// update the cursor position.
+    /// Returns the byte from `src` at the current cursor position.
+    ///
+    /// Does **not** update the cursor position.
     ///
     /// # Panic
     ///
@@ -426,7 +434,7 @@ impl Iterator for Lexer<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         while self.has_next() {
             // Determine the span of the first line (special case since no '\n'
-            // has been seen yet).
+            // byte has been seen yet).
             if self.line_end == 0 {
                 let mut i = 0;
                 while i < self.ctx.src.len() && self.ctx.src[i] != b'\n' {
@@ -719,7 +727,7 @@ impl Iterator for Lexer<'_> {
                     self.cur += 1;
 
                     return Some(Ok(Token {
-                        ty: TokenType::ParenOpen,
+                        ty: TokenType::LParen,
                         loc: self.token_loc(col),
                     }));
                 }
@@ -727,7 +735,7 @@ impl Iterator for Lexer<'_> {
                     self.cur += 1;
 
                     return Some(Ok(Token {
-                        ty: TokenType::ParenClose,
+                        ty: TokenType::RParen,
                         loc: self.token_loc(col),
                     }));
                 }
@@ -735,7 +743,7 @@ impl Iterator for Lexer<'_> {
                     self.cur += 1;
 
                     return Some(Ok(Token {
-                        ty: TokenType::BraceOpen,
+                        ty: TokenType::LBrace,
                         loc: self.token_loc(col),
                     }));
                 }
@@ -743,7 +751,7 @@ impl Iterator for Lexer<'_> {
                     self.cur += 1;
 
                     return Some(Ok(Token {
-                        ty: TokenType::BraceClose,
+                        ty: TokenType::RBrace,
                         loc: self.token_loc(col),
                     }));
                 }

@@ -1,6 +1,5 @@
 //! Tiny C Compiler (cc2)
 
-#![deny(missing_docs)]
 #![warn(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
 
@@ -9,6 +8,7 @@ pub mod compiler;
 pub mod error;
 
 use std::io::{self, Read, Write};
+use std::ops::Range;
 use std::path::Path;
 use std::{env, fs, process};
 
@@ -26,8 +26,9 @@ pub struct Context<'a> {
 impl<'a> Context<'a> {
     /// Returns the UTF-8 representation for the given byte range from `src`.
     #[inline]
-    pub fn src_slice(&self, range: std::ops::Range<usize>) -> &str {
-        std::str::from_utf8(&self.src[range]).expect("ASCII bytes should be valid UTF-8")
+    pub fn src_slice(&self, range: Range<usize>) -> &str {
+        std::str::from_utf8(&self.src[range])
+            .expect("any range of ASCII bytes should be valid UTF-8")
     }
 }
 
@@ -95,7 +96,7 @@ fn main() {
                 Box::new(f)
             };
 
-            compiler::emit::emit_asm(&ctx, &mir, output);
+            compiler::emit::emit_gas_x86_64_linux(&ctx, &mir, output);
         }
     }
 }

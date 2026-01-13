@@ -3,22 +3,23 @@
 //! Compiler pass that parses a stream of tokens into an abstract syntax tree
 //! (_AST_).
 
-use std::collections::{HashMap, HashSet};
 use std::{fmt, process};
 
+use crate::compiler::Result;
 use crate::compiler::lexer::{OperatorKind, Token, TokenType};
-use crate::{Context, compiler::Result, fmt_err, fmt_token_err, report_err};
+use crate::{Context, fmt_err, fmt_token_err, report_err};
 
 type Ident = String;
 
-/// Helper for resolving variable identifiers.
+/// Helper for resolving variable identifiers and labels.
 #[derive(Default)]
 struct Resolver<'a> {
-    map: HashMap<Ident, Ident>,
-    labels: HashSet<&'a str>,
-    // Statements whose `goto` target is still unresolved. Stores references to
-    // the label and token of the statement.
+    map: std::collections::HashMap<Ident, Ident>,
+    labels: std::collections::HashSet<&'a str>,
+    // Statements whose `goto` target label is still unresolved. Stores
+    // references to the label and token of the statement.
     unresolved: Vec<(&'a str, &'a Token)>,
+    // For unique variable suffix.
     var_count: usize,
 }
 
@@ -26,7 +27,7 @@ impl<'a> Resolver<'a> {
     /// Allocates and returns a fresh temporary variable identifier, prepending
     /// the provided prefix.
     fn new_tmp(&mut self, prefix: &str) -> Ident {
-        // The `.` in temporary identifiers guarantees they won’t conflict
+        // The `.` in variable identifiers guarantees they won’t conflict
         // with user-defined identifiers, since the _C_ standard forbids `.` in
         // identifiers.
         let ident = format!("{prefix}.{}", self.var_count);
@@ -115,8 +116,6 @@ impl AST {
                     })
                 }
                 Statement::Goto(s) => Ok(Statement::Goto(s.clone())),
-                // Labels live in a namespace separate from ordinary identifier
-                // namespace (variables, functions, types, etc.).
                 Statement::Labeled { label, token, stmt } => Ok(Statement::Labeled {
                     label: label.clone(),
                     token: token.clone(),
@@ -132,16 +131,20 @@ impl AST {
             resolver: &mut Resolver<'_>,
         ) -> Result<Expression> {
             match expr {
-                Expression::Assignment(lvalue, rvalue, token) => match **lvalue {
+                Expression::Assignment {
+                    lvalue,
+                    rvalue,
+                    token,
+                } => match **lvalue {
                     Expression::Var(_) => {
                         let lvalue = resolve_expression(lvalue, ctx, resolver)?;
                         let rvalue = resolve_expression(rvalue, ctx, resolver)?;
 
-                        Ok(Expression::Assignment(
-                            Box::new(lvalue),
-                            Box::new(rvalue),
-                            token.clone(),
-                        ))
+                        Ok(Expression::Assignment {
+                            lvalue: Box::new(lvalue),
+                            rvalue: Box::new(rvalue),
+                            token: token.clone(),
+                        })
                     }
                     _ => {
                         let tok_str = format!("{token:?}");
@@ -178,7 +181,7 @@ impl AST {
                         ))
                     }
                 }
-                Expression::Constant(i) => Ok(Expression::Constant(*i)),
+                Expression::IntConstant(i) => Ok(Expression::IntConstant(*i)),
                 Expression::Unary {
                     op,
                     expr,
@@ -248,8 +251,16 @@ impl AST {
                         resolve_statement_labels(else_stmt, ctx, resolver)?;
                     }
                 }
-                Statement::Goto((lbl, token)) => resolver.unresolved.push((lbl.as_str(), token)),
+                Statement::Goto((lbl, token)) => {
+                    // Store references to the `goto` statement's contents so
+                    // they can be validated after processing labels.
+                    resolver.unresolved.push((lbl.as_str(), token));
+                }
                 Statement::Labeled { label, token, stmt } => {
+                    // Labels live in a different namespace from ordinary
+                    // identifiers (variables, functions, types, etc.)
+                    // within the same function scope, so they are collected
+                    // separately.
                     if !resolver.labels.insert(label.as_str()) {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -276,14 +287,15 @@ impl AST {
         match self {
             AST::Program(func) => {
                 for block in &func.body {
-                    // Collect all labels within the function in the first pass.
+                    // Collect and validate all labels within the function in
+                    // the first pass.
                     if let Block::Stmt(stmt) = block {
                         resolve_statement_labels(stmt, ctx, resolver)?;
                     }
                 }
 
                 // Second pass ensures all `goto` statements point to a valid
-                // target.
+                // target within the same function scope.
                 for (lbl, token) in &resolver.unresolved {
                     if !resolver.labels.contains(lbl) {
                         let tok_str = format!("{token:?}");
@@ -326,15 +338,13 @@ pub struct Function {
 
 /// _AST_ block.
 #[derive(Debug)]
-#[allow(missing_docs)]
 pub enum Block {
     Stmt(Statement),
     Decl(Declaration),
 }
 
-/// _AST_ statements.
+/// _AST_ statement.
 #[derive(Debug)]
-#[allow(missing_docs)]
 pub enum Statement {
     Return(Expression),
     Expression(Expression),
@@ -347,20 +357,19 @@ pub enum Statement {
         opt_else: Option<Box<Statement>>,
     },
     Goto((Ident, Token)),
-    #[allow(missing_docs)]
     Labeled {
         label: Ident,
         token: Token,
         stmt: Box<Statement>,
     },
-    // Expression statement without an expression (";").
+    // Expression statement without an expression (';').
     Empty,
 }
 
-/// _AST_ declarations.
+/// _AST_ declaration.
 #[derive(Debug)]
 pub struct Declaration {
-    /// Identifier of the declared variable.
+    /// Identifier of the variable.
     pub ident: Ident,
     /// Token of the identifier.
     pub token: Token,
@@ -368,15 +377,14 @@ pub struct Declaration {
     pub init: Option<Expression>,
 }
 
-/// _AST_ expressions.
+/// _AST_ expression.
 #[derive(Debug, Clone)]
 pub enum Expression {
-    /// Constant int value (32-bit).
-    Constant(i32),
-    /// Variable expression with derived token.
+    /// Constant `int` value (32-bit).
+    IntConstant(i32),
+    /// Variable expression with identifier token.
     Var((Ident, Token)),
     /// Unary operator applied to an expression.
-    #[allow(missing_docs)]
     Unary {
         op: UnaryOperator,
         expr: Box<Expression>,
@@ -384,107 +392,107 @@ pub enum Expression {
         prefix: bool,
     },
     /// Binary operator applied to two expressions.
-    #[allow(missing_docs)]
     Binary {
         op: BinaryOperator,
         lhs: Box<Expression>,
         rhs: Box<Expression>,
         sign: Signedness,
     },
-    /// Assigns an `rvalue` to an `lvalue`. Also includes derived assignment
-    /// token.
-    Assignment(Box<Expression>, Box<Expression>, Token),
-    /// Ternary expression which evaluates the first expression and
-    /// selects the second if true, otherwise the third.
+    /// Assigns an `rvalue` to an `lvalue`, with assignment operator token.
+    Assignment {
+        lvalue: Box<Expression>,
+        rvalue: Box<Expression>,
+        token: Token,
+    },
+    /// Ternary expression which evaluates the first expression and returns the
+    /// result of the second if true, otherwise the third.
     Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
 }
 
 /// _AST_ unary operators.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum UnaryOperator {
-    /// `~` unary operator.
+    /// `~` - unary operator.
     Complement,
-    /// `-` unary operator.
+    /// `-` - unary operator.
     Negate,
-    /// `!` unary operator.
+    /// `!` - unary operator.
     Not,
-    /// `++` unary operator (postfix or prefix).
+    /// `++` - unary operator (postfix or prefix).
     Increment,
-    /// `--` unary operator (postfix or prefix).
+    /// `--` - unary operator (postfix or prefix).
     Decrement,
 }
 
 /// _AST_ binary operators.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinaryOperator {
-    /// `+` binary operator.
+    /// `+` - binary operator.
     Add,
-    /// `-` binary operator.
+    /// `-` - binary operator.
     Subtract,
-    /// `*` binary operator.
+    /// `*` - binary operator.
     Multiply,
-    /// `/` binary operator.
+    /// `/` - binary operator.
     Divide,
-    /// `%` binary operator.
+    /// `%` - binary operator.
     Modulo,
-    /// `&` binary operator.
+    /// `&` - binary operator.
     BitAnd,
-    /// `|` binary operator.
+    /// `|` - binary operator.
     BitOr,
-    /// `^` binary operator.
+    /// `^` - binary operator.
     BitXor,
-    /// `<<` binary operator.
+    /// `<<` - binary operator.
     ShiftLeft,
-    /// `>>` binary operator.
+    /// `>>` - binary operator.
     ShiftRight,
-    /// `&&` binary operator.
+    /// `&&` - binary operator.
     LogAnd,
-    /// `||` binary operator.
+    /// `||` - binary operator.
     LogOr,
-    /// `==` binary operator.
+    /// `==` - binary operator.
     Eq,
-    /// `!=` binary operator.
+    /// `!=` - binary operator.
     NotEq,
-    /// `<` binary operator.
+    /// `<` - binary operator.
     OrdLess,
-    /// `<=` binary operator.
+    /// `<=` - binary operator.
     OrdLessEq,
-    /// `>` binary operator.
+    /// `>` - binary operator.
     OrdGreater,
-    /// `>=` binary operator.
+    /// `>=` - binary operator.
     OrdGreaterEq,
-    /// `=` binary operator.
+    /// `=` - binary operator.
     Assign,
-    /// `+=` binary operator.
+    /// `+=` - binary operator.
     AssignAdd,
-    /// `-=` binary operator.
+    /// `-=` - binary operator.
     AssignSubtract,
-    /// `*=` binary operator.
+    /// `*=` - binary operator.
     AssignMultiply,
-    /// `/=` binary operator.
+    /// `/=` - binary operator.
     AssignDivide,
-    /// `%=` binary operator.
+    /// `%=` - binary operator.
     AssignModulo,
-    /// `&=` binary operator.
+    /// `&=` - binary operator.
     AssignBitAnd,
-    /// `|=` binary operator.
+    /// `|=` - binary operator.
     AssignBitOr,
-    /// `^=` binary operator.
+    /// `^=` - binary operator.
     AssignBitXor,
-    /// `<<=` binary operator.
+    /// `<<=` - binary operator.
     AssignShiftLeft,
-    /// `>>=` binary operator.
+    /// `>>=` - binary operator.
     AssignShiftRight,
-    /// `?` ternary operator (parsed as a binary operator, **not** evaluated
-    /// as such).
+    /// `?` - ternary operator (parsed as a binary operator but **not**
+    /// evaluated as one).
     Conditional,
 }
 
 impl BinaryOperator {
-    /// Returns the _precedence_ level of the binary operator (higher numbers
-    /// indicate tighter binding).
-    ///
-    /// Derived from the structure of the _C17_ expression grammar.
+    /// Returns the precedence level of the binary operator (higher number
+    /// indicates tighter binding).
     pub fn precedence(&self) -> u8 {
         match self {
             // _C17_ 6.5.16 (assignment-expression)
@@ -530,7 +538,6 @@ impl BinaryOperator {
 
 /// NOTE: Temporary hack for arithmetic right shift.
 #[derive(Debug, Clone, Copy)]
-#[allow(missing_docs)]
 pub enum Signedness {
     Signed,
     Unsigned,
@@ -599,18 +606,18 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
     expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
     let (ident, _token) = parse_ident(ctx, iter)?;
 
-    expect_token(ctx, iter, TokenType::ParenOpen)?;
+    expect_token(ctx, iter, TokenType::LParen)?;
     // NOTE: Currently not processing function parameters.
     expect_token(ctx, iter, TokenType::Keyword("void".into()))?;
-    expect_token(ctx, iter, TokenType::ParenClose)?;
+    expect_token(ctx, iter, TokenType::RParen)?;
 
-    expect_token(ctx, iter, TokenType::BraceOpen)?;
+    expect_token(ctx, iter, TokenType::LBrace)?;
 
     let mut body = vec![];
 
     // Process all block items as the function's body.
     while let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
-        if let TokenType::BraceClose = token.ty {
+        if let TokenType::RBrace = token.ty {
             break;
         }
 
@@ -618,7 +625,7 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
         body.push(block);
     }
 
-    expect_token(ctx, iter, TokenType::BraceClose)?;
+    expect_token(ctx, iter, TokenType::RBrace)?;
 
     Ok(Function { ident, body })
 }
@@ -690,9 +697,9 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 // Consume the "if" token.
                 let _ = iter.next();
 
-                expect_token(ctx, iter, TokenType::ParenOpen)?;
+                expect_token(ctx, iter, TokenType::LParen)?;
                 let expr = parse_expression(ctx, iter, 0)?;
-                expect_token(ctx, iter, TokenType::ParenClose)?;
+                expect_token(ctx, iter, TokenType::RParen)?;
 
                 let stmt = parse_statement(ctx, iter)?;
 
@@ -718,7 +725,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 let token = iter
                     .next()
                     .expect("next token should be present")
-                    .expect("next token should be valid");
+                    .expect("next token should be ok");
 
                 let (target, _) = parse_ident(ctx, iter)?;
 
@@ -727,14 +734,14 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 Ok(Statement::Goto((target, token)))
             }
             TokenType::Semicolon => {
-                // Consume the "semicolon" token.
+                // Consume the ";" token.
                 let _ = iter.next();
                 Ok(Statement::Empty)
             }
             _ => {
                 let expr = parse_expression(ctx, iter, 0)?;
 
-                // Labeled-statement encountered.
+                // A labeled statement encountered - next token is colon (`:`).
                 if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
                     && let TokenType::Colon = token.ty
                 {
@@ -834,7 +841,7 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
         let token = iter
             .next()
             .expect("next token should be present")
-            .expect("next token should be valid");
+            .expect("next token should be ok");
 
         match binop {
             BinaryOperator::Assign => {
@@ -842,7 +849,11 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
                 // `=`, since operators of the same precedence still are
                 // evaluated together.
                 let rhs = parse_expression(ctx, iter, binop.precedence())?;
-                lhs = Expression::Assignment(Box::new(lhs), Box::new(rhs), token);
+                lhs = Expression::Assignment {
+                    lvalue: Box::new(lhs),
+                    rvalue: Box::new(rhs),
+                    token,
+                };
             }
             BinaryOperator::AssignAdd
             | BinaryOperator::AssignSubtract
@@ -881,7 +892,11 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
                     sign: Signedness::Unsigned,
                 };
 
-                lhs = Expression::Assignment(Box::new(lhs), Box::new(rhs), token);
+                lhs = Expression::Assignment {
+                    lvalue: Box::new(lhs),
+                    rvalue: Box::new(rhs),
+                    token,
+                };
             }
             BinaryOperator::Conditional => {
                 let mid = parse_expression(ctx, iter, 0)?;
@@ -926,7 +941,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
         let token = token?;
 
         match token.ty {
-            TokenType::Constant(v) => {
+            TokenType::IntConstant(v) => {
                 if let Some(tok) = iter.peek().map(Result::as_ref).transpose()?
                     && let TokenType::Operator(OperatorKind::Increment | OperatorKind::Decrement) =
                         tok.ty
@@ -950,7 +965,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                         "{err_msg}",
                     ))
                 } else {
-                    Ok(Expression::Constant(v))
+                    Ok(Expression::IntConstant(v))
                 }
             }
             TokenType::Ident(ref s) => {
@@ -1026,11 +1041,11 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                     prefix: true,
                 })
             }
-            TokenType::ParenOpen => {
+            TokenType::LParen => {
                 // Recursively parse the expression within parenthesis.
                 let inner_expr = parse_expression(ctx, iter, 0)?;
 
-                expect_token(ctx, iter, TokenType::ParenClose)?;
+                expect_token(ctx, iter, TokenType::RParen)?;
 
                 Ok(inner_expr)
             }
@@ -1038,7 +1053,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                 let tok_str = format!("{tok:?}");
                 let line_content = ctx.src_slice(token.loc.line_span);
 
-                let err_msg = if let TokenType::ParenClose = tok {
+                let err_msg = if let TokenType::RParen = tok {
                     format!("expected expression before '{tok_str}' token")
                 } else {
                     format!("unexpected token '{tok_str}' in expression")

@@ -28,7 +28,6 @@ impl fmt::Display for IR {
 
 /// _IR_ function definition.
 #[derive(Debug)]
-#[allow(missing_docs)]
 pub struct Function {
     pub ident: Ident,
     pub instructions: Vec<Instruction>,
@@ -46,7 +45,7 @@ impl fmt::Display for Function {
     }
 }
 
-/// _IR_ instructions.
+/// _IR_ instruction.
 #[derive(Debug)]
 pub enum Instruction {
     /// Returns a value to the caller.
@@ -54,7 +53,6 @@ pub enum Instruction {
     /// Perform a unary operation on `src`, storing the result in `dst`.
     ///
     /// The `dst` of any unary instruction must be `Value::Var`.
-    #[allow(missing_docs)]
     Unary {
         op: UnaryOperator,
         src: Value,
@@ -65,7 +63,6 @@ pub enum Instruction {
     /// `dst`.
     ///
     /// The `dst` of any binary instruction must be `Value::Var`.
-    #[allow(missing_docs)]
     Binary {
         op: BinaryOperator,
         lhs: Value,
@@ -74,17 +71,14 @@ pub enum Instruction {
         sign: Signedness,
     },
     /// Copies the value from `src` into `dst`.
-    #[allow(missing_docs)]
     Copy { src: Value, dst: Value },
     /// Unconditionally jumps to the point in code labeled by an "identifier".
     Jump(Ident),
     /// Conditionally jumps to the point in code labeled by an "identifier" if
     /// the condition evaluates to zero.
-    #[allow(missing_docs)]
     JumpIfZero { cond: Value, target: Ident },
     /// Conditionally jumps to the point in code labeled by an "identifier" if
     /// the condition does not evaluates to zero.
-    #[allow(missing_docs)]
     JumpIfNotZero { cond: Value, target: Ident },
     /// Associates an "identifier" with a location in the program.
     Label(Ident),
@@ -196,11 +190,11 @@ impl fmt::Display for Instruction {
     }
 }
 
-/// _IR_ values.
+/// _IR_ value.
 #[derive(Debug, Clone)]
 pub enum Value {
     /// Constant int value (32-bit).
-    ConstantInt(i32),
+    IntConstant(i32),
     /// Temporary variable.
     Var(Ident),
 }
@@ -208,7 +202,7 @@ pub enum Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::ConstantInt(v) => write!(f, "{v}"),
+            Value::IntConstant(v) => write!(f, "{v}"),
             Value::Var(i) => write!(f, "{i:?}"),
         }
     }
@@ -237,7 +231,8 @@ impl TACBuilder<'_> {
         ident
     }
 
-    /// Allocates and returns a fresh label identifier.
+    /// Allocates and returns a fresh label identifier, appending the provided
+    /// suffix.
     fn new_label(&mut self, suffix: &str) -> Ident {
         // The `.` in labels  guarantees they won’t conflict with user-defined
         // identifiers, since the _C_ standard forbids `.` in identifiers.
@@ -253,16 +248,13 @@ impl TACBuilder<'_> {
 /// [Exits]: std::process::exit
 pub fn generate_ir(ast: &parser::AST) -> IR {
     match ast {
-        parser::AST::Program(func) => {
-            let ir_function = generate_ir_function(func);
-            IR::Program(ir_function)
-        }
+        parser::AST::Program(func) => IR::Program(generate_ir_function(func)),
     }
 }
 
 /// Generate an _IR_ function definition from the provided _AST_ function.
 fn generate_ir_function(func: &parser::Function) -> Function {
-    // Extracted logic for processing _AST_ statements so they can be handled
+    // Processing _AST_ statements within function so it can be called
     // recursively.
     fn process_ast_statement(stmt: &parser::Statement, builder: &mut TACBuilder<'_>) {
         match stmt {
@@ -346,7 +338,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                     let ir_val = generate_ir_value(init, &mut builder);
 
                     // Ensure the initializer expression result is copied to the
-                    // correct destination.
+                    // destination.
                     builder.instructions.push(Instruction::Copy {
                         src: ir_val,
                         dst: Value::Var(decl.ident.clone()),
@@ -356,17 +348,17 @@ fn generate_ir_function(func: &parser::Function) -> Function {
         }
     }
 
-    // According to the _C_ standard, the "main" function without a return
-    // statement implicitly returns 0. For other functions that declare a return
-    // type but have no return statement, the use of that return value by the
-    // caller is undefined behavior.
+    // According to the _C_ language standard, the "main" function without a
+    // return statement implicitly returns 0. For other functions that declare a
+    // return type but have no return statement, the use of that return value by
+    // the caller is undefined behavior.
     //
     // As a hack, just appending an extra `Instruction::Return` handles the edge
     // cases of the return value being used by the caller or ignored (no
     // undefined behavior if the value is never used).
     builder
         .instructions
-        .push(Instruction::Return(Value::ConstantInt(0)));
+        .push(Instruction::Return(Value::IntConstant(0)));
 
     Function {
         instructions: builder.instructions,
@@ -377,16 +369,14 @@ fn generate_ir_function(func: &parser::Function) -> Function {
 /// Generate an _IR_ value from the provided _AST_ expression.
 fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) -> Value {
     match expr {
-        parser::Expression::Constant(v) => Value::ConstantInt(*v),
+        parser::Expression::IntConstant(v) => Value::IntConstant(*v),
         parser::Expression::Var((v, _)) => Value::Var(v.clone()),
         parser::Expression::Unary {
             op, expr, prefix, ..
         } => {
             // The sign of an _IR_ instruction is determined by the
             // sub-expressions (here `expr`), not by when the operator is
-            // applied to them. Subsequent instructions that use the result
-            // will interpret its sign based on the operator's effect on the
-            // operand(s) at the time of usage.
+            // applied to them.
             let sign = match **expr {
                 parser::Expression::Unary { sign, .. } => sign,
                 parser::Expression::Binary { sign, .. } => sign,
@@ -415,7 +405,7 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                     builder.instructions.push(Instruction::Binary {
                         op: binop,
                         lhs: src.clone(),
-                        rhs: Value::ConstantInt(1),
+                        rhs: Value::IntConstant(1),
                         dst: tmp.clone(),
                         sign,
                     });
@@ -461,10 +451,8 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
         }
         parser::Expression::Binary { op, lhs, rhs, .. } => {
             // The sign of an _IR_ instruction is determined by the
-            // sub-expressions (here `lhs`), not by when the operator is
-            // applied to them. Subsequent instructions that use the result
-            // will interpret its sign based on the operator's effect on the
-            // operand(s) at the time of usage.
+            // sub-expressions (here `expr`), not by when the operator is
+            // applied to them.
             let sign = match **lhs {
                 parser::Expression::Unary { sign, .. } => sign,
                 parser::Expression::Binary { sign, .. } => sign,
@@ -473,7 +461,7 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
 
             match op {
                 // Need to short-circuit if the `lhs` is 0 for `&&`, or `lhs` is
-                // non-zero for `||`.
+                // non-zero for `||` according to the _C_ language standard.
                 parser::BinaryOperator::LogAnd | parser::BinaryOperator::LogOr => {
                     let lhs = generate_ir_value(lhs, builder);
                     let rhs = generate_ir_value(rhs, builder);
@@ -493,13 +481,13 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                                 target: f_lbl.clone(),
                             },
                             Instruction::Copy {
-                                src: Value::ConstantInt(1),
+                                src: Value::IntConstant(1),
                                 dst: dst.clone(),
                             },
                             Instruction::Jump(e_lbl.clone()),
                             Instruction::Label(f_lbl),
                             Instruction::Copy {
-                                src: Value::ConstantInt(0),
+                                src: Value::IntConstant(0),
                                 dst: dst.clone(),
                             },
                             Instruction::Label(e_lbl),
@@ -518,13 +506,13 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                                 target: t_lbl.clone(),
                             },
                             Instruction::Copy {
-                                src: Value::ConstantInt(0),
+                                src: Value::IntConstant(0),
                                 dst: dst.clone(),
                             },
                             Instruction::Jump(e_lbl.clone()),
                             Instruction::Label(t_lbl),
                             Instruction::Copy {
-                                src: Value::ConstantInt(1),
+                                src: Value::IntConstant(1),
                                 dst: dst.clone(),
                             },
                             Instruction::Label(e_lbl),
@@ -556,10 +544,10 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                 }
             }
         }
-        parser::Expression::Assignment(lvalue, rvalue, ..) => {
+        parser::Expression::Assignment { lvalue, rvalue, .. } => {
             let dst = match &**lvalue {
                 parser::Expression::Var((v, _)) => Value::Var(v.clone()),
-                _ => panic!("lvalue of an expression should be an `Expression::Var`"),
+                _ => unreachable!("lvalue of an expression should be an `Expression::Var`"),
             };
 
             let result = generate_ir_value(rvalue, builder);

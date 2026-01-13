@@ -84,7 +84,7 @@ impl Args {
 
         // NOTE: Leaking `in_path` to ensure the input path is available for
         // error reporting during runtime. Could use `PathBuf` instead but the
-        // path will not be mutated.
+        // path will not be mutated and one less heap allocation.
         let path = Path::new(in_path.leak());
         if !path.exists() {
             report_err!(&program, "'{}': no such file or directory", path.display());

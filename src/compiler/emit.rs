@@ -6,18 +6,19 @@
 use std::process;
 use std::{fmt::Write, io::Write as IoWrite};
 
-use crate::compiler::mir::{self, MIR};
+use crate::compiler::mir::{self, MIRX86};
 use crate::compiler::mir::{BinaryOperator, UnaryOperator};
 use crate::{Context, report_err};
 
-/// Emits _gas-x86-64-linux_ assembly given a _MIR_ to the provided output.
-/// [Exits] on error with non-zero status.
+/// Emits _gas-x86-64-linux_ assembly, given a _x86-64_ machine intermediate
+/// representation (_MIR_), to the provided output `f`. [Exits] on error with
+/// non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn emit_asm(ctx: &Context<'_>, mir: &MIR, mut f: Box<dyn IoWrite>) {
+pub fn emit_gas_x86_64_linux(ctx: &Context<'_>, mir: &MIRX86, mut f: Box<dyn IoWrite>) {
     match mir {
-        MIR::Program(func) => {
-            // Write the function prologue in GNU `as` (assembler) format.
+        MIRX86::Program(func) => {
+            // Write the file prologue in GNU `as` (assembler) format.
             writeln!(
                 &mut f,
                 "\t.file\t\"{}\"\n\t.text\n\t.globl\t{label}\n\t.type\t{label}, @function\n{label}:",
@@ -38,7 +39,7 @@ pub fn emit_asm(ctx: &Context<'_>, mir: &MIR, mut f: Box<dyn IoWrite>) {
         }
     }
 
-    // Indicates the program does not need an executable stack (Linux).
+    // Indicates the program does not need an executable stack on Linux.
     writeln!(&mut f, "\t.section\t.note.GNU-stack,\"\",@progbits").unwrap_or_else(|err| {
         report_err!(ctx.program, "failed to emit assembly: {err}");
         process::exit(1);
@@ -63,12 +64,13 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
     });
 
     // Updated if a `StackAlloc` instruction is encountered, so the allocated
-    // stack memory can be deallocated if returning.
+    // stack memory can be deallocated when returning.
     let mut alloc = 0;
 
     for inst in &func.instructions {
         if let mir::Instruction::StackAlloc(b) = inst {
-            // Accumulate any allocations made before any `Return` instruction.
+            // Accumulate any allocations made before any `Return` instruction
+            // is reached.
             alloc += *b;
         }
 
@@ -89,7 +91,7 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
     asm
 }
 
-/// Return a string assembly representation of the given `MIR` instruction.
+/// Return a string assembly representation of the given _MIR_ instruction.
 fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
     match instruction {
         mir::Instruction::Mov(src, dst) => {
@@ -156,15 +158,13 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
                 format!("addq\t${alloc}, %rsp\n\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")
             }
         }
-        mir::Instruction::Label(_) => {
-            unreachable!("arm should be handled outside the function for proper formatting")
-        }
+        mir::Instruction::Label(_) => panic!("label emission should not be handled here"),
     }
 }
 
-/// Return a string assembly representation of the given `MIR` operand.
+/// Return a string assembly representation of the given _MIR_ operand.
 ///
-/// `size` formats register operands depending on the required width (in bytes).
+/// `size` formats register operands depending on the required bytes.
 fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
     match op {
         mir::Operand::Imm32(v) => format!("${v}"),
@@ -211,8 +211,6 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
             .to_string(),
         },
         mir::Operand::Stack(s) => format!("-{s}(%rbp)"),
-        mir::Operand::Pseudo(_) => {
-            panic!("pseudoregisters should not be encountered when emitting assembly")
-        }
+        mir::Operand::Pseudo(_) => panic!("pseudoregisters should not be encountered here"),
     }
 }
