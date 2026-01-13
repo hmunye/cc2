@@ -3,7 +3,7 @@
 //! Compiler pass that parses a stream of tokens into an abstract syntax tree
 //! (_AST_).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{fmt, process};
 
 use crate::compiler::lexer::{OperatorKind, Token, TokenType};
@@ -12,12 +12,17 @@ use crate::{Context, compiler::Result, fmt_err, fmt_token_err, report_err};
 type Ident = String;
 
 /// Helper for resolving variable identifiers.
-struct Resolver {
+#[derive(Default)]
+struct Resolver<'a> {
     map: HashMap<Ident, Ident>,
+    labels: HashSet<&'a str>,
+    // Statements whose `goto` target is still unresolved. Stores references to
+    // the label and token of the statement.
+    unresolved: Vec<(&'a str, &'a Token)>,
     var_count: usize,
 }
 
-impl Resolver {
+impl<'a> Resolver<'a> {
     /// Allocates and returns a fresh temporary variable identifier, prepending
     /// the provided prefix.
     fn new_tmp(&mut self, prefix: &str) -> Ident {
@@ -37,15 +42,189 @@ pub enum AST {
 }
 
 impl AST {
-    /// Ensures all variables are uniquely identified and checks for semantic
-    /// errors.
-    fn resolve_vars(&mut self, ctx: &Context<'_>, resolver: &mut Resolver) -> Result<()> {
+    /// Ensures all variables are uniquely identified and checks for additional
+    /// semantic errors.
+    fn resolve_vars(&mut self, ctx: &Context<'_>, resolver: &mut Resolver<'_>) -> Result<()> {
+        fn resolve_declaration(
+            decl: &Declaration,
+            ctx: &Context<'_>,
+            resolver: &mut Resolver<'_>,
+        ) -> Result<Declaration> {
+            if resolver.map.contains_key(&decl.ident) {
+                let token = &decl.token;
+
+                let tok_str = format!("{token:?}");
+                let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                return Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    line_content,
+                    "redeclaration of '{tok_str}'",
+                ));
+            }
+
+            let resolved_ident = resolver.new_tmp(&decl.ident);
+            resolver
+                .map
+                .insert(decl.ident.clone(), resolved_ident.clone());
+
+            let mut opt_init = None;
+
+            if let Some(init) = &decl.init {
+                opt_init = Some(resolve_expression(init, ctx, resolver)?);
+            }
+
+            Ok(Declaration {
+                ident: resolved_ident,
+                token: decl.token.clone(),
+                init: opt_init,
+            })
+        }
+
+        fn resolve_statement(
+            stmt: &Statement,
+            ctx: &Context<'_>,
+            resolver: &mut Resolver<'_>,
+        ) -> Result<Statement> {
+            match stmt {
+                Statement::Return(expr) => {
+                    Ok(Statement::Return(resolve_expression(expr, ctx, resolver)?))
+                }
+                Statement::Expression(expr) => Ok(Statement::Expression(resolve_expression(
+                    expr, ctx, resolver,
+                )?)),
+                Statement::If {
+                    cond,
+                    then,
+                    opt_else,
+                } => {
+                    let mut resolved_opt_else = None;
+
+                    if let Some(stmt) = opt_else {
+                        resolved_opt_else = Some(Box::new(resolve_statement(stmt, ctx, resolver)?));
+                    }
+
+                    Ok(Statement::If {
+                        cond: resolve_expression(cond, ctx, resolver)?,
+                        then: Box::new(resolve_statement(then, ctx, resolver)?),
+                        opt_else: resolved_opt_else,
+                    })
+                }
+                Statement::Goto(s) => Ok(Statement::Goto(s.clone())),
+                // Labels live in a namespace separate from ordinary identifier
+                // namespace (variables, functions, types, etc.).
+                Statement::Labeled { label, token, stmt } => Ok(Statement::Labeled {
+                    label: label.clone(),
+                    token: token.clone(),
+                    stmt: Box::new(resolve_statement(stmt, ctx, resolver)?),
+                }),
+                Statement::Empty => Ok(Statement::Empty),
+            }
+        }
+
+        fn resolve_expression(
+            expr: &Expression,
+            ctx: &Context<'_>,
+            resolver: &mut Resolver<'_>,
+        ) -> Result<Expression> {
+            match expr {
+                Expression::Assignment(lvalue, rvalue, token) => match **lvalue {
+                    Expression::Var(_) => {
+                        let lvalue = resolve_expression(lvalue, ctx, resolver)?;
+                        let rvalue = resolve_expression(rvalue, ctx, resolver)?;
+
+                        Ok(Expression::Assignment(
+                            Box::new(lvalue),
+                            Box::new(rvalue),
+                            token.clone(),
+                        ))
+                    }
+                    _ => {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                        Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "lvalue required as left operand of assignment",
+                        ))
+                    }
+                },
+                Expression::Var((v, token)) => {
+                    if let Some(ident) = resolver.map.get(v) {
+                        // Use the unique variable identifier mapped from the
+                        // original identifier.
+                        Ok(Expression::Var((ident.clone(), token.clone())))
+                    } else {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                        Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "'{tok_str}' undeclared",
+                        ))
+                    }
+                }
+                Expression::Constant(i) => Ok(Expression::Constant(*i)),
+                Expression::Unary {
+                    op,
+                    expr,
+                    sign,
+                    prefix,
+                } => {
+                    let expr = resolve_expression(expr, ctx, resolver)?;
+
+                    Ok(Expression::Unary {
+                        op: *op,
+                        expr: Box::new(expr),
+                        sign: *sign,
+                        prefix: *prefix,
+                    })
+                }
+                Expression::Binary { op, lhs, rhs, sign } => {
+                    let lhs = resolve_expression(lhs, ctx, resolver)?;
+                    let rhs = resolve_expression(rhs, ctx, resolver)?;
+
+                    Ok(Expression::Binary {
+                        op: *op,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                        sign: *sign,
+                    })
+                }
+                Expression::Conditional(lhs, mid, rhs) => {
+                    let lhs = resolve_expression(lhs, ctx, resolver)?;
+                    let mid = resolve_expression(mid, ctx, resolver)?;
+                    let rhs = resolve_expression(rhs, ctx, resolver)?;
+
+                    Ok(Expression::Conditional(
+                        Box::new(lhs),
+                        Box::new(mid),
+                        Box::new(rhs),
+                    ))
+                }
+            }
+        }
+
         match self {
             AST::Program(func) => {
                 for block in &mut func.body {
                     match block {
-                        Block::Stmt(stmt) => *stmt = AST::resolve_statement(stmt, ctx, resolver)?,
-                        Block::Decl(decl) => *decl = AST::resolve_declaration(decl, ctx, resolver)?,
+                        Block::Stmt(stmt) => *stmt = resolve_statement(stmt, ctx, resolver)?,
+                        Block::Decl(decl) => *decl = resolve_declaration(decl, ctx, resolver)?,
                     }
                 }
             }
@@ -54,171 +233,77 @@ impl AST {
         Ok(())
     }
 
-    fn resolve_declaration(
-        decl: &Declaration,
-        ctx: &Context<'_>,
-        resolver: &mut Resolver,
-    ) -> Result<Declaration> {
-        if resolver.map.contains_key(&decl.ident) {
-            let token = &decl.token;
+    /// Ensures all labels with a function scope are unique and checks for
+    /// additional semantic errors.
+    fn resolve_labels<'a>(&'a self, ctx: &Context<'_>, resolver: &mut Resolver<'a>) -> Result<()> {
+        fn resolve_statement_labels<'a>(
+            stmt: &'a Statement,
+            ctx: &Context<'_>,
+            resolver: &mut Resolver<'a>,
+        ) -> Result<()> {
+            match stmt {
+                Statement::If { then, opt_else, .. } => {
+                    resolve_statement_labels(then, ctx, resolver)?;
+                    if let Some(else_stmt) = opt_else {
+                        resolve_statement_labels(else_stmt, ctx, resolver)?;
+                    }
+                }
+                Statement::Goto((lbl, token)) => resolver.unresolved.push((lbl.as_str(), token)),
+                Statement::Labeled { label, token, stmt } => {
+                    if !resolver.labels.insert(label.as_str()) {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-            let tok_str = format!("{token:?}");
-            let line_content = ctx.src_slice(token.loc.line_span.clone());
+                        return Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "duplicate label '{tok_str}'",
+                        ));
+                    }
 
-            return Err(fmt_token_err!(
-                token.loc.file_path.display(),
-                token.loc.line,
-                token.loc.col,
-                tok_str,
-                tok_str.len() - 1,
-                line_content,
-                "redeclaration of '{tok_str}'",
-            ));
+                    resolve_statement_labels(stmt, ctx, resolver)?;
+                }
+                _ => {}
+            }
+
+            Ok(())
         }
 
-        let resolved_ident = resolver.new_tmp(&decl.ident);
-        resolver
-            .map
-            .insert(decl.ident.clone(), resolved_ident.clone());
+        match self {
+            AST::Program(func) => {
+                for block in &func.body {
+                    // Collect all labels within the function in the first pass.
+                    if let Block::Stmt(stmt) = block {
+                        resolve_statement_labels(stmt, ctx, resolver)?;
+                    }
+                }
 
-        let mut opt_init = None;
+                // Second pass ensures all `goto` statements point to a valid
+                // target.
+                for (lbl, token) in &resolver.unresolved {
+                    if !resolver.labels.contains(lbl) {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-        if let Some(init) = &decl.init {
-            opt_init = Some(AST::resolve_expression(init, ctx, resolver)?);
+                        return Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "label '{lbl}' used but not defined",
+                        ));
+                    }
+                }
+            }
         }
 
-        Ok(Declaration {
-            ident: resolved_ident,
-            token: decl.token.clone(),
-            init: opt_init,
-        })
-    }
-
-    fn resolve_statement(
-        stmt: &Statement,
-        ctx: &Context<'_>,
-        resolver: &mut Resolver,
-    ) -> Result<Statement> {
-        match stmt {
-            Statement::Return(expr) => Ok(Statement::Return(AST::resolve_expression(
-                expr, ctx, resolver,
-            )?)),
-            Statement::Expression(expr) => Ok(Statement::Expression(AST::resolve_expression(
-                expr, ctx, resolver,
-            )?)),
-            Statement::If {
-                cond,
-                then,
-                opt_else,
-            } => {
-                let mut resolved_opt_else = None;
-
-                if let Some(stmt) = opt_else {
-                    resolved_opt_else =
-                        Some(Box::new(AST::resolve_statement(stmt, ctx, resolver)?));
-                }
-
-                Ok(Statement::If {
-                    cond: AST::resolve_expression(cond, ctx, resolver)?,
-                    then: Box::new(AST::resolve_statement(then, ctx, resolver)?),
-                    opt_else: resolved_opt_else,
-                })
-            }
-            Statement::Null => Ok(Statement::Null),
-        }
-    }
-
-    fn resolve_expression(
-        expr: &Expression,
-        ctx: &Context<'_>,
-        resolver: &mut Resolver,
-    ) -> Result<Expression> {
-        match expr {
-            Expression::Assignment(lvalue, rvalue, token) => match **lvalue {
-                Expression::Var(_) => {
-                    let lvalue = AST::resolve_expression(lvalue, ctx, resolver)?;
-                    let rvalue = AST::resolve_expression(rvalue, ctx, resolver)?;
-
-                    Ok(Expression::Assignment(
-                        Box::new(lvalue),
-                        Box::new(rvalue),
-                        token.clone(),
-                    ))
-                }
-                _ => {
-                    let tok_str = format!("{token:?}");
-                    let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                    Err(fmt_token_err!(
-                        token.loc.file_path.display(),
-                        token.loc.line,
-                        token.loc.col,
-                        tok_str,
-                        tok_str.len() - 1,
-                        line_content,
-                        "lvalue required as left operand of assignment",
-                    ))
-                }
-            },
-            Expression::Var((v, token)) => {
-                if let Some(ident) = resolver.map.get(v) {
-                    // Use the unique variable identifier mapped from the
-                    // original identifier.
-                    Ok(Expression::Var((ident.clone(), token.clone())))
-                } else {
-                    let tok_str = format!("{token:?}");
-                    let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                    Err(fmt_token_err!(
-                        token.loc.file_path.display(),
-                        token.loc.line,
-                        token.loc.col,
-                        tok_str,
-                        tok_str.len() - 1,
-                        line_content,
-                        "'{tok_str}' undeclared",
-                    ))
-                }
-            }
-            Expression::Constant(i) => Ok(Expression::Constant(*i)),
-            Expression::Unary {
-                op,
-                expr,
-                sign,
-                prefix,
-            } => {
-                let expr = AST::resolve_expression(expr, ctx, resolver)?;
-
-                Ok(Expression::Unary {
-                    op: *op,
-                    expr: Box::new(expr),
-                    sign: *sign,
-                    prefix: *prefix,
-                })
-            }
-            Expression::Binary { op, lhs, rhs, sign } => {
-                let lhs = AST::resolve_expression(lhs, ctx, resolver)?;
-                let rhs = AST::resolve_expression(rhs, ctx, resolver)?;
-
-                Ok(Expression::Binary {
-                    op: *op,
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
-                    sign: *sign,
-                })
-            }
-            Expression::Conditional(lhs, mid, rhs) => {
-                let lhs = AST::resolve_expression(lhs, ctx, resolver)?;
-                let mid = AST::resolve_expression(mid, ctx, resolver)?;
-                let rhs = AST::resolve_expression(rhs, ctx, resolver)?;
-
-                Ok(Expression::Conditional(
-                    Box::new(lhs),
-                    Box::new(mid),
-                    Box::new(rhs),
-                ))
-            }
-        }
+        Ok(())
     }
 }
 
@@ -261,8 +346,15 @@ pub enum Statement {
         /// Optional statement to execute when result of `cond` is zero.
         opt_else: Option<Box<Statement>>,
     },
-    // Expression statement without an expression.
-    Null,
+    Goto((Ident, Token)),
+    #[allow(missing_docs)]
+    Labeled {
+        label: Ident,
+        token: Token,
+        stmt: Box<Statement>,
+    },
+    // Expression statement without an expression (";").
+    Empty,
 }
 
 /// _AST_ declarations.
@@ -472,10 +564,7 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 
     let mut ast = AST::Program(func);
 
-    let mut resolver = Resolver {
-        map: Default::default(),
-        var_count: 0,
-    };
+    let mut resolver: Resolver<'_> = Default::default();
 
     // Pass 1 - Variable resolution.
     ast.resolve_vars(ctx, &mut resolver).unwrap_or_else(|err| {
@@ -486,6 +575,17 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
         eprintln!("{err}");
         process::exit(1);
     });
+
+    // Pass 2 - Label/`goto` resolution.
+    ast.resolve_labels(ctx, &mut resolver)
+        .unwrap_or_else(|err| {
+            if cfg!(test) {
+                panic!("{err}");
+            }
+
+            eprintln!("{err}");
+            process::exit(1);
+        });
 
     ast
 }
@@ -613,16 +713,51 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     opt_else,
                 })
             }
+            TokenType::Keyword(ref s) if s == "goto" => {
+                // Consume the "goto" token.
+                let token = iter
+                    .next()
+                    .expect("next token should be present")
+                    .expect("next token should be valid");
+
+                let (target, _) = parse_ident(ctx, iter)?;
+
+                expect_token(ctx, iter, TokenType::Semicolon)?;
+
+                Ok(Statement::Goto((target, token)))
+            }
             TokenType::Semicolon => {
                 // Consume the "semicolon" token.
                 let _ = iter.next();
-                Ok(Statement::Null)
+                Ok(Statement::Empty)
             }
             _ => {
                 let expr = parse_expression(ctx, iter, 0)?;
-                expect_token(ctx, iter, TokenType::Semicolon)?;
 
-                Ok(Statement::Expression(expr))
+                // Labeled-statement encountered.
+                if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
+                    && let TokenType::Colon = token.ty
+                {
+                    match expr {
+                        Expression::Var((ident, token)) => {
+                            // Consume the ":" token.
+                            let _ = iter.next();
+
+                            let stmt = parse_statement(ctx, iter)?;
+
+                            Ok(Statement::Labeled {
+                                label: ident,
+                                token,
+                                stmt: Box::new(stmt),
+                            })
+                        }
+                        _ => unreachable!("all other expressions here should be unreachable"),
+                    }
+                } else {
+                    expect_token(ctx, iter, TokenType::Semicolon)?;
+
+                    Ok(Statement::Expression(expr))
+                }
             }
         }
     } else {

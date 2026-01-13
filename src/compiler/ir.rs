@@ -314,7 +314,16 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                     builder.instructions.push(Instruction::Label(e_lbl));
                 }
             }
-            parser::Statement::Null => {}
+            parser::Statement::Goto((target, _)) => {
+                builder.instructions.push(Instruction::Jump(target.clone()));
+            }
+            parser::Statement::Labeled { label, stmt, .. } => {
+                builder.instructions.push(Instruction::Label(label.clone()));
+
+                // Handle appending instructions for statements recursively.
+                process_ast_statement(stmt, builder);
+            }
+            parser::Statement::Empty => {}
         }
     }
 

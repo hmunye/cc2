@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::{Context, compiler::Result, fmt_token_err};
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
-const KEYWORDS: [&str; 5] = ["int", "void", "return", "if", "else"];
+const KEYWORDS: [&str; 6] = ["int", "void", "return", "if", "else", "goto"];
 
 /// Types of operators.
 #[derive(Clone, Copy, PartialEq, Eq)]
