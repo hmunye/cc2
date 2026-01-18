@@ -221,7 +221,7 @@ struct TACBuilder<'a> {
 }
 
 impl TACBuilder<'_> {
-    /// Allocates and returns a fresh temporary variable identifier.
+    /// Returns a new temporary variable identifier.
     fn new_tmp(&mut self) -> Ident {
         // The `.` in temporary identifiers guarantees they won’t conflict
         // with user-defined identifiers, since the _C_ standard forbids `.` in
@@ -231,8 +231,7 @@ impl TACBuilder<'_> {
         ident
     }
 
-    /// Allocates and returns a fresh label identifier, appending the provided
-    /// suffix.
+    /// Returns a new label identifier, appending the provided suffix.
     fn new_label(&mut self, suffix: &str) -> Ident {
         // The `.` in labels  guarantees they won’t conflict with user-defined
         // identifiers, since the _C_ standard forbids `.` in identifiers.
@@ -254,8 +253,28 @@ pub fn generate_ir(ast: &parser::AST) -> IR {
 
 /// Generate an _IR_ function definition from the provided _AST_ function.
 fn generate_ir_function(func: &parser::Function) -> Function {
-    // Processing _AST_ statements within function so it can be called
-    // recursively.
+    fn process_ast_block(block: &parser::Block, builder: &mut TACBuilder<'_>) {
+        for block_item in &block.0 {
+            match block_item {
+                parser::BlockItem::Stmt(stmt) => process_ast_statement(stmt, builder),
+                parser::BlockItem::Decl(decl) => {
+                    if let Some(init) = &decl.init {
+                        // Generate and append any instructions needed to encode the
+                        // declaration's initializer.
+                        let ir_val = generate_ir_value(init, builder);
+
+                        // Ensure the initializer expression result is copied to the
+                        // destination.
+                        builder.instructions.push(Instruction::Copy {
+                            src: ir_val,
+                            dst: Value::Var(decl.ident.clone()),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     fn process_ast_statement(stmt: &parser::Statement, builder: &mut TACBuilder<'_>) {
         match stmt {
             parser::Statement::Return(expr) => {
@@ -315,6 +334,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                 // Handle appending instructions for statements recursively.
                 process_ast_statement(stmt, builder);
             }
+            parser::Statement::Compound(block) => process_ast_block(block, builder),
             parser::Statement::Empty => {}
         }
     }
@@ -328,25 +348,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
         label: &label,
     };
 
-    for block in &func.body {
-        match block {
-            parser::Block::Stmt(stmt) => process_ast_statement(stmt, &mut builder),
-            parser::Block::Decl(decl) => {
-                if let Some(init) = &decl.init {
-                    // Generate and append any instructions needed to encode the
-                    // declaration's initializer.
-                    let ir_val = generate_ir_value(init, &mut builder);
-
-                    // Ensure the initializer expression result is copied to the
-                    // destination.
-                    builder.instructions.push(Instruction::Copy {
-                        src: ir_val,
-                        dst: Value::Var(decl.ident.clone()),
-                    });
-                }
-            }
-        }
-    }
+    process_ast_block(&func.body, &mut builder);
 
     // According to the _C_ language standard, the "main" function without a
     // return statement implicitly returns 0. For other functions that declare a

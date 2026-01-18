@@ -5,36 +5,41 @@ use std::process;
 
 use crate::report_err;
 
-/// Compiler's command-line arguments.
+/// Compiler command-line arguments.
 #[derive(Debug)]
 pub struct Args {
     /// Name of the program.
     pub program: String,
-    /// Compilation phase to terminate at.
+    /// Compilation phase to terminate at (optional).
     pub stage: String,
+    /// Indicates whether the input file should be preprocessed before
+    /// compiling.
+    pub preprocess: bool,
     /// Path to input file (required).
     pub in_path: &'static Path,
-    /// Output path for assembly code emission.
+    /// Output path for assembly code emission (optional).
     pub out_path: PathBuf,
 }
 
 impl Args {
-    /// Parses command-line arguments from `std::env::args()`, [exiting] on
+    /// Parses command-line arguments from [`std::env::args()`]. [Exits] on
     /// error with non-zero status.
     ///
-    /// [exiting]: std::process::exit
+    /// [Exits]: std::process::exit
     pub fn parse() -> Self {
         let mut args = std::env::args().peekable();
         let program = args.next().unwrap_or("cc2".into());
 
         let mut stage = String::new();
+        let mut preprocess = false;
         let mut out_path = PathBuf::new();
         let mut in_path = String::new();
 
         while let Some(arg) = args.peek() {
             if arg.starts_with("-") {
-                // Already peeked the next argument.
-                let flag_name = args.next().expect("next argument should be present");
+                let flag_name = args
+                    .next()
+                    .expect("already peeked the next argument, should be present");
 
                 if let Some(flag) = FLAG_REGISTRY
                     .iter()
@@ -44,8 +49,9 @@ impl Args {
                         ["-s", "--stage"] => match args.peek().map(|s| &**s) {
                             Some("lex") | Some("parse") | Some("ir") | Some("mir")
                             | Some("asm") => {
-                                // Already peeked the next argument.
-                                stage = args.next().expect("next argument should be present");
+                                stage = args
+                                    .next()
+                                    .expect("already peeked the next argument, should be present");
                             }
                             Some(s) => {
                                 report_err!(&program, "invalid stage: '{s}'");
@@ -56,6 +62,7 @@ impl Args {
                                 print_usage(&program);
                             }
                         },
+                        ["-p", "--preprocess"] => preprocess = true,
                         ["-o", "--output"] => match args.next() {
                             Some(path) => out_path = PathBuf::from(&path),
                             None => {
@@ -74,8 +81,9 @@ impl Args {
                     print_usage(&program);
                 }
             } else if in_path.is_empty() {
-                // Input file path can come before or after flags.
-                in_path = args.next().expect("next argument should be present");
+                in_path = args
+                    .next()
+                    .expect("already peeked the next argument, should be present");
             } else {
                 report_err!(&program, "invalid argument: '{arg}'");
                 print_usage(&program);
@@ -84,7 +92,7 @@ impl Args {
 
         // NOTE: Leaking `in_path` to ensure the input path is available for
         // error reporting during runtime. Could use `PathBuf` instead but the
-        // path will not be mutated and one less heap allocation.
+        // path will not be mutated. One less heap allocation.
         let path = Path::new(in_path.leak());
         if !path.exists() {
             report_err!(&program, "'{}': no such file or directory", path.display());
@@ -100,7 +108,6 @@ impl Args {
             process::exit(1);
         }
 
-        // No output path was provided.
         if out_path.capacity() == 0 {
             out_path = path.with_extension("s");
         }
@@ -108,6 +115,7 @@ impl Args {
         Self {
             program,
             stage,
+            preprocess,
             in_path: path,
             out_path,
         }
@@ -128,7 +136,12 @@ const FLAG_REGISTRY: &[Flag] = &[
     },
     Flag {
         names: ["-o", "--output"],
-        description: "         specify the output file. defaults to input path with '.s' extension",
+        description: "         specify the output file. defaults to input path with '.s' extension.",
+        run: None,
+    },
+    Flag {
+        names: ["-p", "--preprocess"],
+        description: "     runs the GCC preprocessor (cpp) on the input file.",
         run: None,
     },
     Flag {
@@ -143,15 +156,16 @@ const FLAG_REGISTRY: &[Flag] = &[
     },
 ];
 
-/// Prints the usage information for the program, exiting with a non-zero
-/// status.
+/// Prints the usage information for the program. [Exits] with non-zero status.
+///
+/// [Exits]: std::process::exit
 pub fn print_usage(program: &str) -> ! {
     eprintln!("\x1b[1;1musage:\x1b[0m");
     eprintln!("      {program} [options] <infile>");
     eprintln!("\x1b[1;1moptions:\x1b[0m");
 
     for flag in FLAG_REGISTRY {
-        eprintln!("   {}  {}", flag.names.join(", "), flag.description);
+        eprintln!("   {}{}", flag.names.join(", "), flag.description);
     }
 
     process::exit(1);

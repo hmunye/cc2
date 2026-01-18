@@ -8,7 +8,6 @@ pub mod compiler;
 pub mod error;
 
 use std::io::{self, Read, Write};
-use std::ops::Range;
 use std::path::Path;
 use std::{env, fs, process};
 
@@ -19,14 +18,14 @@ pub struct Context<'a> {
     pub program: &'a str,
     /// Path of the input file.
     pub in_path: &'static Path,
-    /// Reference to input file bytes.
+    /// Slice of input file bytes.
     pub src: &'a [u8],
 }
 
 impl<'a> Context<'a> {
     /// Returns the UTF-8 representation for the given byte range from `src`.
     #[inline]
-    pub fn src_slice(&self, range: Range<usize>) -> &str {
+    pub fn src_slice(&self, range: std::ops::Range<usize>) -> &str {
         std::str::from_utf8(&self.src[range])
             .expect("any range of ASCII bytes should be valid UTF-8")
     }
@@ -34,7 +33,23 @@ impl<'a> Context<'a> {
 
 fn main() {
     let args = args::Args::parse();
-    let mut f = preprocess_input(&args);
+
+    let mut f = if args.preprocess {
+        preprocess_input(&args)
+    } else {
+        fs::File::options()
+            .read(true)
+            .write(true)
+            .open(args.in_path)
+            .unwrap_or_else(|err| {
+                report_err!(
+                    &args.program,
+                    "failed to open input file '{}': {err}",
+                    args.in_path.display()
+                );
+                process::exit(1);
+            })
+    };
 
     let metadata = f.metadata().unwrap_or_else(|err| {
         report_err!(&args.program, "failed to query preprocessed file: {err}");
@@ -74,13 +89,13 @@ fn main() {
         "mir" => {
             let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
-            let mir = compiler::mir::generate_mir(&ir);
+            let mir = compiler::mir::generate_x86_64_mir(&ir);
             print!("{mir}");
         }
         stage => {
             let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
-            let mir = compiler::mir::generate_mir(&ir);
+            let mir = compiler::mir::generate_x86_64_mir(&ir);
 
             let output: Box<dyn Write> = if stage == "asm" {
                 Box::new(io::stdout().lock())

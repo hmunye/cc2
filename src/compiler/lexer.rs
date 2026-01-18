@@ -4,7 +4,6 @@
 //! tokens.
 
 use std::fmt;
-use std::ops::Range;
 use std::path::Path;
 
 use crate::compiler::Result;
@@ -169,11 +168,11 @@ impl fmt::Debug for OperatorKind {
 pub enum TokenType {
     /// Reserved word (e.g., `if`, `return`).
     Keyword(String),
-    /// Identifier (variable, function, types).
+    /// Identifier (e.g., variable, function, types).
     Ident(String),
     /// Integer literal.
     IntConstant(i32),
-    /// Generic operator token.
+    /// Operator token.
     Operator(OperatorKind),
     /// `(`.
     LParen,
@@ -231,8 +230,8 @@ impl fmt::Debug for TokenType {
 #[derive(Debug, Clone)]
 pub struct Location {
     pub file_path: &'static Path,
-    // Range of line in source code this token appears.
-    pub line_span: Range<usize>,
+    // Range of line from source code bytes this token appears in.
+    pub line_span: std::ops::Range<usize>,
     pub line: usize,
     pub col: usize,
 }
@@ -314,7 +313,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Skips over an integer constant, returning a token.
+    /// Skips over an integer constant (32-bit), returning a token.
     fn consume_constant(&mut self) -> Result<Token> {
         let col = self.col();
         let token_start = self.cur;
@@ -371,7 +370,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    /// Skips over all consecutive whitespace characters.
+    /// Skips over all consecutive _ASCII_ whitespace characters.
     const fn consume_whitespace(&mut self) {
         while self.has_next() && self.first().is_ascii_whitespace() {
             self.cur += 1;
@@ -409,9 +408,8 @@ impl<'a> Lexer<'a> {
         self.cur - self.bol + 1
     }
 
-    /// Returns the byte from `src` at the current cursor position.
-    ///
-    /// Does **not** update the cursor position.
+    /// Returns the byte from `src` at the current cursor position. Does **not**
+    /// update the cursor position.
     ///
     /// # Panic
     ///

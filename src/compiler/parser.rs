@@ -3,6 +3,7 @@
 //! Compiler pass that parses a stream of tokens into an abstract syntax tree
 //! (_AST_).
 
+use std::collections::{HashMap, HashSet};
 use std::{fmt, process};
 
 use crate::compiler::Result;
@@ -11,28 +12,143 @@ use crate::{Context, fmt_err, fmt_token_err, report_err};
 
 type Ident = String;
 
-/// Helper for resolving variable identifiers and labels.
-#[derive(Default)]
-struct Resolver<'a> {
-    map: std::collections::HashMap<Ident, Ident>,
-    labels: std::collections::HashSet<&'a str>,
-    // Statements whose `goto` target label is still unresolved. Stores
-    // references to the label and token of the statement.
-    unresolved: Vec<(&'a str, &'a Token)>,
-    // For unique variable suffix.
-    var_count: usize,
+/// Helper to track the current scope for symbol resolution.
+#[repr(transparent)]
+struct Scope(usize);
+
+impl Scope {
+    #[inline]
+    const fn new(scope: usize) -> Self {
+        Scope(scope)
+    }
+
+    #[inline]
+    const fn current_scope(&self) -> usize {
+        self.0
+    }
+
+    #[inline]
+    const fn enter_scope(&mut self) {
+        self.0 += 1;
+    }
+
+    #[inline]
+    const fn exit_scope(&mut self) {
+        self.0 = self.0.saturating_sub(1);
+    }
 }
 
-impl<'a> Resolver<'a> {
-    /// Allocates and returns a fresh temporary variable identifier, prepending
-    /// the provided prefix.
+impl Default for Scope {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+/// Helper for _AST_ to perform semantic analysis on symbols.
+#[derive(Default)]
+struct SymbolResolver {
+    // key = (symbol, scope), value = resolved identifier
+    symbol_map: HashMap<(Ident, usize), Ident>,
+    // Used to track current scope.
+    scope: Scope,
+}
+
+impl SymbolResolver {
+    /// Returns a new temporary variable identifier, appending the current
+    /// scope to the provided prefix.
+    #[inline]
     fn new_tmp(&mut self, prefix: &str) -> Ident {
-        // The `.` in variable identifiers guarantees they won’t conflict
-        // with user-defined identifiers, since the _C_ standard forbids `.` in
+        // The `@` in variable identifiers guarantees they won’t conflict
+        // with user-defined identifiers, since the _C_ standard forbids `@` in
         // identifiers.
-        let ident = format!("{prefix}.{}", self.var_count);
-        self.var_count += 1;
-        ident
+        format!("{prefix}@{}", self.scope.current_scope())
+    }
+
+    /// Returns `true` if the given `symbol` has already been declared in the
+    /// current scope.
+    #[inline]
+    fn is_redeclaration(&self, symbol: &str) -> bool {
+        self.symbol_map
+            .contains_key(&(symbol.to_string(), self.scope.current_scope()))
+    }
+
+    /// Returns a unique identifier for the given `symbol`, recording the
+    /// declaration for the current scope.
+    fn declare_symbol(&mut self, symbol: &str) -> Ident {
+        let resolved_ident = self.new_tmp(symbol);
+
+        let res = self.symbol_map.insert(
+            (symbol.to_string(), self.scope.current_scope()),
+            resolved_ident.clone(),
+        );
+
+        debug_assert!(res.is_none());
+
+        resolved_ident
+    }
+
+    /// Returns the unique identifier for a given `symbol`, searching the
+    /// current scope and all outer scopes (up to the function scope), or `None`
+    /// if no existing declaration could be found.
+    fn resolve_symbol(&self, symbol: &str) -> Option<Ident> {
+        let mut resolved_ident = None;
+
+        // Starts at the current scope then searches all outer scopes until
+        // reaching the function scope (0).
+        let scopes = (0..=self.scope.current_scope()).rev();
+
+        for scope in scopes {
+            if let Some(ident) = self.symbol_map.get(&(symbol.to_string(), scope)) {
+                resolved_ident = Some(ident.clone());
+                break;
+            }
+        }
+
+        resolved_ident
+    }
+}
+
+/// Helper for _AST_ to perform semantic analysis on label/`goto` statements.
+#[derive(Default)]
+struct LabelResolver<'a> {
+    // key = label
+    labels: HashSet<&'a str>,
+    // Collected label–token pairs for every `goto` statement within a function
+    // scope. After recording all local labels, a later pass verifies that each
+    // target label exists within the same scope.
+    pending_gotos: Vec<(&'a str, &'a Token)>,
+}
+
+impl<'a> LabelResolver<'a> {
+    /// Returns `true` if the label was not encountered in the current function
+    /// scope and records it as seen.
+    #[inline]
+    fn mark_label(&mut self, label: &'a str) -> bool {
+        // Labels live in a different namespace from ordinary
+        // identifiers (variables, functions, types, etc.)
+        // within the same function scope, so they are collected
+        // separately.
+        !self.labels.insert(label)
+    }
+
+    /// Records a `goto` statement's contents so they can be validated after
+    /// processing labels.
+    #[inline]
+    fn mark_goto(&mut self, pair: (&'a str, &'a Token)) {
+        self.pending_gotos.push(pair);
+    }
+
+    /// Validates all pending `goto` statements and ensures they point to valid
+    /// targets within the current function scope. On `Err`, returns the
+    /// (label, token) pair of the missing target.
+    fn check_gotos(&self) -> core::result::Result<(), (&'a str, &'a Token)> {
+        for (label, token) in &self.pending_gotos {
+            if !self.labels.contains(label) {
+                return Err((label, token));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -42,16 +158,20 @@ pub enum AST {
     Program(Function),
 }
 
-impl AST {
-    /// Ensures all variables are uniquely identified and checks for additional
-    /// semantic errors.
-    fn resolve_vars(&mut self, ctx: &Context<'_>, resolver: &mut Resolver<'_>) -> Result<()> {
+impl<'a> AST {
+    /// Assigns a unique identifier to every variable and performs semantic
+    /// checks (e.g., duplicate definitions, undeclared references).
+    fn resolve_variables(
+        &mut self,
+        ctx: &Context<'_>,
+        resolver: &mut SymbolResolver,
+    ) -> Result<()> {
         fn resolve_declaration(
             decl: &Declaration,
             ctx: &Context<'_>,
-            resolver: &mut Resolver<'_>,
+            resolver: &mut SymbolResolver,
         ) -> Result<Declaration> {
-            if resolver.map.contains_key(&decl.ident) {
+            if resolver.is_redeclaration(&decl.ident) {
                 let token = &decl.token;
 
                 let tok_str = format!("{token:?}");
@@ -68,13 +188,9 @@ impl AST {
                 ));
             }
 
-            let resolved_ident = resolver.new_tmp(&decl.ident);
-            resolver
-                .map
-                .insert(decl.ident.clone(), resolved_ident.clone());
+            let resolved_ident = resolver.declare_symbol(&decl.ident);
 
             let mut opt_init = None;
-
             if let Some(init) = &decl.init {
                 opt_init = Some(resolve_expression(init, ctx, resolver)?);
             }
@@ -87,9 +203,9 @@ impl AST {
         }
 
         fn resolve_statement(
-            stmt: &Statement,
+            stmt: &mut Statement,
             ctx: &Context<'_>,
-            resolver: &mut Resolver<'_>,
+            resolver: &mut SymbolResolver,
         ) -> Result<Statement> {
             match stmt {
                 Statement::Return(expr) => {
@@ -103,24 +219,35 @@ impl AST {
                     then,
                     opt_else,
                 } => {
-                    let mut resolved_opt_else = None;
+                    let resolved_cond = resolve_expression(cond, ctx, resolver)?;
+                    let resolved_then = Box::new(resolve_statement(then, ctx, resolver)?);
 
+                    let mut resolved_opt_else = None;
                     if let Some(stmt) = opt_else {
                         resolved_opt_else = Some(Box::new(resolve_statement(stmt, ctx, resolver)?));
                     }
 
                     Ok(Statement::If {
-                        cond: resolve_expression(cond, ctx, resolver)?,
-                        then: Box::new(resolve_statement(then, ctx, resolver)?),
+                        cond: resolved_cond,
+                        then: resolved_then,
                         opt_else: resolved_opt_else,
                     })
                 }
-                Statement::Goto(s) => Ok(Statement::Goto(s.clone())),
+                Statement::Goto((target, token)) => {
+                    Ok(Statement::Goto((target.clone(), token.clone())))
+                }
                 Statement::Labeled { label, token, stmt } => Ok(Statement::Labeled {
                     label: label.clone(),
                     token: token.clone(),
                     stmt: Box::new(resolve_statement(stmt, ctx, resolver)?),
                 }),
+                Statement::Compound(block) => {
+                    resolver.scope.enter_scope();
+
+                    resolve_block(block, ctx, resolver)?;
+
+                    Ok(Statement::Compound(std::mem::replace(block, Block(vec![]))))
+                }
                 Statement::Empty => Ok(Statement::Empty),
             }
         }
@@ -128,7 +255,7 @@ impl AST {
         fn resolve_expression(
             expr: &Expression,
             ctx: &Context<'_>,
-            resolver: &mut Resolver<'_>,
+            resolver: &mut SymbolResolver,
         ) -> Result<Expression> {
             match expr {
                 Expression::Assignment {
@@ -162,10 +289,10 @@ impl AST {
                     }
                 },
                 Expression::Var((v, token)) => {
-                    if let Some(ident) = resolver.map.get(v) {
+                    if let Some(ident) = resolver.resolve_symbol(v) {
                         // Use the unique variable identifier mapped from the
-                        // original identifier.
-                        Ok(Expression::Var((ident.clone(), token.clone())))
+                        // original symbol.
+                        Ok(Expression::Var((ident, token.clone())))
                     } else {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -222,46 +349,63 @@ impl AST {
             }
         }
 
-        match self {
-            AST::Program(func) => {
-                for block in &mut func.body {
-                    match block {
-                        Block::Stmt(stmt) => *stmt = resolve_statement(stmt, ctx, resolver)?,
-                        Block::Decl(decl) => *decl = resolve_declaration(decl, ctx, resolver)?,
-                    }
+        fn resolve_block(
+            block: &mut Block,
+            ctx: &Context<'_>,
+            resolver: &mut SymbolResolver,
+        ) -> Result<()> {
+            for block_item in &mut block.0 {
+                match block_item {
+                    BlockItem::Stmt(stmt) => *stmt = resolve_statement(stmt, ctx, resolver)?,
+                    BlockItem::Decl(decl) => *decl = resolve_declaration(decl, ctx, resolver)?,
                 }
             }
+
+            resolver.scope.exit_scope();
+
+            Ok(())
+        }
+
+        match self {
+            AST::Program(func) => resolve_block(&mut func.body, ctx, resolver)?,
         }
 
         Ok(())
     }
 
-    /// Ensures all labels with a function scope are unique and checks for
-    /// additional semantic errors.
-    fn resolve_labels<'a>(&'a self, ctx: &Context<'_>, resolver: &mut Resolver<'a>) -> Result<()> {
+    /// Ensures every label declared is unique within it's function scope
+    /// and performs semantic checks (e.g., missing `goto` targets, unreachable
+    /// labels).
+    fn resolve_labels(&'a self, ctx: &Context<'_>, resolver: &mut LabelResolver<'a>) -> Result<()> {
+        fn resolve_block<'a>(
+            block: &'a Block,
+            ctx: &Context<'_>,
+            resolver: &mut LabelResolver<'a>,
+        ) -> Result<()> {
+            for block_item in &block.0 {
+                if let BlockItem::Stmt(stmt) = block_item {
+                    resolve_statement_labels(stmt, ctx, resolver)?;
+                }
+            }
+
+            Ok(())
+        }
+
         fn resolve_statement_labels<'a>(
             stmt: &'a Statement,
             ctx: &Context<'_>,
-            resolver: &mut Resolver<'a>,
+            resolver: &mut LabelResolver<'a>,
         ) -> Result<()> {
             match stmt {
                 Statement::If { then, opt_else, .. } => {
                     resolve_statement_labels(then, ctx, resolver)?;
+
                     if let Some(else_stmt) = opt_else {
                         resolve_statement_labels(else_stmt, ctx, resolver)?;
                     }
                 }
-                Statement::Goto((lbl, token)) => {
-                    // Store references to the `goto` statement's contents so
-                    // they can be validated after processing labels.
-                    resolver.unresolved.push((lbl.as_str(), token));
-                }
                 Statement::Labeled { label, token, stmt } => {
-                    // Labels live in a different namespace from ordinary
-                    // identifiers (variables, functions, types, etc.)
-                    // within the same function scope, so they are collected
-                    // separately.
-                    if !resolver.labels.insert(label.as_str()) {
+                    if !resolver.mark_label(label) {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());
 
@@ -278,6 +422,8 @@ impl AST {
 
                     resolve_statement_labels(stmt, ctx, resolver)?;
                 }
+                Statement::Compound(block) => resolve_block(block, ctx, resolver)?,
+                Statement::Goto((label, token)) => resolver.mark_goto((label, token)),
                 _ => {}
             }
 
@@ -286,31 +432,25 @@ impl AST {
 
         match self {
             AST::Program(func) => {
-                for block in &func.body {
-                    // Collect and validate all labels within the function in
-                    // the first pass.
-                    if let Block::Stmt(stmt) = block {
-                        resolve_statement_labels(stmt, ctx, resolver)?;
-                    }
-                }
+                // Collect and validate all labels within the function in the
+                // first pass.
+                resolve_block(&func.body, ctx, resolver)?;
 
                 // Second pass ensures all `goto` statements point to a valid
                 // target within the same function scope.
-                for (lbl, token) in &resolver.unresolved {
-                    if !resolver.labels.contains(lbl) {
-                        let tok_str = format!("{token:?}");
-                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+                if let Err((label, token)) = resolver.check_gotos() {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-                        return Err(fmt_token_err!(
-                            token.loc.file_path.display(),
-                            token.loc.line,
-                            token.loc.col,
-                            tok_str,
-                            tok_str.len() - 1,
-                            line_content,
-                            "label '{lbl}' used but not defined",
-                        ));
-                    }
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "label '{label}' used but not defined",
+                    ));
                 }
             }
         }
@@ -333,12 +473,16 @@ pub struct Function {
     /// Function identifier.
     pub ident: Ident,
     /// Compound statement.
-    pub body: Vec<Block>,
+    pub body: Block,
 }
 
 /// _AST_ block.
 #[derive(Debug)]
-pub enum Block {
+pub struct Block(pub Vec<BlockItem>);
+
+/// _AST_ block item.
+#[derive(Debug)]
+pub enum BlockItem {
     Stmt(Statement),
     Decl(Declaration),
 }
@@ -357,11 +501,14 @@ pub enum Statement {
         opt_else: Option<Box<Statement>>,
     },
     Goto((Ident, Token)),
+    // Labeled statement.
     Labeled {
         label: Ident,
         token: Token,
         stmt: Box<Statement>,
     },
+    // Compound statement.
+    Compound(Block),
     // Expression statement without an expression (';').
     Empty,
 }
@@ -571,20 +718,21 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 
     let mut ast = AST::Program(func);
 
-    let mut resolver: Resolver<'_> = Default::default();
-
     // Pass 1 - Variable resolution.
-    ast.resolve_vars(ctx, &mut resolver).unwrap_or_else(|err| {
-        if cfg!(test) {
-            panic!("{err}");
-        }
+    let mut sym_resolver: SymbolResolver = Default::default();
+    ast.resolve_variables(ctx, &mut sym_resolver)
+        .unwrap_or_else(|err| {
+            if cfg!(test) {
+                panic!("{err}");
+            }
 
-        eprintln!("{err}");
-        process::exit(1);
-    });
+            eprintln!("{err}");
+            process::exit(1);
+        });
 
     // Pass 2 - Label/`goto` resolution.
-    ast.resolve_labels(ctx, &mut resolver)
+    let mut lbl_resolver: LabelResolver<'_> = Default::default();
+    ast.resolve_labels(ctx, &mut lbl_resolver)
         .unwrap_or_else(|err| {
             if cfg!(test) {
                 panic!("{err}");
@@ -604,30 +752,18 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
 ) -> Result<Function> {
     // NOTE: Currently only support the `int` type.
     expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
-    let (ident, _token) = parse_ident(ctx, iter)?;
+    let (ident, _) = parse_ident(ctx, iter)?;
 
     expect_token(ctx, iter, TokenType::LParen)?;
+
     // NOTE: Currently not processing function parameters.
     expect_token(ctx, iter, TokenType::Keyword("void".into()))?;
+
     expect_token(ctx, iter, TokenType::RParen)?;
 
-    expect_token(ctx, iter, TokenType::LBrace)?;
+    let block = parse_block(ctx, iter)?;
 
-    let mut body = vec![];
-
-    // Process all block items as the function's body.
-    while let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
-        if let TokenType::RBrace = token.ty {
-            break;
-        }
-
-        let block = parse_block(ctx, iter)?;
-        body.push(block);
-    }
-
-    expect_token(ctx, iter, TokenType::RBrace)?;
-
-    Ok(Function { ident, body })
+    Ok(Function { ident, body: block })
 }
 
 /// Parse an _AST_ block from the provided `Token` iterator.
@@ -635,14 +771,37 @@ fn parse_block<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
 ) -> Result<Block> {
+    expect_token(ctx, iter, TokenType::LBrace)?;
+
+    let mut block = vec![];
+
+    while let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        if let TokenType::RBrace = token.ty {
+            break;
+        }
+
+        let block_item = parse_block_item(ctx, iter)?;
+        block.push(block_item);
+    }
+
+    expect_token(ctx, iter, TokenType::RBrace)?;
+
+    Ok(Block(block))
+}
+
+/// Parse an _AST_ block item from the provided `Token` iterator.
+fn parse_block_item<I: Iterator<Item = Result<Token>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<BlockItem> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
             // Parse this as a declaration (starts with a type).
             TokenType::Keyword(ref s) if s == "int" => {
-                Ok(Block::Decl(parse_declaration(ctx, iter)?))
+                Ok(BlockItem::Decl(parse_declaration(ctx, iter)?))
             }
             // Parse this as a statement.
-            _ => Ok(Block::Stmt(parse_statement(ctx, iter)?)),
+            _ => Ok(BlockItem::Stmt(parse_statement(ctx, iter)?)),
         }
     } else {
         Err(fmt_err!(
@@ -737,6 +896,10 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 // Consume the ";" token.
                 let _ = iter.next();
                 Ok(Statement::Empty)
+            }
+            TokenType::LBrace => {
+                let block = parse_block(ctx, iter)?;
+                Ok(Statement::Compound(block))
             }
             _ => {
                 let expr = parse_expression(ctx, iter, 0)?;

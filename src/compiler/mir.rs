@@ -533,11 +533,11 @@ impl TryFrom<&parser::BinaryOperator> for BinaryOperator {
     }
 }
 
-/// Generate machine intermediate representation (_MIR_), given an intermediate
-/// representation (_IR_). [Exits] on error with non-zero status.
+/// Generate _x86-64_ machine intermediate representation (_MIR_), given an
+/// intermediate representation (_IR_). [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn generate_mir(ir: &IR) -> MIRX86 {
+pub fn generate_x86_64_mir(ir: &IR) -> MIRX86 {
     match ir {
         IR::Program(func) => {
             let mir_func = generate_mir_function(func);

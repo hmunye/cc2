@@ -7,5 +7,4 @@ pub mod lexer;
 pub mod mir;
 pub mod parser;
 
-/// A convenience wrapper for `Result<Token, String>`.
 pub type Result<T> = std::result::Result<T, String>;
