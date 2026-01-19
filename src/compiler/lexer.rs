@@ -372,7 +372,7 @@ impl<'a> Lexer<'a> {
 
     /// Skips over all consecutive _ASCII_ whitespace characters.
     const fn consume_whitespace(&mut self) {
-        while self.has_next() && self.first().is_ascii_whitespace() {
+        while self.has_next() && matches!(self.first(), b'\t' | b'\x0C' | b'\r' | b' ') {
             self.cur += 1;
         }
     }
