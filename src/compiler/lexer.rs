@@ -446,7 +446,7 @@ impl Iterator for Lexer<'_> {
 
             match self.first() {
                 b'\n' => self.consume_newline(),
-                b if b.is_ascii_whitespace() => self.consume_whitespace(),
+                b'\t' | b'\x0C' | b'\r' | b' ' => self.consume_whitespace(),
                 b'0'..=b'9' => return Some(self.consume_constant()),
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' => return Some(self.consume_ident()),
                 b'~' => {

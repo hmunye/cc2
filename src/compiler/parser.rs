@@ -167,10 +167,10 @@ impl<'a> AST {
         resolver: &mut SymbolResolver,
     ) -> Result<()> {
         fn resolve_declaration(
-            decl: &Declaration,
+            decl: &mut Declaration,
             ctx: &Context<'_>,
             resolver: &mut SymbolResolver,
-        ) -> Result<Declaration> {
+        ) -> Result<()> {
             if resolver.is_redeclaration(&decl.ident) {
                 let token = &decl.token;
 
@@ -189,74 +189,52 @@ impl<'a> AST {
             }
 
             let resolved_ident = resolver.declare_symbol(&decl.ident);
+            decl.ident = resolved_ident;
 
-            let mut opt_init = None;
-            if let Some(init) = &decl.init {
-                opt_init = Some(resolve_expression(init, ctx, resolver)?);
+            if let Some(init) = &mut decl.init {
+                resolve_expression(init, ctx, resolver)?;
             }
 
-            Ok(Declaration {
-                ident: resolved_ident,
-                token: decl.token.clone(),
-                init: opt_init,
-            })
+            Ok(())
         }
 
         fn resolve_statement(
             stmt: &mut Statement,
             ctx: &Context<'_>,
             resolver: &mut SymbolResolver,
-        ) -> Result<Statement> {
+        ) -> Result<()> {
             match stmt {
-                Statement::Return(expr) => {
-                    Ok(Statement::Return(resolve_expression(expr, ctx, resolver)?))
-                }
-                Statement::Expression(expr) => Ok(Statement::Expression(resolve_expression(
-                    expr, ctx, resolver,
-                )?)),
+                Statement::Return(expr) => resolve_expression(expr, ctx, resolver),
+                Statement::Expression(expr) => resolve_expression(expr, ctx, resolver),
                 Statement::If {
                     cond,
                     then,
                     opt_else,
                 } => {
-                    let resolved_cond = resolve_expression(cond, ctx, resolver)?;
-                    let resolved_then = Box::new(resolve_statement(then, ctx, resolver)?);
+                    resolve_expression(cond, ctx, resolver)?;
+                    resolve_statement(then, ctx, resolver)?;
 
-                    let mut resolved_opt_else = None;
                     if let Some(stmt) = opt_else {
-                        resolved_opt_else = Some(Box::new(resolve_statement(stmt, ctx, resolver)?));
+                        resolve_statement(stmt, ctx, resolver)?;
                     }
 
-                    Ok(Statement::If {
-                        cond: resolved_cond,
-                        then: resolved_then,
-                        opt_else: resolved_opt_else,
-                    })
+                    Ok(())
                 }
-                Statement::Goto((target, token)) => {
-                    Ok(Statement::Goto((target.clone(), token.clone())))
-                }
-                Statement::Labeled { label, token, stmt } => Ok(Statement::Labeled {
-                    label: label.clone(),
-                    token: token.clone(),
-                    stmt: Box::new(resolve_statement(stmt, ctx, resolver)?),
-                }),
+                Statement::Labeled { stmt, .. } => resolve_statement(stmt, ctx, resolver),
                 Statement::Compound(block) => {
                     resolver.scope.enter_scope();
-
-                    resolve_block(block, ctx, resolver)?;
-
-                    Ok(Statement::Compound(std::mem::replace(block, Block(vec![]))))
+                    resolve_block(block, ctx, resolver)
                 }
-                Statement::Empty => Ok(Statement::Empty),
+                Statement::Goto(_) => Ok(()),
+                Statement::Empty => Ok(()),
             }
         }
 
         fn resolve_expression(
-            expr: &Expression,
+            expr: &mut Expression,
             ctx: &Context<'_>,
             resolver: &mut SymbolResolver,
-        ) -> Result<Expression> {
+        ) -> Result<()> {
             match expr {
                 Expression::Assignment {
                     lvalue,
@@ -264,14 +242,8 @@ impl<'a> AST {
                     token,
                 } => match **lvalue {
                     Expression::Var(_) => {
-                        let lvalue = resolve_expression(lvalue, ctx, resolver)?;
-                        let rvalue = resolve_expression(rvalue, ctx, resolver)?;
-
-                        Ok(Expression::Assignment {
-                            lvalue: Box::new(lvalue),
-                            rvalue: Box::new(rvalue),
-                            token: token.clone(),
-                        })
+                        resolve_expression(lvalue, ctx, resolver)?;
+                        resolve_expression(rvalue, ctx, resolver)
                     }
                     _ => {
                         let tok_str = format!("{token:?}");
@@ -292,7 +264,8 @@ impl<'a> AST {
                     if let Some(ident) = resolver.resolve_symbol(v) {
                         // Use the unique variable identifier mapped from the
                         // original symbol.
-                        Ok(Expression::Var((ident, token.clone())))
+                        *v = ident;
+                        Ok(())
                     } else {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -308,44 +281,17 @@ impl<'a> AST {
                         ))
                     }
                 }
-                Expression::IntConstant(i) => Ok(Expression::IntConstant(*i)),
-                Expression::Unary {
-                    op,
-                    expr,
-                    sign,
-                    prefix,
-                } => {
-                    let expr = resolve_expression(expr, ctx, resolver)?;
-
-                    Ok(Expression::Unary {
-                        op: *op,
-                        expr: Box::new(expr),
-                        sign: *sign,
-                        prefix: *prefix,
-                    })
-                }
-                Expression::Binary { op, lhs, rhs, sign } => {
-                    let lhs = resolve_expression(lhs, ctx, resolver)?;
-                    let rhs = resolve_expression(rhs, ctx, resolver)?;
-
-                    Ok(Expression::Binary {
-                        op: *op,
-                        lhs: Box::new(lhs),
-                        rhs: Box::new(rhs),
-                        sign: *sign,
-                    })
+                Expression::Unary { expr, .. } => resolve_expression(expr, ctx, resolver),
+                Expression::Binary { lhs, rhs, .. } => {
+                    resolve_expression(lhs, ctx, resolver)?;
+                    resolve_expression(rhs, ctx, resolver)
                 }
                 Expression::Conditional(lhs, mid, rhs) => {
-                    let lhs = resolve_expression(lhs, ctx, resolver)?;
-                    let mid = resolve_expression(mid, ctx, resolver)?;
-                    let rhs = resolve_expression(rhs, ctx, resolver)?;
-
-                    Ok(Expression::Conditional(
-                        Box::new(lhs),
-                        Box::new(mid),
-                        Box::new(rhs),
-                    ))
+                    resolve_expression(lhs, ctx, resolver)?;
+                    resolve_expression(mid, ctx, resolver)?;
+                    resolve_expression(rhs, ctx, resolver)
                 }
+                Expression::IntConstant(_) => Ok(()),
             }
         }
 
@@ -356,8 +302,8 @@ impl<'a> AST {
         ) -> Result<()> {
             for block_item in &mut block.0 {
                 match block_item {
-                    BlockItem::Stmt(stmt) => *stmt = resolve_statement(stmt, ctx, resolver)?,
-                    BlockItem::Decl(decl) => *decl = resolve_declaration(decl, ctx, resolver)?,
+                    BlockItem::Stmt(stmt) => resolve_statement(stmt, ctx, resolver)?,
+                    BlockItem::Decl(decl) => resolve_declaration(decl, ctx, resolver)?,
                 }
             }
 

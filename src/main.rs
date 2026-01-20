@@ -1,4 +1,4 @@
-//! Tiny C Compiler (cc2)
+//! Tiny C Compiler (subset of _C17_).
 
 #![warn(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
