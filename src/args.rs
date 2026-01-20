@@ -131,17 +131,17 @@ struct Flag {
 const FLAG_REGISTRY: &[Flag] = &[
     Flag {
         names: ["-s", "--stage"],
-        description: "          stop after the specified compilation phase: 'lex', 'parse', 'ir', 'mir', or 'asm'.",
+        description: "          stop after the specified compilation phase and display its output: 'lex', 'parse', 'ir', 'mir', or 'asm'.",
         run: None,
     },
     Flag {
         names: ["-o", "--output"],
-        description: "         specify the output file. defaults to input path with '.s' extension.",
+        description: "         specify the output file. defaults to the input filename with '.s' extension.",
         run: None,
     },
     Flag {
         names: ["-p", "--preprocess"],
-        description: "     runs the GCC preprocessor (cpp) on the input file.",
+        description: "     run the GCC preprocessor (cpp) on the input file prior to compiling.",
         run: None,
     },
     Flag {
