@@ -37,18 +37,14 @@ fn main() {
     let mut f = if args.preprocess {
         preprocess_input(&args)
     } else {
-        fs::File::options()
-            .read(true)
-            .write(true)
-            .open(args.in_path)
-            .unwrap_or_else(|err| {
-                report_err!(
-                    &args.program,
-                    "failed to open input file '{}': {err}",
-                    args.in_path.display()
-                );
-                process::exit(1);
-            })
+        fs::File::open(args.in_path).unwrap_or_else(|err| {
+            report_err!(
+                &args.program,
+                "failed to open input file '{}': {err}",
+                args.in_path.display()
+            );
+            process::exit(1);
+        })
     };
 
     let metadata = f.metadata().unwrap_or_else(|err| {
@@ -79,7 +75,7 @@ fn main() {
         }
         "parse" => {
             let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
-            println!("{ast:#?}");
+            print!("{ast}");
         }
         "ir" => {
             let ast = compiler::parser::parse_program(&ctx, lexer.peekable());

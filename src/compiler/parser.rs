@@ -124,11 +124,10 @@ impl<'a> LabelResolver<'a> {
     /// scope and records it as seen.
     #[inline]
     fn mark_label(&mut self, label: &'a str) -> bool {
-        // Labels live in a different namespace from ordinary
-        // identifiers (variables, functions, types, etc.)
-        // within the same function scope, so they are collected
-        // separately.
-        !self.labels.insert(label)
+        // Labels live in a different namespace from ordinary identifiers
+        // (variables, functions, types, etc.) within the same function scope,
+        // so they are collected separately.
+        self.labels.insert(label)
     }
 
     /// Records a `goto` statement's contents so they can be validated after
@@ -153,6 +152,7 @@ impl<'a> LabelResolver<'a> {
 }
 
 /// Abstract Syntax Tree (_AST_).
+#[derive(Debug)]
 pub enum AST {
     /// Function that represent the structure of the program.
     Program(Function),
@@ -459,10 +459,13 @@ impl<'a> AST {
     }
 }
 
-impl fmt::Debug for AST {
+impl fmt::Display for AST {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Program(func) => f.debug_tuple("AST Program").field(func).finish(),
+            AST::Program(func) => {
+                writeln!(f, "AST Program")?;
+                func.fmt_with_indent(f, 2)
+            }
         }
     }
 }
@@ -476,15 +479,51 @@ pub struct Function {
     pub body: Block,
 }
 
+impl Function {
+    fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        let pad = "  ".repeat(indent);
+
+        writeln!(f, "{}Fn({:?})", pad, self.ident)?;
+        self.body.fmt_with_indent(f, indent + 2)
+    }
+}
+
 /// _AST_ block.
 #[derive(Debug)]
 pub struct Block(pub Vec<BlockItem>);
+
+impl Block {
+    fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        let pad = "  ".repeat(indent);
+
+        writeln!(f, "{}Block {{", pad)?;
+
+        for item in &self.0 {
+            item.fmt_with_indent(f, indent + 2)?;
+        }
+
+        writeln!(f, "{}}}", pad)
+    }
+}
 
 /// _AST_ block item.
 #[derive(Debug)]
 pub enum BlockItem {
     Stmt(Statement),
     Decl(Declaration),
+}
+
+impl BlockItem {
+    fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        let pad = "  ".repeat(indent);
+
+        match self {
+            BlockItem::Decl(decl) => {
+                writeln!(f, "{}Decl: {}", pad, decl)
+            }
+            BlockItem::Stmt(stmt) => stmt.fmt_with_indent(f, indent),
+        }
+    }
 }
 
 /// _AST_ statement.
@@ -513,6 +552,48 @@ pub enum Statement {
     Empty,
 }
 
+impl Statement {
+    fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        let pad = "  ".repeat(indent);
+
+        match self {
+            Statement::Return(expr) => {
+                writeln!(f, "{}Return {}", pad, expr)
+            }
+            Statement::Expression(expr) => {
+                writeln!(f, "{}Expr: {}", pad, expr)
+            }
+            Statement::If {
+                cond,
+                then,
+                opt_else,
+            } => {
+                writeln!(f, "{}If ({})", pad, cond)?;
+                writeln!(f, "{}Then:", pad)?;
+                then.fmt_with_indent(f, indent + 2)?;
+
+                if let Some(else_stmt) = opt_else {
+                    writeln!(f, "{}Else:", pad)?;
+                    else_stmt.fmt_with_indent(f, indent + 2)?;
+                }
+
+                Ok(())
+            }
+            Statement::Goto((ident, _)) => {
+                writeln!(f, "{}Goto {:?}", pad, ident)
+            }
+            Statement::Labeled { label, stmt, .. } => {
+                writeln!(f, "{}Label {:?}:", pad, label)?;
+                stmt.fmt_with_indent(f, indent + 2)
+            }
+            Statement::Compound(block) => block.fmt_with_indent(f, indent),
+            Statement::Empty => {
+                writeln!(f, "{}Empty \";\"", pad)
+            }
+        }
+    }
+}
+
 /// _AST_ declaration.
 #[derive(Debug)]
 pub struct Declaration {
@@ -522,6 +603,15 @@ pub struct Declaration {
     pub token: Token,
     /// Optional initializer.
     pub init: Option<Expression>,
+}
+
+impl fmt::Display for Declaration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.init {
+            Some(expr) => write!(f, "{:?} = {}", self.ident, expr),
+            None => write!(f, "{} = uninit", self.ident),
+        }
+    }
 }
 
 /// _AST_ expression.
@@ -556,6 +646,33 @@ pub enum Expression {
     Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
 }
 
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expression::IntConstant(i) => write!(f, "IntConstant({})", i),
+            Expression::Var((ident, _)) => write!(f, "Var({:?})", ident),
+            Expression::Unary {
+                op, expr, prefix, ..
+            } => {
+                if *prefix {
+                    write!(f, "{}{}", op, expr)
+                } else {
+                    write!(f, "{}{}", expr, op)
+                }
+            }
+            Expression::Binary { op, lhs, rhs, .. } => {
+                write!(f, "{} {} {}", lhs, op, rhs)
+            }
+            Expression::Assignment { lvalue, rvalue, .. } => {
+                write!(f, "{} = {}", lvalue, rvalue)
+            }
+            Expression::Conditional(lhs, mid, rhs) => {
+                write!(f, "{} ? {} : {}", lhs, mid, rhs)
+            }
+        }
+    }
+}
+
 /// _AST_ unary operators.
 #[derive(Debug, Clone, Copy)]
 pub enum UnaryOperator {
@@ -569,6 +686,19 @@ pub enum UnaryOperator {
     Increment,
     /// `--` - unary operator (postfix or prefix).
     Decrement,
+}
+
+impl fmt::Display for UnaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let op = match self {
+            UnaryOperator::Complement => "~",
+            UnaryOperator::Negate => "-",
+            UnaryOperator::Not => "!",
+            UnaryOperator::Increment => "++",
+            UnaryOperator::Decrement => "--",
+        };
+        write!(f, "{op}")
+    }
 }
 
 /// _AST_ binary operators.
@@ -680,6 +810,51 @@ impl BinaryOperator {
             // _C17_ 6.5.5 (multiplicative-expression)
             BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => 14,
         }
+    }
+}
+
+impl fmt::Display for BinaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let op = match self {
+            BinaryOperator::Add => "+",
+            BinaryOperator::Subtract => "-",
+            BinaryOperator::Multiply => "*",
+            BinaryOperator::Divide => "/",
+            BinaryOperator::Modulo => "%",
+
+            BinaryOperator::BitAnd => "&",
+            BinaryOperator::BitOr => "|",
+            BinaryOperator::BitXor => "^",
+
+            BinaryOperator::ShiftLeft => "<<",
+            BinaryOperator::ShiftRight => ">>",
+
+            BinaryOperator::LogAnd => "&&",
+            BinaryOperator::LogOr => "||",
+
+            BinaryOperator::Eq => "==",
+            BinaryOperator::NotEq => "!=",
+            BinaryOperator::OrdLess => "<",
+            BinaryOperator::OrdLessEq => "<=",
+            BinaryOperator::OrdGreater => ">",
+            BinaryOperator::OrdGreaterEq => ">=",
+
+            BinaryOperator::Assign => "=",
+            BinaryOperator::AssignAdd => "+=",
+            BinaryOperator::AssignSubtract => "-=",
+            BinaryOperator::AssignMultiply => "*=",
+            BinaryOperator::AssignDivide => "/=",
+            BinaryOperator::AssignModulo => "%=",
+
+            BinaryOperator::AssignBitAnd => "&=",
+            BinaryOperator::AssignBitOr => "|=",
+            BinaryOperator::AssignBitXor => "^=",
+            BinaryOperator::AssignShiftLeft => "<<=",
+            BinaryOperator::AssignShiftRight => ">>=",
+
+            BinaryOperator::Conditional => "?",
+        };
+        write!(f, "{op}")
     }
 }
 
