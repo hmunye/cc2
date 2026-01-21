@@ -138,7 +138,6 @@ fn preprocess_input(args: &args::Args) -> fs::File {
 
     let output = process::Command::new("gcc")
         .arg("-E") // Run only the preprocessor (cpp).
-        .arg("-P") // Omit linemarkers.
         .arg(args.in_path)
         .arg("-o")
         .arg(tmp_path)

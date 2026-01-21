@@ -839,7 +839,7 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 
     let mut ast = AST::Program(func);
 
-    // Pass 1 - Variable resolution.
+    // Pass 1 - Symbol resolution.
     let mut sym_resolver: SymbolResolver = Default::default();
     ast.resolve_variables(ctx, &mut sym_resolver)
         .unwrap_or_else(|err| {

@@ -777,6 +777,57 @@ impl Iterator for Lexer<'_> {
                         loc: self.token_loc(col),
                     }));
                 }
+                // Handle line directives from preprocessor (`gcc -E`).
+                //
+                // ```
+                //     # <decimal-line> [ "<filename>" ] [ <decimal-flag>... ]
+                // ```
+                b'#' => {
+                    self.cur += 1;
+
+                    self.consume_whitespace();
+
+                    let line_token = match self.consume_constant() {
+                        Ok(token) => token,
+                        Err(err) => return Some(Err(err)),
+                    };
+
+                    // Parse <decimal-line>.
+                    let line = match line_token.ty {
+                        TokenType::IntConstant(l) => l,
+                        _ => unreachable!(),
+                    };
+
+                    debug_assert!(line >= 0);
+
+                    // Part of the preprocessor prologue - skip it.
+                    if line == 0 {
+                        while self.has_next() && self.first() != b'\n' {
+                            self.cur += 1;
+                        }
+
+                        self.consume_newline();
+                        continue;
+                    }
+
+                    // Accounts for the newline consumed later.
+                    self.line = (line - 1) as usize;
+
+                    // NOTE: Once string literals are supported, use that
+                    // function for parsing [ "<filename>" ].
+
+                    // self.consume_whitespace();
+
+                    // NOTE: Currently don't parse [ <decimal-flag>... ].
+
+                    // self.consume_whitespace();
+
+                    while self.has_next() && self.first() != b'\n' {
+                        self.cur += 1;
+                    }
+
+                    self.consume_newline();
+                }
                 b => {
                     self.cur += 1;
 
@@ -807,7 +858,10 @@ impl fmt::Display for Lexer<'_> {
         for token in lexer {
             match token {
                 Ok(token) => writeln!(f, "{token}")?,
-                Err(err) => writeln!(f, "\n{}\n", err)?,
+                Err(err) => {
+                    writeln!(f, "{err}")?;
+                    std::process::exit(1);
+                }
             }
         }
 
