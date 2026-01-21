@@ -10,7 +10,9 @@ use crate::compiler::Result;
 use crate::{Context, fmt_token_err};
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
-const KEYWORDS: [&str; 6] = ["int", "void", "return", "if", "else", "goto"];
+const KEYWORDS: [&str; 11] = [
+    "int", "void", "return", "if", "else", "goto", "do", "while", "for", "break", "continue",
+];
 
 /// Operator symbols that can be emitted.
 #[derive(Clone, Copy, PartialEq, Eq)]
