@@ -257,21 +257,23 @@ fn generate_ir_function(func: &parser::Function) -> Function {
         for block_item in &block.0 {
             match block_item {
                 parser::BlockItem::Stmt(stmt) => process_ast_statement(stmt, builder),
-                parser::BlockItem::Decl(decl) => {
-                    if let Some(init) = &decl.init {
-                        // Generate and append any instructions needed to encode the
-                        // declaration's initializer.
-                        let ir_val = generate_ir_value(init, builder);
-
-                        // Ensure the initializer expression result is copied to the
-                        // destination.
-                        builder.instructions.push(Instruction::Copy {
-                            src: ir_val,
-                            dst: Value::Var(decl.ident.clone()),
-                        });
-                    }
-                }
+                parser::BlockItem::Decl(decl) => process_ast_declaration(decl, builder),
             }
+        }
+    }
+
+    fn process_ast_declaration(decl: &parser::Declaration, builder: &mut TACBuilder<'_>) {
+        if let Some(init) = &decl.init {
+            // Generate and append any instructions needed to encode the
+            // declaration's initializer.
+            let ir_val = generate_ir_value(init, builder);
+
+            // Ensure the initializer expression result is copied to the
+            // destination.
+            builder.instructions.push(Instruction::Copy {
+                src: ir_val,
+                dst: Value::Var(decl.ident.clone()),
+            });
         }
     }
 
@@ -335,8 +337,123 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                 process_ast_statement(stmt, builder);
             }
             parser::Statement::Compound(block) => process_ast_block(block, builder),
+            parser::Statement::Break((label, _)) => {
+                builder
+                    .instructions
+                    .push(Instruction::Jump(format!("break_{label}")));
+            }
+            parser::Statement::Continue((label, _)) => {
+                builder
+                    .instructions
+                    .push(Instruction::Jump(format!("cont_{label}")));
+            }
+            parser::Statement::Do { stmt, cond, label } => {
+                let start_label = builder.new_label("do.start");
+                let cont_label = format!("cont_{label}");
+                let break_label = format!("break_{label}");
+
+                builder
+                    .instructions
+                    .push(Instruction::Label(start_label.clone()));
+
+                // Handle appending instructions for statements recursively.
+                process_ast_statement(stmt, builder);
+
+                // Always emitting labels for `continue` statements.
+                builder.instructions.push(Instruction::Label(cont_label));
+
+                let cond = generate_ir_value(cond, builder);
+
+                builder.instructions.push(Instruction::JumpIfNotZero {
+                    cond,
+                    target: start_label,
+                });
+
+                // Always emitting labels for `break` statements.
+                builder.instructions.push(Instruction::Label(break_label));
+            }
+            parser::Statement::While { cond, stmt, label } => {
+                let cont_label = format!("cont_{label}");
+                let break_label = format!("break_{label}");
+
+                // Always emitting labels for `continue` statements.
+                builder
+                    .instructions
+                    .push(Instruction::Label(cont_label.clone()));
+
+                let cond = generate_ir_value(cond, builder);
+
+                builder.instructions.push(Instruction::JumpIfZero {
+                    cond,
+                    target: break_label.clone(),
+                });
+
+                // Handle appending instructions for statements recursively.
+                process_ast_statement(stmt, builder);
+
+                builder.instructions.push(Instruction::Jump(cont_label));
+
+                // Always emitting labels for `break` statements.
+                builder.instructions.push(Instruction::Label(break_label));
+            }
+            parser::Statement::For {
+                init,
+                opt_cond,
+                opt_post,
+                stmt,
+                label,
+            } => {
+                match &**init {
+                    parser::ForInit::Decl(decl) => process_ast_declaration(decl, builder),
+                    parser::ForInit::Expr(opt_expr) => {
+                        if let Some(expr) = opt_expr {
+                            // Generate and append any instructions needed to
+                            // encode the expression.
+                            let _ = generate_ir_value(expr, builder);
+                        }
+                    }
+                }
+
+                let start_label = builder.new_label("for.start");
+                let cont_label = format!("cont_{label}");
+                let break_label = format!("break_{label}");
+
+                builder
+                    .instructions
+                    .push(Instruction::Label(start_label.clone()));
+
+                // _C17_ 6.8.5.3 (The for statement)
+                //
+                // An omitted expression-2 is replaced by a nonzero constant.
+                //
+                // This is essentially the same as not including the jump
+                // instruction at all, since a nonzero constant would never
+                // equal zero.
+                if let Some(cond) = opt_cond {
+                    let cond = generate_ir_value(cond, builder);
+
+                    builder.instructions.push(Instruction::JumpIfZero {
+                        cond,
+                        target: break_label.clone(),
+                    });
+                }
+
+                // Handle appending instructions for statements recursively.
+                process_ast_statement(stmt, builder);
+
+                // Always emitting labels for `continue` statements.
+                builder.instructions.push(Instruction::Label(cont_label));
+
+                if let Some(post) = opt_post {
+                    // Generate and append any instructions needed to encode the
+                    // expression.
+                    let _ = generate_ir_value(post, builder);
+                }
+
+                builder.instructions.push(Instruction::Jump(start_label));
+                builder.instructions.push(Instruction::Label(break_label));
+            }
             parser::Statement::Empty => {}
-            _ => todo!(),
         }
     }
 
@@ -351,10 +468,16 @@ fn generate_ir_function(func: &parser::Function) -> Function {
 
     process_ast_block(&func.body, &mut builder);
 
-    // According to the _C_ language standard, the "main" function without a
-    // return statement implicitly returns 0. For other functions that declare a
-    // return type but have no return statement, the use of that return value by
-    // the caller is undefined behavior.
+    // _C17_ 5.1.2.2.3 (Program termination)
+    //
+    // For the `main` function only, reaching the closing `}` implicitly returns
+    // 0.
+    //
+    // _C17_ 6.9.1 (Function definitions)
+    //
+    // Unless otherwise specified, if the `}` that terminates a function is
+    // reached, and the value of the function call is used by the caller, the
+    // behavior is undefined.
     //
     // As a hack, just appending an extra `Instruction::Return` handles the edge
     // cases of the return value being used by the caller or ignored (no

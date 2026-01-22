@@ -746,10 +746,10 @@ impl Statement {
             }
             Statement::Compound(block) => block.fmt_with_indent(f, indent),
             Statement::Break((label, _)) => {
-                writeln!(f, "{}Break {:?}", pad, label)
+                writeln!(f, "{}Break <label {label:?}>", pad)
             }
             Statement::Continue((label, _)) => {
-                writeln!(f, "{}Continue {:?}", pad, label)
+                writeln!(f, "{}Continue <label {label:?}>", pad)
             }
             Statement::While { cond, stmt, label } => {
                 writeln!(f, "{}While <label {label:?}> ({})", pad, cond)?;

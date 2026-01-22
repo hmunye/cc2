@@ -21,9 +21,11 @@ Tiny C Compiler (subset of _C17_).
 
 - [x] `return`
 - [x] Expression statements
-- [x] `if / else`
+- [x] `if` / `else`
 - [x] `goto`/labeled statements
 - [x] Compound statements (`{ ... }`)
+- [x] `for` / `do` / `while`
+- [x] `break` / `continue`
 - [x] Empty statements (`;`)
 
 ### Expressions
