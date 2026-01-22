@@ -336,6 +336,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
             }
             parser::Statement::Compound(block) => process_ast_block(block, builder),
             parser::Statement::Empty => {}
+            _ => todo!(),
         }
     }
 

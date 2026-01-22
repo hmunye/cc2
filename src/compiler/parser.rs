@@ -57,7 +57,7 @@ impl SymbolResolver {
     /// Returns a new temporary variable identifier, appending the current
     /// scope to the provided prefix.
     #[inline]
-    fn new_tmp(&mut self, prefix: &str) -> Ident {
+    fn new_tmp(&self, prefix: &str) -> Ident {
         // The `@` in variable identifiers guarantees they won’t conflict
         // with user-defined identifiers, since the _C_ standard forbids `@` in
         // identifiers.
@@ -151,6 +151,47 @@ impl<'a> LabelResolver<'a> {
     }
 }
 
+/// Helper for _AST_ to uniquely label loop statements and perform semantic
+/// analysis.
+#[derive(Default)]
+struct LoopResolver<'a> {
+    loop_labels: Vec<&'a str>,
+    label_count: usize,
+}
+
+impl<'a> LoopResolver<'a> {
+    /// Returns a new unique label identifier.
+    #[inline]
+    fn new_label(&mut self) -> Ident {
+        // The `.` in variable identifiers guarantees they won’t conflict
+        // with user-defined identifiers, since the _C_ standard forbids `.` in
+        // identifiers.
+        let label = format!("loop.{}", self.label_count);
+        self.label_count += 1;
+        label
+    }
+
+    /// Marks the start of a new loop using the given `label`, so that any
+    /// `break` or `continue` statements inside it can be correctly resolved.
+    #[inline]
+    fn enter_loop(&mut self, loop_label: &'a str) {
+        self.loop_labels.push(loop_label);
+    }
+
+    /// Marks the end of the current loop, removing the most recent loop context
+    /// so that `break` and `continue` statements no longer refer to it.
+    #[inline]
+    fn exit_loop(&mut self) {
+        self.loop_labels.pop();
+    }
+
+    /// Returns the current loop label, or `None` if no loop context is active.
+    #[inline]
+    fn current_label(&self) -> Option<&'a &str> {
+        self.loop_labels.last()
+    }
+}
+
 /// Abstract Syntax Tree (_AST_).
 #[derive(Debug)]
 pub enum AST {
@@ -225,7 +266,59 @@ impl<'a> AST {
                     resolver.scope.enter_scope();
                     resolve_block(block, ctx, resolver)
                 }
+                Statement::While { cond, stmt, .. } => {
+                    resolve_expression(cond, ctx, resolver)?;
+                    resolve_statement(stmt, ctx, resolver)
+                }
+                Statement::Do { stmt, cond, .. } => {
+                    resolve_statement(stmt, ctx, resolver)?;
+                    resolve_expression(cond, ctx, resolver)
+                }
+                Statement::For {
+                    init,
+                    opt_cond,
+                    opt_post,
+                    stmt,
+                    ..
+                } => {
+                    let enter_scope = matches!(&**init, ForInit::Decl(_));
+
+                    // New scope introduced enclosing for-loop header and body.
+                    if enter_scope {
+                        resolver.scope.enter_scope();
+                    }
+
+                    match &mut **init {
+                        ForInit::Decl(decl) => {
+                            resolve_declaration(decl, ctx, resolver)?;
+                        }
+                        // No new scope introduced - use current scope.
+                        ForInit::Expr(opt_init) => {
+                            if let Some(init) = opt_init {
+                                resolve_expression(init, ctx, resolver)?;
+                            }
+                        }
+                    }
+
+                    if let Some(cond) = opt_cond {
+                        resolve_expression(cond, ctx, resolver)?;
+                    }
+
+                    if let Some(post) = opt_post {
+                        resolve_expression(post, ctx, resolver)?;
+                    }
+
+                    resolve_statement(stmt, ctx, resolver)?;
+
+                    if enter_scope {
+                        resolver.scope.exit_scope();
+                    }
+
+                    Ok(())
+                }
                 Statement::Goto(_) => Ok(()),
+                Statement::Break(_) => Ok(()),
+                Statement::Continue(_) => Ok(()),
                 Statement::Empty => Ok(()),
             }
         }
@@ -350,6 +443,7 @@ impl<'a> AST {
                         resolve_statement_labels(else_stmt, ctx, resolver)?;
                     }
                 }
+                Statement::Goto((label, token)) => resolver.mark_goto((label, token)),
                 Statement::Labeled { label, token, stmt } => {
                     if !resolver.mark_label(label) {
                         let tok_str = format!("{token:?}");
@@ -368,9 +462,17 @@ impl<'a> AST {
 
                     resolve_statement_labels(stmt, ctx, resolver)?;
                 }
+                Statement::While { stmt, .. }
+                | Statement::Do { stmt, .. }
+                | Statement::For { stmt, .. } => {
+                    resolve_statement_labels(stmt, ctx, resolver)?;
+                }
                 Statement::Compound(block) => resolve_block(block, ctx, resolver)?,
-                Statement::Goto((label, token)) => resolver.mark_goto((label, token)),
-                _ => {}
+                Statement::Return(_)
+                | Statement::Expression(_)
+                | Statement::Break(_)
+                | Statement::Continue(_)
+                | Statement::Empty => {}
             }
 
             Ok(())
@@ -402,6 +504,89 @@ impl<'a> AST {
         }
 
         Ok(())
+    }
+
+    /// Assigns unique labels to each loop statement (`for`, `do`, `while`) and
+    /// associated `break`/`continue` statement, as well as performing semantic
+    /// checks.
+    fn resolve_loop_labels(
+        &'a mut self,
+        ctx: &Context<'_>,
+        resolver: &mut LoopResolver<'a>,
+    ) -> Result<()> {
+        fn resolve_block<'a>(
+            block: &'a mut Block,
+            ctx: &Context<'_>,
+            resolver: &mut LoopResolver<'a>,
+        ) -> Result<()> {
+            for block_item in &mut block.0 {
+                if let BlockItem::Stmt(stmt) = block_item {
+                    resolve_loop_statement(stmt, ctx, resolver)?;
+                }
+            }
+
+            Ok(())
+        }
+
+        fn resolve_loop_statement<'a>(
+            stmt: &'a mut Statement,
+            ctx: &Context<'_>,
+            resolver: &mut LoopResolver<'a>,
+        ) -> Result<()> {
+            match stmt {
+                Statement::Break((label, token)) | Statement::Continue((label, token)) => {
+                    if let Some(loop_label) = resolver.current_label() {
+                        *label = loop_label.to_string();
+                    } else {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                        return Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "{tok_str} statement not within loop or switch"
+                        ));
+                    }
+                }
+                Statement::While { stmt, label, .. }
+                | Statement::Do { stmt, label, .. }
+                | Statement::For { stmt, label, .. } => {
+                    *label = resolver.new_label();
+
+                    resolver.enter_loop(label);
+
+                    resolve_loop_statement(stmt, ctx, resolver)?;
+
+                    resolver.exit_loop();
+                }
+                Statement::If { then, opt_else, .. } => {
+                    resolve_loop_statement(then, ctx, resolver)?;
+                    if let Some(else_stmt) = opt_else {
+                        resolve_loop_statement(else_stmt, ctx, resolver)?;
+                    }
+                }
+                Statement::Labeled { stmt, .. } => {
+                    resolve_loop_statement(stmt, ctx, resolver)?;
+                }
+                Statement::Compound(block) => {
+                    resolve_block(block, ctx, resolver)?;
+                }
+                Statement::Return(_)
+                | Statement::Expression(_)
+                | Statement::Goto(_)
+                | Statement::Empty => {}
+            }
+
+            Ok(())
+        }
+
+        match self {
+            AST::Program(func) => resolve_block(&mut func.body, ctx, resolver),
+        }
     }
 }
 
@@ -472,6 +657,13 @@ impl BlockItem {
     }
 }
 
+/// _AST_ `for` statement initial clause.
+#[derive(Debug)]
+pub enum ForInit {
+    Decl(Declaration),
+    Expr(Option<Expression>),
+}
+
 /// _AST_ statement.
 #[derive(Debug)]
 pub enum Statement {
@@ -494,6 +686,26 @@ pub enum Statement {
     },
     // Compound statement.
     Compound(Block),
+    Break((Ident, Token)),
+    Continue((Ident, Token)),
+    While {
+        cond: Expression,
+        stmt: Box<Statement>,
+        label: Ident,
+    },
+    Do {
+        stmt: Box<Statement>,
+        cond: Expression,
+        label: Ident,
+    },
+    For {
+        // Heap-allocated to reduce total size of enum on the stack.
+        init: Box<ForInit>,
+        opt_cond: Option<Expression>,
+        opt_post: Option<Expression>,
+        stmt: Box<Statement>,
+        label: Ident,
+    },
     // Expression statement without an expression (';').
     Empty,
 }
@@ -533,6 +745,59 @@ impl Statement {
                 stmt.fmt_with_indent(f, indent + 2)
             }
             Statement::Compound(block) => block.fmt_with_indent(f, indent),
+            Statement::Break((label, _)) => {
+                writeln!(f, "{}Break {:?}", pad, label)
+            }
+            Statement::Continue((label, _)) => {
+                writeln!(f, "{}Continue {:?}", pad, label)
+            }
+            Statement::While { cond, stmt, label } => {
+                writeln!(f, "{}While <label {label:?}> ({})", pad, cond)?;
+                stmt.fmt_with_indent(f, indent + 2)
+            }
+            Statement::Do { stmt, cond, label } => {
+                writeln!(f, "{}Do <label {label:?}>", pad)?;
+                stmt.fmt_with_indent(f, indent + 2)?;
+                writeln!(f, "{}/* while */ ({})", "  ".repeat(indent + 2), cond)
+            }
+            Statement::For {
+                init,
+                opt_cond,
+                opt_post,
+                stmt,
+                label,
+            } => {
+                let init_fmt = match &**init {
+                    ForInit::Decl(decl) => format!("Decl: {decl}"),
+                    ForInit::Expr(opt_expr) => {
+                        if let Some(expr) = opt_expr {
+                            format!("{expr}")
+                        } else {
+                            "".into()
+                        }
+                    }
+                };
+
+                let cond_fmt = if let Some(cond) = opt_cond {
+                    format!("{cond}")
+                } else {
+                    "".into()
+                };
+
+                let post_fmt = if let Some(post) = opt_post {
+                    format!("{post}")
+                } else {
+                    "".into()
+                };
+
+                writeln!(
+                    f,
+                    "{}For <label {label:?}> ({}; {}; {})",
+                    pad, init_fmt, cond_fmt, post_fmt
+                )?;
+
+                stmt.fmt_with_indent(f, indent + 2)
+            }
             Statement::Empty => {
                 writeln!(f, "{}Empty \";\"", pad)
             }
@@ -863,6 +1128,18 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
             process::exit(1);
         });
 
+    // Pass 3 - Loop labeling.
+    let mut loop_resolver: LoopResolver<'_> = Default::default();
+    ast.resolve_loop_labels(ctx, &mut loop_resolver)
+        .unwrap_or_else(|err| {
+            if cfg!(test) {
+                panic!("{err}");
+            }
+
+            eprintln!("{err}");
+            process::exit(1);
+        });
+
     ast
 }
 
@@ -957,6 +1234,33 @@ fn parse_declaration<I: Iterator<Item = Result<Token>>>(
     Ok(Declaration { ident, token, init })
 }
 
+/// Parse an _AST_ `for` initial clause from the provided `Token` iterator.
+fn parse_for_init<I: Iterator<Item = Result<Token>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<ForInit> {
+    if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        match token.ty {
+            // Parse this as a declaration (starts with a type).
+            TokenType::Keyword(ref s) if s == "int" => {
+                Ok(ForInit::Decl(parse_declaration(ctx, iter)?))
+            }
+            // Parse this as an optional expression.
+            _ => {
+                let opt_expr = parse_opt_expression(ctx, iter, TokenType::Semicolon)?;
+                expect_token(ctx, iter, TokenType::Semicolon)?;
+
+                Ok(ForInit::Expr(opt_expr))
+            }
+        }
+    } else {
+        Err(fmt_err!(
+            ctx.in_path.display(),
+            "expected '<for_init>' at end of input",
+        ))
+    }
+}
+
 /// Parse an _AST_ statement from the provided `Token` iterator.
 fn parse_statement<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
@@ -1013,6 +1317,101 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 Ok(Statement::Goto((target, token)))
             }
+            TokenType::Keyword(ref s) if s == "break" => {
+                // Consume the "break" token.
+                let token = iter
+                    .next()
+                    .expect("next token should be present")
+                    .expect("next token should be ok");
+
+                expect_token(ctx, iter, TokenType::Semicolon)?;
+
+                // Placeholder label allocated during parsing, backpatched in
+                // loop labeling pass.
+                Ok(Statement::Break(("".into(), token)))
+            }
+            TokenType::Keyword(ref s) if s == "continue" => {
+                // Consume the "continue" token.
+                let token = iter
+                    .next()
+                    .expect("next token should be present")
+                    .expect("next token should be ok");
+
+                expect_token(ctx, iter, TokenType::Semicolon)?;
+
+                // Placeholder label allocated during parsing, backpatched in
+                // loop labeling pass.
+                Ok(Statement::Continue(("".into(), token)))
+            }
+            TokenType::Keyword(ref s) if s == "while" => {
+                // Consume the "while" token.
+                let _ = iter.next();
+
+                expect_token(ctx, iter, TokenType::LParen)?;
+
+                let cond = parse_expression(ctx, iter, 0)?;
+
+                expect_token(ctx, iter, TokenType::RParen)?;
+
+                let stmt = parse_statement(ctx, iter)?;
+
+                Ok(Statement::While {
+                    cond,
+                    stmt: Box::new(stmt),
+                    // Placeholder label allocated during parsing, backpatched
+                    // in loop labeling pass.
+                    label: "".into(),
+                })
+            }
+            TokenType::Keyword(ref s) if s == "do" => {
+                // Consume the "do" token.
+                let _ = iter.next();
+
+                let stmt = parse_statement(ctx, iter)?;
+
+                expect_token(ctx, iter, TokenType::Keyword("while".into()))?;
+
+                expect_token(ctx, iter, TokenType::LParen)?;
+
+                let cond = parse_expression(ctx, iter, 0)?;
+
+                expect_token(ctx, iter, TokenType::RParen)?;
+                expect_token(ctx, iter, TokenType::Semicolon)?;
+
+                Ok(Statement::Do {
+                    stmt: Box::new(stmt),
+                    cond,
+                    // Placeholder label allocated during parsing, backpatched
+                    // in loop labeling pass.
+                    label: "".into(),
+                })
+            }
+            TokenType::Keyword(ref s) if s == "for" => {
+                // Consume the "for" token.
+                let _ = iter.next();
+
+                expect_token(ctx, iter, TokenType::LParen)?;
+
+                let init = parse_for_init(ctx, iter)?;
+
+                let opt_cond = parse_opt_expression(ctx, iter, TokenType::Semicolon)?;
+                expect_token(ctx, iter, TokenType::Semicolon)?;
+
+                let opt_post = parse_opt_expression(ctx, iter, TokenType::RParen)?;
+                expect_token(ctx, iter, TokenType::RParen)?;
+
+                let stmt = parse_statement(ctx, iter)?;
+
+                Ok(Statement::For {
+                    init: Box::new(init),
+                    opt_cond,
+                    opt_post,
+                    stmt: Box::new(stmt),
+                    // Placeholder label allocated during parsing, backpatched
+                    // in loop labeling pass.
+                    label: "".into(),
+                })
+            }
             TokenType::Semicolon => {
                 // Consume the ";" token.
                 let _ = iter.next();
@@ -1056,7 +1455,6 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     }
                 } else {
                     expect_token(ctx, iter, TokenType::Semicolon)?;
-
                     Ok(Statement::Expression(expr))
                 }
             }
@@ -1358,6 +1756,28 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
         Err(fmt_err!(
             ctx.in_path.display(),
             "expected '<factor>' at end of input",
+        ))
+    }
+}
+
+/// Parse an _AST_ expression from the provided `Token` iterator, or `None` if
+/// the `end_token` is encountered first.
+fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+    end_token: TokenType,
+) -> Result<Option<Expression>> {
+    if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        if token.ty == end_token {
+            // Not consuming the `end_token`.
+            Ok(None)
+        } else {
+            Ok(Some(parse_expression(ctx, iter, 0)?))
+        }
+    } else {
+        Err(fmt_err!(
+            ctx.in_path.display(),
+            "expected '{end_token}' or '<expr>' at end of input",
         ))
     }
 }
