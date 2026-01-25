@@ -330,11 +330,18 @@ fn generate_ir_function(func: &parser::Function) -> Function {
             parser::Statement::Goto((target, _)) => {
                 builder.instructions.push(Instruction::Jump(target.clone()));
             }
-            parser::Statement::Labeled { label, stmt, .. } => {
-                builder.instructions.push(Instruction::Label(label.clone()));
+            parser::Statement::LabeledStatement(labeled) => {
+                match labeled {
+                    parser::Labeled::Label { label, stmt, .. } => {
+                        builder.instructions.push(Instruction::Label(label.clone()));
 
-                // Handle appending instructions for statements recursively.
-                process_ast_statement(stmt, builder);
+                        // Handle appending instructions for statements
+                        // recursively.
+                        process_ast_statement(stmt, builder);
+                    }
+                    parser::Labeled::Case { .. } => todo!(),
+                    parser::Labeled::Default { .. } => todo!(),
+                }
             }
             parser::Statement::Compound(block) => process_ast_block(block, builder),
             parser::Statement::Break((label, _)) => {
@@ -453,6 +460,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                 builder.instructions.push(Instruction::Jump(start_label));
                 builder.instructions.push(Instruction::Label(break_label));
             }
+            parser::Statement::Switch { .. } => todo!(),
             parser::Statement::Empty => {}
         }
     }

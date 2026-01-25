@@ -3,6 +3,8 @@
 //! Compiler pass that parses a stream of tokens into an abstract syntax tree
 //! (_AST_).
 
+// TODO: Finish implementing `switch`
+
 use std::collections::{HashMap, HashSet};
 use std::{fmt, process};
 
@@ -151,44 +153,59 @@ impl<'a> LabelResolver<'a> {
     }
 }
 
-/// Helper for _AST_ to uniquely label loop statements and perform semantic
-/// analysis.
+/// Kind of a breakable control-flow statement.
+enum CtrlKind {
+    /// A loop statement (`for`, `while`, `do-while`).
+    Loop,
+    /// A switch statement.
+    Switch,
+}
+
+/// Uniquely labeled breakable control-flow statement.
+struct CtrlLabel<'a> {
+    label: &'a str,
+    kind: CtrlKind,
+}
+
+/// Helper for _AST_ to uniquely label all breakable control-flow statements
+/// (loops/switches) and to resolve `break` and `continue` targets during
+/// semantic analysis.
 #[derive(Default)]
-struct LoopResolver<'a> {
-    loop_labels: Vec<&'a str>,
+struct CtrlResolver<'a> {
+    ctrl_labels: Vec<CtrlLabel<'a>>,
     label_count: usize,
 }
 
-impl<'a> LoopResolver<'a> {
-    /// Returns a new unique label identifier.
+impl<'a> CtrlResolver<'a> {
+    /// Returns a new unique label identifier, prepending the given prefix.
     #[inline]
-    fn new_label(&mut self) -> Ident {
+    fn new_label(&mut self, prefix: &str) -> Ident {
         // The `.` in variable identifiers guarantees they won’t conflict
         // with user-defined identifiers, since the _C_ standard forbids `.` in
         // identifiers.
-        let label = format!("loop.{}", self.label_count);
+        let label = format!("{prefix}.{}", self.label_count);
         self.label_count += 1;
         label
     }
 
-    /// Marks the start of a new loop using the given `label`, so that any
-    /// `break` or `continue` statements inside it can be correctly resolved.
+    /// Begins a new control-flow context (loop/switch) with the specified
+    /// `label` and `kind`.
     #[inline]
-    fn enter_loop(&mut self, loop_label: &'a str) {
-        self.loop_labels.push(loop_label);
+    fn enter_ctx(&mut self, label: &'a str, kind: CtrlKind) {
+        self.ctrl_labels.push(CtrlLabel { label, kind });
     }
 
-    /// Marks the end of the current loop, removing the most recent loop context
-    /// so that `break` and `continue` statements no longer refer to it.
+    /// Ends the most recent control-flow context (loop/switch).
     #[inline]
-    fn exit_loop(&mut self) {
-        self.loop_labels.pop();
+    fn exit_ctx(&mut self) {
+        self.ctrl_labels.pop();
     }
 
-    /// Returns the current loop label, or `None` if no loop context is active.
+    /// Returns a reference to the current active control-flow context, or
+    /// `None` if no loop/switch is active.
     #[inline]
-    fn current_label(&self) -> Option<&'a &str> {
-        self.loop_labels.last()
+    fn current_ctrl(&self) -> Option<&'a CtrlLabel<'_>> {
+        self.ctrl_labels.last()
     }
 }
 
@@ -202,11 +219,7 @@ pub enum AST {
 impl<'a> AST {
     /// Assigns a unique identifier to every variable and performs semantic
     /// checks (e.g., duplicate definitions, undeclared references).
-    fn resolve_variables(
-        &mut self,
-        ctx: &Context<'_>,
-        resolver: &mut SymbolResolver,
-    ) -> Result<()> {
+    fn resolve_variables(&mut self, ctx: &Context<'_>) -> Result<()> {
         fn resolve_declaration(
             decl: &mut Declaration,
             ctx: &Context<'_>,
@@ -261,7 +274,15 @@ impl<'a> AST {
 
                     Ok(())
                 }
-                Statement::Labeled { stmt, .. } => resolve_statement(stmt, ctx, resolver),
+                Statement::LabeledStatement(labeled) => {
+                    let stmt = match labeled {
+                        Labeled::Label { stmt, .. } => stmt,
+                        Labeled::Case { stmt, .. } => stmt,
+                        Labeled::Default { stmt, .. } => stmt,
+                    };
+
+                    resolve_statement(stmt, ctx, resolver)
+                }
                 Statement::Compound(block) => {
                     resolver.scope.enter_scope();
                     resolve_block(block, ctx, resolver)
@@ -315,6 +336,10 @@ impl<'a> AST {
                     }
 
                     Ok(())
+                }
+                Statement::Switch { cond, stmt, .. } => {
+                    resolve_expression(cond, ctx, resolver)?;
+                    resolve_statement(stmt, ctx, resolver)
                 }
                 Statement::Goto(_) => Ok(()),
                 Statement::Break(_) => Ok(()),
@@ -405,17 +430,17 @@ impl<'a> AST {
             Ok(())
         }
 
-        match self {
-            AST::Program(func) => resolve_block(&mut func.body, ctx, resolver)?,
-        }
+        let mut sym_resolver: SymbolResolver = Default::default();
 
-        Ok(())
+        match self {
+            AST::Program(func) => resolve_block(&mut func.body, ctx, &mut sym_resolver),
+        }
     }
 
     /// Ensures every label declared is unique within it's function scope
     /// and performs semantic checks (e.g., missing `goto` targets, unreachable
     /// labels).
-    fn resolve_labels(&'a self, ctx: &Context<'_>, resolver: &mut LabelResolver<'a>) -> Result<()> {
+    fn resolve_labels(&'a self, ctx: &Context<'_>) -> Result<()> {
         fn resolve_block<'a>(
             block: &'a Block,
             ctx: &Context<'_>,
@@ -444,23 +469,25 @@ impl<'a> AST {
                     }
                 }
                 Statement::Goto((label, token)) => resolver.mark_goto((label, token)),
-                Statement::Labeled { label, token, stmt } => {
-                    if !resolver.mark_label(label) {
-                        let tok_str = format!("{token:?}");
-                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+                Statement::LabeledStatement(labeled) => {
+                    if let Labeled::Label { label, token, stmt } = labeled {
+                        if !resolver.mark_label(label) {
+                            let tok_str = format!("{token:?}");
+                            let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-                        return Err(fmt_token_err!(
-                            token.loc.file_path.display(),
-                            token.loc.line,
-                            token.loc.col,
-                            tok_str,
-                            tok_str.len() - 1,
-                            line_content,
-                            "duplicate label '{tok_str}'",
-                        ));
+                            return Err(fmt_token_err!(
+                                token.loc.file_path.display(),
+                                token.loc.line,
+                                token.loc.col,
+                                tok_str,
+                                tok_str.len() - 1,
+                                line_content,
+                                "duplicate label '{tok_str}'",
+                            ));
+                        }
+
+                        resolve_statement_labels(stmt, ctx, resolver)?;
                     }
-
-                    resolve_statement_labels(stmt, ctx, resolver)?;
                 }
                 Statement::While { stmt, .. }
                 | Statement::Do { stmt, .. }
@@ -468,6 +495,9 @@ impl<'a> AST {
                     resolve_statement_labels(stmt, ctx, resolver)?;
                 }
                 Statement::Compound(block) => resolve_block(block, ctx, resolver)?,
+                Statement::Switch { stmt, .. } => {
+                    resolve_statement_labels(stmt, ctx, resolver)?;
+                }
                 Statement::Return(_)
                 | Statement::Expression(_)
                 | Statement::Break(_)
@@ -478,15 +508,17 @@ impl<'a> AST {
             Ok(())
         }
 
+        let mut lbl_resolver: LabelResolver<'_> = Default::default();
+
         match self {
             AST::Program(func) => {
                 // Collect and validate all labels within the function in the
                 // first pass.
-                resolve_block(&func.body, ctx, resolver)?;
+                resolve_block(&func.body, ctx, &mut lbl_resolver)?;
 
                 // Second pass ensures all `goto` statements point to a valid
                 // target within the same function scope.
-                if let Err((label, token)) = resolver.check_gotos() {
+                if let Err((label, token)) = lbl_resolver.check_gotos() {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
 
@@ -506,18 +538,14 @@ impl<'a> AST {
         Ok(())
     }
 
-    /// Assigns unique labels to each loop statement (`for`, `do`, `while`) and
-    /// associated `break`/`continue` statement, as well as performing semantic
-    /// checks.
-    fn resolve_loop_labels(
-        &'a mut self,
-        ctx: &Context<'_>,
-        resolver: &mut LoopResolver<'a>,
-    ) -> Result<()> {
+    /// Assigns unique labels to all active breakable control-flow statements
+    /// (loops/switches) and resolves `break`/`continue` targets, as well as
+    /// performing semantic checks.
+    fn resolve_breakable_ctrl(&'a mut self, ctx: &Context<'_>) -> Result<()> {
         fn resolve_block<'a>(
             block: &'a mut Block,
             ctx: &Context<'_>,
-            resolver: &mut LoopResolver<'a>,
+            resolver: &mut CtrlResolver<'a>,
         ) -> Result<()> {
             for block_item in &mut block.0 {
                 if let BlockItem::Stmt(stmt) = block_item {
@@ -531,12 +559,12 @@ impl<'a> AST {
         fn resolve_loop_statement<'a>(
             stmt: &'a mut Statement,
             ctx: &Context<'_>,
-            resolver: &mut LoopResolver<'a>,
+            resolver: &mut CtrlResolver<'a>,
         ) -> Result<()> {
             match stmt {
-                Statement::Break((label, token)) | Statement::Continue((label, token)) => {
-                    if let Some(loop_label) = resolver.current_label() {
-                        *label = loop_label.to_string();
+                Statement::Break((label, token)) => {
+                    if let Some(ctrl) = resolver.current_ctrl() {
+                        *label = ctrl.label.to_string();
                     } else {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -548,20 +576,40 @@ impl<'a> AST {
                             tok_str,
                             tok_str.len() - 1,
                             line_content,
-                            "{tok_str} statement not within loop or switch"
+                            "{tok_str} statement not within a loop or switch"
+                        ));
+                    }
+                }
+                Statement::Continue((label, token)) => {
+                    if let Some(ctrl) = resolver.current_ctrl()
+                        && let CtrlKind::Loop = ctrl.kind
+                    {
+                        *label = ctrl.label.to_string();
+                    } else {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                        return Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "continue statement not within a loop"
                         ));
                     }
                 }
                 Statement::While { stmt, label, .. }
                 | Statement::Do { stmt, label, .. }
                 | Statement::For { stmt, label, .. } => {
-                    *label = resolver.new_label();
+                    *label = resolver.new_label("loop");
 
-                    resolver.enter_loop(label);
+                    resolver.enter_ctx(label, CtrlKind::Loop);
 
                     resolve_loop_statement(stmt, ctx, resolver)?;
 
-                    resolver.exit_loop();
+                    resolver.exit_ctx();
                 }
                 Statement::If { then, opt_else, .. } => {
                     resolve_loop_statement(then, ctx, resolver)?;
@@ -569,11 +617,26 @@ impl<'a> AST {
                         resolve_loop_statement(else_stmt, ctx, resolver)?;
                     }
                 }
-                Statement::Labeled { stmt, .. } => {
+                Statement::LabeledStatement(labeled) => {
+                    let stmt = match labeled {
+                        Labeled::Label { stmt, .. } => stmt,
+                        Labeled::Case { stmt, .. } => stmt,
+                        Labeled::Default { stmt, .. } => stmt,
+                    };
+
                     resolve_loop_statement(stmt, ctx, resolver)?;
                 }
                 Statement::Compound(block) => {
                     resolve_block(block, ctx, resolver)?;
+                }
+                Statement::Switch { stmt, label, .. } => {
+                    *label = resolver.new_label("switch");
+
+                    resolver.enter_ctx(label, CtrlKind::Switch);
+
+                    resolve_loop_statement(stmt, ctx, resolver)?;
+
+                    resolver.exit_ctx();
                 }
                 Statement::Return(_)
                 | Statement::Expression(_)
@@ -584,8 +647,10 @@ impl<'a> AST {
             Ok(())
         }
 
+        let mut ctrl_resolver: CtrlResolver<'_> = Default::default();
+
         match self {
-            AST::Program(func) => resolve_block(&mut func.body, ctx, resolver),
+            AST::Program(func) => resolve_block(&mut func.body, ctx, &mut ctrl_resolver),
         }
     }
 }
@@ -664,6 +729,26 @@ pub enum ForInit {
     Expr(Option<Expression>),
 }
 
+/// _AST_ labeled statements.
+#[derive(Debug)]
+pub enum Labeled {
+    Label {
+        label: Ident,
+        token: Token,
+        stmt: Box<Statement>,
+    },
+    Case {
+        // NOTE: Must be a constant-expression.
+        expr: Expression,
+        token: Token,
+        stmt: Box<Statement>,
+    },
+    Default {
+        token: Token,
+        stmt: Box<Statement>,
+    },
+}
+
 /// _AST_ statement.
 #[derive(Debug)]
 pub enum Statement {
@@ -679,11 +764,7 @@ pub enum Statement {
     },
     Goto((Ident, Token)),
     // Labeled statement.
-    Labeled {
-        label: Ident,
-        token: Token,
-        stmt: Box<Statement>,
-    },
+    LabeledStatement(Labeled),
     // Compound statement.
     Compound(Block),
     Break((Ident, Token)),
@@ -704,6 +785,21 @@ pub enum Statement {
         opt_cond: Option<Expression>,
         opt_post: Option<Expression>,
         stmt: Box<Statement>,
+        label: Ident,
+    },
+    Switch {
+        /// Controlling expression.
+        cond: Expression,
+        /// Result of `cond` is used to determine which case label to begin
+        /// execution at.
+        stmt: Box<Statement>,
+        // NOTE: Must be `Labeled::Case`.
+        //
+        // Each `case` or `default` label within the switch statement. Will be
+        // backpatched during semantic analysis.
+        cases: Vec<Labeled>,
+        // NOTE: Must be `Labeled::Default`.
+        default: Option<Labeled>,
         label: Ident,
     },
     // Expression statement without an expression (';').
@@ -740,10 +836,20 @@ impl Statement {
             Statement::Goto((ident, _)) => {
                 writeln!(f, "{}Goto {:?}", pad, ident)
             }
-            Statement::Labeled { label, stmt, .. } => {
-                writeln!(f, "{}Label {:?}:", pad, label)?;
-                stmt.fmt_with_indent(f, indent + 2)
-            }
+            Statement::LabeledStatement(labeled) => match labeled {
+                Labeled::Label { label, stmt, .. } => {
+                    writeln!(f, "{}Label {:?}:", pad, label)?;
+                    stmt.fmt_with_indent(f, indent + 2)
+                }
+                Labeled::Case { expr, stmt, .. } => {
+                    writeln!(f, "{}Case {}:", pad, expr)?;
+                    stmt.fmt_with_indent(f, indent + 2)
+                }
+                Labeled::Default { stmt, .. } => {
+                    writeln!(f, "{}Default:", pad)?;
+                    stmt.fmt_with_indent(f, indent + 2)
+                }
+            },
             Statement::Compound(block) => block.fmt_with_indent(f, indent),
             Statement::Break((label, _)) => {
                 writeln!(f, "{}Break <label {label:?}>", pad)
@@ -796,6 +902,12 @@ impl Statement {
                     pad, init_fmt, cond_fmt, post_fmt
                 )?;
 
+                stmt.fmt_with_indent(f, indent + 2)
+            }
+            Statement::Switch {
+                cond, stmt, label, ..
+            } => {
+                writeln!(f, "{}Switch <label {label:?}> ({})", pad, cond)?;
                 stmt.fmt_with_indent(f, indent + 2)
             }
             Statement::Empty => {
@@ -1105,40 +1217,34 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
     let mut ast = AST::Program(func);
 
     // Pass 1 - Symbol resolution.
-    let mut sym_resolver: SymbolResolver = Default::default();
-    ast.resolve_variables(ctx, &mut sym_resolver)
-        .unwrap_or_else(|err| {
-            if cfg!(test) {
-                panic!("{err}");
-            }
+    ast.resolve_variables(ctx).unwrap_or_else(|err| {
+        if cfg!(test) {
+            panic!("{err}");
+        }
 
-            eprintln!("{err}");
-            process::exit(1);
-        });
+        eprintln!("{err}");
+        process::exit(1);
+    });
 
     // Pass 2 - Label/`goto` resolution.
-    let mut lbl_resolver: LabelResolver<'_> = Default::default();
-    ast.resolve_labels(ctx, &mut lbl_resolver)
-        .unwrap_or_else(|err| {
-            if cfg!(test) {
-                panic!("{err}");
-            }
+    ast.resolve_labels(ctx).unwrap_or_else(|err| {
+        if cfg!(test) {
+            panic!("{err}");
+        }
 
-            eprintln!("{err}");
-            process::exit(1);
-        });
+        eprintln!("{err}");
+        process::exit(1);
+    });
 
-    // Pass 3 - Loop labeling.
-    let mut loop_resolver: LoopResolver<'_> = Default::default();
-    ast.resolve_loop_labels(ctx, &mut loop_resolver)
-        .unwrap_or_else(|err| {
-            if cfg!(test) {
-                panic!("{err}");
-            }
+    // Pass 3 - Control-flow labeling.
+    ast.resolve_breakable_ctrl(ctx).unwrap_or_else(|err| {
+        if cfg!(test) {
+            panic!("{err}");
+        }
 
-            eprintln!("{err}");
-            process::exit(1);
-        });
+        eprintln!("{err}");
+        process::exit(1);
+    });
 
     ast
 }
@@ -1326,8 +1432,8 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 expect_token(ctx, iter, TokenType::Semicolon)?;
 
-                // Placeholder label allocated during parsing, backpatched in
-                // loop labeling pass.
+                // Placeholder label allocated during parsing, backpatched
+                // in control-flow labeling pass.
                 Ok(Statement::Break(("".into(), token)))
             }
             TokenType::Keyword(ref s) if s == "continue" => {
@@ -1339,8 +1445,8 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 expect_token(ctx, iter, TokenType::Semicolon)?;
 
-                // Placeholder label allocated during parsing, backpatched in
-                // loop labeling pass.
+                // Placeholder label allocated during parsing, backpatched
+                // in control-flow labeling pass.
                 Ok(Statement::Continue(("".into(), token)))
             }
             TokenType::Keyword(ref s) if s == "while" => {
@@ -1359,7 +1465,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     cond,
                     stmt: Box::new(stmt),
                     // Placeholder label allocated during parsing, backpatched
-                    // in loop labeling pass.
+                    // in control-flow labeling pass.
                     label: "".into(),
                 })
             }
@@ -1382,7 +1488,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     stmt: Box::new(stmt),
                     cond,
                     // Placeholder label allocated during parsing, backpatched
-                    // in loop labeling pass.
+                    // in control-flow labeling pass.
                     label: "".into(),
                 })
             }
@@ -1408,9 +1514,66 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     opt_post,
                     stmt: Box::new(stmt),
                     // Placeholder label allocated during parsing, backpatched
-                    // in loop labeling pass.
+                    // in control-flow labeling pass.
                     label: "".into(),
                 })
+            }
+            TokenType::Keyword(ref s) if s == "switch" => {
+                // Consume the "switch" token.
+                let _ = iter.next();
+
+                expect_token(ctx, iter, TokenType::LParen)?;
+                let expr = parse_expression(ctx, iter, 0)?;
+                expect_token(ctx, iter, TokenType::RParen)?;
+
+                let stmt = parse_statement(ctx, iter)?;
+
+                Ok(Statement::Switch {
+                    cond: expr,
+                    stmt: Box::new(stmt),
+                    // Will be filled in a later semantic analysis pass.
+                    cases: vec![],
+                    // Will be filled in a later semantic analysis pass.
+                    default: None,
+                    // Placeholder label allocated during parsing, backpatched
+                    // in control-flow labeling pass.
+                    label: "".into(),
+                })
+            }
+            TokenType::Keyword(ref s) if s == "case" => {
+                // Consume the "case" token.
+                let token = iter
+                    .next()
+                    .expect("next token should be present")
+                    .expect("next token should be ok");
+
+                let expr = parse_expression(ctx, iter, 0)?;
+
+                expect_token(ctx, iter, TokenType::Colon)?;
+
+                let stmt = parse_statement(ctx, iter)?;
+
+                Ok(Statement::LabeledStatement(Labeled::Case {
+                    expr,
+                    token,
+                    stmt: Box::new(stmt),
+                }))
+            }
+            TokenType::Keyword(ref s) if s == "default" => {
+                // Consume the "default" token.
+                let token = iter
+                    .next()
+                    .expect("next token should be present")
+                    .expect("next token should be ok");
+
+                expect_token(ctx, iter, TokenType::Colon)?;
+
+                let stmt = parse_statement(ctx, iter)?;
+
+                Ok(Statement::LabeledStatement(Labeled::Default {
+                    token,
+                    stmt: Box::new(stmt),
+                }))
             }
             TokenType::Semicolon => {
                 // Consume the ";" token.
@@ -1434,11 +1597,11 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                         let stmt = parse_statement(ctx, iter)?;
 
-                        Ok(Statement::Labeled {
+                        Ok(Statement::LabeledStatement(Labeled::Label {
                             label: ident,
                             token,
                             stmt: Box::new(stmt),
-                        })
+                        }))
                     } else {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());

@@ -3,13 +3,13 @@
 Tiny C Compiler (subset of _C17_).
 
 > [!NOTE]  
-> Currently only emits `gas_x86-64_linux` assembly. Other backends may be added in the future.
+> Currently only emits `gas_x86-64_linux` (`GNU` assembler) assembly. Other backends may be added in the future.
 
 ## Language Features Supported
 
 ### Types
 
-- [x] `int` (32-bit integers)
+- [x] `int` (32-bit integer on `x86-64` Linux)
 
 ### Declarations
 
