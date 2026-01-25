@@ -2,8 +2,11 @@
 
 Tiny C Compiler (subset of _C17_).
 
+> [!WARNING]  
+> This project is experimental and not intended for production use.
+
 > [!NOTE]  
-> Currently only emits `gas_x86-64_linux` (`GNU` assembler) assembly. Other backends may be added in the future.
+> Currently only emits `gas_x86-64_linux` assembly. Other backends may be added in the future.
 
 ## Language Features Supported
 
@@ -26,6 +29,8 @@ Tiny C Compiler (subset of _C17_).
 - [x] Compound statements (`{ ... }`)
 - [x] `for` / `do` / `while`
 - [x] `break` / `continue`
+- [x] `switch`
+- [x] `default` / `case` (currently only support integer literal expressions)
 - [x] Empty statements (`;`)
 
 ### Expressions

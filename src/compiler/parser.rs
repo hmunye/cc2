@@ -3,8 +3,6 @@
 //! Compiler pass that parses a stream of tokens into an abstract syntax tree
 //! (_AST_).
 
-// TODO: Finish implementing `switch`
-
 use std::collections::{HashMap, HashSet};
 use std::{fmt, process};
 
@@ -15,34 +13,44 @@ use crate::{Context, fmt_err, fmt_token_err, report_err};
 type Ident = String;
 
 /// Helper to track the current scope for symbol resolution.
-#[repr(transparent)]
-struct Scope(usize);
+struct Scope {
+    stack: Vec<usize>,
+    next_scope: usize,
+}
 
 impl Scope {
     #[inline]
-    const fn new(scope: usize) -> Self {
-        Scope(scope)
+    fn new() -> Self {
+        Scope {
+            stack: vec![0], // Function scope.
+            next_scope: 1,
+        }
     }
 
     #[inline]
-    const fn current_scope(&self) -> usize {
-        self.0
+    fn current_scope(&self) -> usize {
+        *self
+            .stack
+            .last()
+            .expect("there should always be a current scope")
     }
 
     #[inline]
-    const fn enter_scope(&mut self) {
-        self.0 += 1;
+    fn enter_scope(&mut self) {
+        let scope = self.next_scope;
+        self.next_scope += 1;
+        self.stack.push(scope);
     }
 
     #[inline]
-    const fn exit_scope(&mut self) {
-        self.0 = self.0.saturating_sub(1);
+    fn exit_scope(&mut self) {
+        self.stack.pop();
     }
 }
 
 impl Default for Scope {
     fn default() -> Self {
-        Self::new(0)
+        Self::new()
     }
 }
 
@@ -173,19 +181,29 @@ struct CtrlLabel<'a> {
 #[derive(Default)]
 struct CtrlResolver<'a> {
     ctrl_labels: Vec<CtrlLabel<'a>>,
-    label_count: usize,
+    loop_count: usize,
+    switch_count: usize,
 }
 
 impl<'a> CtrlResolver<'a> {
-    /// Returns a new unique label identifier, prepending the given prefix.
+    /// Returns a new unique label identifier.
     #[inline]
-    fn new_label(&mut self, prefix: &str) -> Ident {
+    fn new_label(&mut self, kind: CtrlKind) -> Ident {
         // The `.` in variable identifiers guarantees they won’t conflict
         // with user-defined identifiers, since the _C_ standard forbids `.` in
         // identifiers.
-        let label = format!("{prefix}.{}", self.label_count);
-        self.label_count += 1;
-        label
+        match kind {
+            CtrlKind::Loop => {
+                let label = format!("loop.{}", self.loop_count);
+                self.loop_count += 1;
+                label
+            }
+            CtrlKind::Switch => {
+                let label = format!("switch.{}", self.switch_count);
+                self.switch_count += 1;
+                label
+            }
+        }
     }
 
     /// Begins a new control-flow context (loop/switch) with the specified
@@ -216,10 +234,158 @@ pub enum AST {
     Program(Function),
 }
 
+type SwitchContext = (HashSet<i32>, Option<Ident>, Vec<(Ident, Expression)>);
+
+type ScopedSwitches = HashMap<Ident, SwitchContext>;
+
+/// Kind of labeled statement within `switch`.
+enum LabelKind {
+    Case,
+    Default,
+}
+
+/// Helper for _AST_ to perform semantic analysis on `switch` statement cases.
+#[derive(Default)]
+struct SwitchResolver<'a> {
+    scope_cases: ScopedSwitches,
+    labels: Vec<&'a str>,
+    case_count: usize,
+    default_count: usize,
+}
+
+impl<'a> SwitchResolver<'a> {
+    /// Returns a new unique label identifier, prepending the given prefix.
+    #[inline]
+    fn new_label(&mut self, kind: LabelKind) -> Ident {
+        // The `.` in variable identifiers guarantees they won’t conflict
+        // with user-defined identifiers, since the _C_ standard forbids `.` in
+        // identifiers.
+        match kind {
+            LabelKind::Case => {
+                let label = format!("case_label.{}", self.case_count);
+                self.case_count += 1;
+                label
+            }
+            LabelKind::Default => {
+                let label = format!("default_label.{}", self.default_count);
+                self.default_count += 1;
+                label
+            }
+        }
+    }
+
+    /// Returns the unique label for the given `case` expression if it has not
+    /// been encountered in the current switch context, or `None` if it has
+    /// been seen.
+    #[inline]
+    fn mark_case(&mut self, label: Ident, expr: &Expression) -> Option<Ident> {
+        let case_label = self.new_label(LabelKind::Case);
+
+        let entry = self
+            .scope_cases
+            .entry(label)
+            .or_insert((HashSet::new(), None, Vec::new()));
+
+        entry.2.push((case_label.clone(), expr.clone()));
+
+        // NOTE: Update when constant-expression eval is available to the
+        // compiler. Relying on the invariant of each `case` expression being an
+        // integer constant.
+        let val = match expr {
+            Expression::IntConstant(i) => *i,
+            _ => unreachable!(),
+        };
+
+        if entry.0.insert(val) {
+            Some(case_label)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the unique label for the given `default` statement if it has not
+    /// been encountered in the current switch context, or `None` if one has
+    /// been seen.
+    #[inline]
+    fn mark_default(&mut self, label: Ident) -> Option<Ident> {
+        let default_label = self.new_label(LabelKind::Default);
+
+        let entry = self
+            .scope_cases
+            .entry(label)
+            .or_insert((HashSet::new(), None, Vec::new()));
+
+        if entry.1.is_some() {
+            None
+        } else {
+            entry.1 = Some(default_label.clone());
+            Some(default_label)
+        }
+    }
+
+    /// Begins a new switch context with the specified `label`.
+    #[inline]
+    fn enter_switch(&mut self, label: &'a str) {
+        self.labels.push(label);
+    }
+
+    /// Ends the most recent switch context, draining the collected cases within
+    /// the context to the provided container.
+    #[inline]
+    fn exit_switch(&mut self, cases: &mut Vec<(Ident, Expression)>) {
+        let label = self
+            .current_ctx()
+            .expect("exit_switch should always be called in the context of a switch")
+            .to_string();
+
+        let entry = self
+            .scope_cases
+            .get_mut(&label)
+            .expect("entry should always exist for current label in exit_switch");
+
+        self.labels.pop();
+        cases.append(&mut entry.2);
+    }
+
+    /// Returns a reference to the label of the active switch context, or `None`
+    /// if no switch is active.
+    #[inline]
+    fn current_ctx(&self) -> Option<&'a &str> {
+        self.labels.last()
+    }
+
+    /// Returns the `default` statement label if one has been encountered in the
+    /// current switch context.
+    #[inline]
+    fn current_default(&mut self) -> Option<Ident> {
+        let label = self.current_ctx()?.to_string();
+        let entry = self.scope_cases.get_mut(&label)?;
+
+        entry.1.take()
+    }
+}
+
 impl<'a> AST {
     /// Assigns a unique identifier to every variable and performs semantic
     /// checks (e.g., duplicate definitions, undeclared references).
     fn resolve_variables(&mut self, ctx: &Context<'_>) -> Result<()> {
+        fn resolve_block(
+            block: &mut Block,
+            ctx: &Context<'_>,
+            resolver: &mut SymbolResolver,
+        ) -> Result<()> {
+            for block_item in &mut block.0 {
+                match block_item {
+                    BlockItem::Stmt(stmt) => resolve_statement(stmt, ctx, resolver)?,
+                    BlockItem::Decl(decl) => resolve_declaration(decl, ctx, resolver)?,
+                }
+            }
+
+            resolver.scope.exit_scope();
+
+            Ok(())
+        }
+
         fn resolve_declaration(
             decl: &mut Declaration,
             ctx: &Context<'_>,
@@ -277,7 +443,10 @@ impl<'a> AST {
                 Statement::LabeledStatement(labeled) => {
                     let stmt = match labeled {
                         Labeled::Label { stmt, .. } => stmt,
-                        Labeled::Case { stmt, .. } => stmt,
+                        Labeled::Case { expr, stmt, .. } => {
+                            resolve_expression(expr, ctx, resolver)?;
+                            stmt
+                        }
                         Labeled::Default { stmt, .. } => stmt,
                     };
 
@@ -413,23 +582,6 @@ impl<'a> AST {
             }
         }
 
-        fn resolve_block(
-            block: &mut Block,
-            ctx: &Context<'_>,
-            resolver: &mut SymbolResolver,
-        ) -> Result<()> {
-            for block_item in &mut block.0 {
-                match block_item {
-                    BlockItem::Stmt(stmt) => resolve_statement(stmt, ctx, resolver)?,
-                    BlockItem::Decl(decl) => resolve_declaration(decl, ctx, resolver)?,
-                }
-            }
-
-            resolver.scope.exit_scope();
-
-            Ok(())
-        }
-
         let mut sym_resolver: SymbolResolver = Default::default();
 
         match self {
@@ -469,8 +621,8 @@ impl<'a> AST {
                     }
                 }
                 Statement::Goto((label, token)) => resolver.mark_goto((label, token)),
-                Statement::LabeledStatement(labeled) => {
-                    if let Labeled::Label { label, token, stmt } = labeled {
+                Statement::LabeledStatement(labeled) => match labeled {
+                    Labeled::Label { label, token, stmt } => {
                         if !resolver.mark_label(label) {
                             let tok_str = format!("{token:?}");
                             let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -488,7 +640,10 @@ impl<'a> AST {
 
                         resolve_statement_labels(stmt, ctx, resolver)?;
                     }
-                }
+                    Labeled::Case { stmt, .. } | Labeled::Default { stmt, .. } => {
+                        resolve_statement_labels(stmt, ctx, resolver)?;
+                    }
+                },
                 Statement::While { stmt, .. }
                 | Statement::Do { stmt, .. }
                 | Statement::For { stmt, .. } => {
@@ -603,9 +758,18 @@ impl<'a> AST {
                 Statement::While { stmt, label, .. }
                 | Statement::Do { stmt, label, .. }
                 | Statement::For { stmt, label, .. } => {
-                    *label = resolver.new_label("loop");
+                    *label = resolver.new_label(CtrlKind::Loop);
 
                     resolver.enter_ctx(label, CtrlKind::Loop);
+
+                    resolve_loop_statement(stmt, ctx, resolver)?;
+
+                    resolver.exit_ctx();
+                }
+                Statement::Switch { stmt, label, .. } => {
+                    *label = resolver.new_label(CtrlKind::Switch);
+
+                    resolver.enter_ctx(label, CtrlKind::Switch);
 
                     resolve_loop_statement(stmt, ctx, resolver)?;
 
@@ -629,15 +793,6 @@ impl<'a> AST {
                 Statement::Compound(block) => {
                     resolve_block(block, ctx, resolver)?;
                 }
-                Statement::Switch { stmt, label, .. } => {
-                    *label = resolver.new_label("switch");
-
-                    resolver.enter_ctx(label, CtrlKind::Switch);
-
-                    resolve_loop_statement(stmt, ctx, resolver)?;
-
-                    resolver.exit_ctx();
-                }
                 Statement::Return(_)
                 | Statement::Expression(_)
                 | Statement::Goto(_)
@@ -651,6 +806,161 @@ impl<'a> AST {
 
         match self {
             AST::Program(func) => resolve_block(&mut func.body, ctx, &mut ctrl_resolver),
+        }
+    }
+
+    /// Collects all `case` and `default` labels for each `switch` statement, as
+    /// well as performing semantic checks.
+    fn resolve_switches(&'a mut self, ctx: &Context<'_>) -> Result<()> {
+        fn resolve_block<'a>(
+            block: &'a mut Block,
+            ctx: &Context<'_>,
+            resolver: &mut SwitchResolver<'a>,
+        ) -> Result<()> {
+            for block_item in &mut block.0 {
+                if let BlockItem::Stmt(stmt) = block_item {
+                    resolve_statement(stmt, ctx, resolver)?;
+                }
+            }
+
+            Ok(())
+        }
+
+        fn resolve_statement<'a>(
+            stmt: &'a mut Statement,
+            ctx: &Context<'_>,
+            resolver: &mut SwitchResolver<'a>,
+        ) -> Result<()> {
+            match stmt {
+                Statement::Switch {
+                    stmt,
+                    cases,
+                    default,
+                    label,
+                    ..
+                } => {
+                    resolver.enter_switch(label);
+
+                    resolve_statement(stmt, ctx, resolver)?;
+
+                    *default = resolver.current_default();
+
+                    resolver.exit_switch(cases);
+                }
+                Statement::LabeledStatement(labeled) => match labeled {
+                    Labeled::Label { stmt, .. } => {
+                        resolve_statement(stmt, ctx, resolver)?;
+                    }
+                    Labeled::Case {
+                        expr,
+                        token,
+                        stmt,
+                        label,
+                        ..
+                    } => {
+                        if let Some(ctx_label) = resolver.current_ctx() {
+                            if let Some(case_label) =
+                                resolver.mark_case(ctx_label.to_string(), expr)
+                            {
+                                *label = case_label;
+                            } else {
+                                let tok_str = format!("{token:?}");
+                                let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                                return Err(fmt_token_err!(
+                                    token.loc.file_path.display(),
+                                    token.loc.line,
+                                    token.loc.col,
+                                    tok_str,
+                                    tok_str.len() - 1,
+                                    line_content,
+                                    "duplicate case value"
+                                ));
+                            }
+                        } else {
+                            let tok_str = format!("{token:?}");
+                            let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                            return Err(fmt_token_err!(
+                                token.loc.file_path.display(),
+                                token.loc.line,
+                                token.loc.col,
+                                tok_str,
+                                tok_str.len() - 1,
+                                line_content,
+                                "case label not within a switch statement"
+                            ));
+                        }
+
+                        resolve_statement(stmt, ctx, resolver)?;
+                    }
+                    Labeled::Default { token, stmt, label } => {
+                        if let Some(ctx_label) = resolver.current_ctx() {
+                            if let Some(default_label) =
+                                resolver.mark_default(ctx_label.to_string())
+                            {
+                                *label = default_label;
+                            } else {
+                                let tok_str = format!("{token:?}");
+                                let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                                return Err(fmt_token_err!(
+                                    token.loc.file_path.display(),
+                                    token.loc.line,
+                                    token.loc.col,
+                                    tok_str,
+                                    tok_str.len() - 1,
+                                    line_content,
+                                    "multiple default labels in one switch"
+                                ));
+                            }
+                        } else {
+                            let tok_str = format!("{token:?}");
+                            let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                            return Err(fmt_token_err!(
+                                token.loc.file_path.display(),
+                                token.loc.line,
+                                token.loc.col,
+                                tok_str,
+                                tok_str.len() - 1,
+                                line_content,
+                                "default label not within a switch statement"
+                            ));
+                        }
+
+                        resolve_statement(stmt, ctx, resolver)?;
+                    }
+                },
+                Statement::While { stmt, .. }
+                | Statement::Do { stmt, .. }
+                | Statement::For { stmt, .. } => {
+                    resolve_statement(stmt, ctx, resolver)?;
+                }
+                Statement::If { then, opt_else, .. } => {
+                    resolve_statement(then, ctx, resolver)?;
+                    if let Some(else_stmt) = opt_else {
+                        resolve_statement(else_stmt, ctx, resolver)?;
+                    }
+                }
+                Statement::Compound(block) => {
+                    resolve_block(block, ctx, resolver)?;
+                }
+                Statement::Return(_)
+                | Statement::Expression(_)
+                | Statement::Break(_)
+                | Statement::Continue(_)
+                | Statement::Goto(_)
+                | Statement::Empty => {}
+            }
+
+            Ok(())
+        }
+
+        let mut switch_resolver: SwitchResolver<'_> = Default::default();
+
+        match self {
+            AST::Program(func) => resolve_block(&mut func.body, ctx, &mut switch_resolver),
         }
     }
 }
@@ -742,10 +1052,12 @@ pub enum Labeled {
         expr: Expression,
         token: Token,
         stmt: Box<Statement>,
+        label: Ident,
     },
     Default {
         token: Token,
         stmt: Box<Statement>,
+        label: Ident,
     },
 }
 
@@ -793,13 +1105,13 @@ pub enum Statement {
         /// Result of `cond` is used to determine which case label to begin
         /// execution at.
         stmt: Box<Statement>,
-        // NOTE: Must be `Labeled::Case`.
+        // NOTE: Must be `Labeled::Case` label and expression.
         //
-        // Each `case` or `default` label within the switch statement. Will be
-        // backpatched during semantic analysis.
-        cases: Vec<Labeled>,
-        // NOTE: Must be `Labeled::Default`.
-        default: Option<Labeled>,
+        // Each `case` label within the switch statement. Will be backpatched
+        // during semantic analysis.
+        cases: Vec<(Ident, Expression)>,
+        // NOTE: Must be `Labeled::Default` label.
+        default: Option<Ident>,
         label: Ident,
     },
     // Expression statement without an expression (';').
@@ -841,12 +1153,14 @@ impl Statement {
                     writeln!(f, "{}Label {:?}:", pad, label)?;
                     stmt.fmt_with_indent(f, indent + 2)
                 }
-                Labeled::Case { expr, stmt, .. } => {
-                    writeln!(f, "{}Case {}:", pad, expr)?;
+                Labeled::Case {
+                    expr, stmt, label, ..
+                } => {
+                    writeln!(f, "{}Case <label {label:?}> {}:", pad, expr)?;
                     stmt.fmt_with_indent(f, indent + 2)
                 }
-                Labeled::Default { stmt, .. } => {
-                    writeln!(f, "{}Default:", pad)?;
+                Labeled::Default { stmt, label, .. } => {
+                    writeln!(f, "{}Default <label {label:?}>:", pad)?;
                     stmt.fmt_with_indent(f, indent + 2)
                 }
             },
@@ -1246,6 +1560,16 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
         process::exit(1);
     });
 
+    // Pass 4 - Switch statement resolution.
+    ast.resolve_switches(ctx).unwrap_or_else(|err| {
+        if cfg!(test) {
+            panic!("{err}");
+        }
+
+        eprintln!("{err}");
+        process::exit(1);
+    });
+
     ast
 }
 
@@ -1549,15 +1873,35 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 let expr = parse_expression(ctx, iter, 0)?;
 
-                expect_token(ctx, iter, TokenType::Colon)?;
+                // NOTE: Update when constant-expression eval is available to
+                // the compiler.
+                if let Expression::IntConstant(_) = expr {
+                    expect_token(ctx, iter, TokenType::Colon)?;
 
-                let stmt = parse_statement(ctx, iter)?;
+                    let stmt = parse_statement(ctx, iter)?;
 
-                Ok(Statement::LabeledStatement(Labeled::Case {
-                    expr,
-                    token,
-                    stmt: Box::new(stmt),
-                }))
+                    Ok(Statement::LabeledStatement(Labeled::Case {
+                        expr,
+                        token,
+                        stmt: Box::new(stmt),
+                        // Placeholder label allocated during parsing,
+                        // backpatched in semantic analysis.
+                        label: "".into(),
+                    }))
+                } else {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "case label does not reduce to an integer constant (currently only support integer literals)",
+                    ))
+                }
             }
             TokenType::Keyword(ref s) if s == "default" => {
                 // Consume the "default" token.
@@ -1573,6 +1917,9 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 Ok(Statement::LabeledStatement(Labeled::Default {
                     token,
                     stmt: Box::new(stmt),
+                    // Placeholder label allocated during parsing, backpatched
+                    // in semantic analysis.
+                    label: "".into(),
                 }))
             }
             TokenType::Semicolon => {

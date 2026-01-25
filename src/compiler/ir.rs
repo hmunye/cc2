@@ -332,15 +332,15 @@ fn generate_ir_function(func: &parser::Function) -> Function {
             }
             parser::Statement::LabeledStatement(labeled) => {
                 match labeled {
-                    parser::Labeled::Label { label, stmt, .. } => {
+                    parser::Labeled::Label { label, stmt, .. }
+                    | parser::Labeled::Case { label, stmt, .. }
+                    | parser::Labeled::Default { label, stmt, .. } => {
                         builder.instructions.push(Instruction::Label(label.clone()));
 
                         // Handle appending instructions for statements
                         // recursively.
                         process_ast_statement(stmt, builder);
                     }
-                    parser::Labeled::Case { .. } => todo!(),
-                    parser::Labeled::Default { .. } => todo!(),
                 }
             }
             parser::Statement::Compound(block) => process_ast_block(block, builder),
@@ -458,9 +458,52 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                 }
 
                 builder.instructions.push(Instruction::Jump(start_label));
+
+                // Always emitting labels for `break` statements.
                 builder.instructions.push(Instruction::Label(break_label));
             }
-            parser::Statement::Switch { .. } => todo!(),
+            parser::Statement::Switch {
+                cond,
+                stmt,
+                cases,
+                default,
+                label,
+            } => {
+                let break_label = format!("break_{label}");
+
+                let lhs = generate_ir_value(cond, builder);
+
+                for (label, expr) in cases {
+                    let dst = Value::Var(builder.new_tmp());
+
+                    let rhs = generate_ir_value(expr, builder);
+
+                    builder.instructions.push(Instruction::Binary {
+                        op: BinaryOperator::Eq,
+                        lhs: lhs.clone(),
+                        rhs,
+                        dst: dst.clone(),
+                        sign: Signedness::Unsigned,
+                    });
+
+                    builder.instructions.push(Instruction::JumpIfNotZero {
+                        cond: dst,
+                        target: label.clone(),
+                    });
+                }
+
+                if let Some(default_label) = default {
+                    builder
+                        .instructions
+                        .push(Instruction::Jump(default_label.clone()));
+                }
+
+                // Handle appending instructions for statements recursively.
+                process_ast_statement(stmt, builder);
+
+                // Always emitting labels for `break` statements.
+                builder.instructions.push(Instruction::Label(break_label));
+            }
             parser::Statement::Empty => {}
         }
     }
