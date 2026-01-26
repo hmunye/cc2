@@ -48,16 +48,13 @@ fn main() {
     };
 
     let metadata = f.metadata().unwrap_or_else(|err| {
-        report_err!(&args.program, "failed to query preprocessed file: {err}");
+        report_err!(&args.program, "failed to query input file: {err}");
         process::exit(1);
     });
 
     let mut src = Vec::with_capacity(metadata.len() as usize);
     f.read_to_end(&mut src).unwrap_or_else(|err| {
-        report_err!(
-            &args.program,
-            "failed to read from preprocessed file: {err}"
-        );
+        report_err!(&args.program, "failed to read input file: {err}");
         process::exit(1);
     });
 
@@ -85,12 +82,14 @@ fn main() {
         "mir" => {
             let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
+
             let mir = compiler::mir::generate_x86_64_mir(&ir);
             print!("{mir}");
         }
         stage => {
             let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
+
             let mir = compiler::mir::generate_x86_64_mir(&ir);
 
             let output: Box<dyn Write> = if stage == "asm" {

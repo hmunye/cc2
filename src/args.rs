@@ -12,8 +12,8 @@ pub struct Args {
     pub program: String,
     /// Compilation phase to terminate at (optional).
     pub stage: String,
-    /// Indicates whether the input file should be preprocessed before
-    /// compiling.
+    /// Indicates whether the input file should be preprocessed before compiling
+    /// (optional).
     pub preprocess: bool,
     /// Path to input file (required).
     pub in_path: &'static Path,
@@ -32,8 +32,8 @@ impl Args {
 
         let mut stage = String::new();
         let mut preprocess = false;
-        let mut out_path = PathBuf::new();
         let mut in_path = String::new();
+        let mut out_path = PathBuf::new();
 
         while let Some(arg) = args.peek() {
             if arg.starts_with("-") {
@@ -41,7 +41,7 @@ impl Args {
                     .next()
                     .expect("already peeked the next argument, should be present");
 
-                if let Some(flag) = FLAG_REGISTRY
+                if let Some(flag) = PROGRAM_FLAGS
                     .iter()
                     .find(|flag| flag.names.contains(&flag_name.as_str()))
                 {
@@ -92,7 +92,7 @@ impl Args {
 
         // NOTE: Leaking `in_path` to ensure the input path is available for
         // error reporting during runtime. Could use `PathBuf` instead but the
-        // path will not be mutated. One less heap allocation.
+        // path will not be mutated. One less heap allocation I guess.
         let path = Path::new(in_path.leak());
         if !path.exists() {
             report_err!(&program, "'{}': no such file or directory", path.display());
@@ -128,7 +128,7 @@ struct Flag {
     run: Option<fn(&str) -> !>,
 }
 
-const FLAG_REGISTRY: &[Flag] = &[
+const PROGRAM_FLAGS: &[Flag] = &[
     Flag {
         names: ["-s", "--stage"],
         description: "          stop after the specified compilation phase and display its output: 'lex', 'parse', 'ir', 'mir', or 'asm'.",
@@ -152,30 +152,25 @@ const FLAG_REGISTRY: &[Flag] = &[
     Flag {
         names: ["-v", "--version"],
         description: "        show version.",
-        run: Some(print_version),
+        run: Some(|program: &str| -> ! {
+            println!(
+                "\x1b[1;1m{} - {}\x1b[0m",
+                program,
+                env!("CARGO_PKG_VERSION")
+            );
+            process::exit(0);
+        }),
     },
 ];
 
-/// Prints the usage information for the program. [Exits] with non-zero status.
-///
-/// [Exits]: std::process::exit
-pub fn print_usage(program: &str) -> ! {
+fn print_usage(program: &str) -> ! {
     eprintln!("\x1b[1;1musage:\x1b[0m");
     eprintln!("      {program} [options] <infile>");
     eprintln!("\x1b[1;1moptions:\x1b[0m");
 
-    for flag in FLAG_REGISTRY {
+    for flag in PROGRAM_FLAGS {
         eprintln!("   {}{}", flag.names.join(", "), flag.description);
     }
 
     process::exit(1);
-}
-
-fn print_version(program: &str) -> ! {
-    println!(
-        "\x1b[1;1m{} - {}\x1b[0m",
-        program,
-        env!("CARGO_PKG_VERSION")
-    );
-    process::exit(0);
 }

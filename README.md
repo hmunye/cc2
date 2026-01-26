@@ -12,7 +12,7 @@ Tiny C Compiler (subset of _C17_).
 
 ### Types
 
-- [x] `int` (32-bit integer on `x86-64` Linux)
+- [x] `int`
 
 ### Declarations
 

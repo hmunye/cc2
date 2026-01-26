@@ -166,14 +166,14 @@ impl fmt::Debug for OperatorKind {
     }
 }
 
-/// Types of lexical elements that can be emitted.
+/// Lexical elements that can be emitted.
 #[derive(Clone, PartialEq, Eq)]
 pub enum TokenType {
     /// Reserved word (e.g., `if`, `return`).
     Keyword(String),
-    /// Identifier (e.g., variable, function, types).
+    /// User-defined identifier.
     Ident(String),
-    /// Integer literal.
+    /// Integer constant (32-bit signed).
     IntConstant(i32),
     /// Operator token.
     Operator(OperatorKind),
@@ -229,7 +229,7 @@ impl fmt::Debug for TokenType {
     }
 }
 
-/// Location of an emitted token.
+/// Location of an emitted lexical `Token`.
 #[derive(Debug, Clone)]
 pub struct Location {
     pub file_path: &'static Path,
@@ -245,7 +245,7 @@ impl fmt::Display for Location {
     }
 }
 
-/// Minimal lexical element that can be emitted.
+/// Minimal lexical token that can be emitted.
 #[derive(Clone)]
 pub struct Token {
     pub loc: Location,
@@ -269,10 +269,9 @@ impl fmt::Debug for Token {
 pub struct Lexer<'a> {
     ctx: &'a Context<'a>,
     cur: usize,
-    // Tracks end of each source code line (index of newline).
+    // Index of the next `\n` for current line.
     line_end: usize,
-    // Index after an encountered newline (to calculate the current column and
-    // beginning of line span).
+    // Index of byte after last seen `\n`.
     bol: usize,
     line: usize,
 }
@@ -292,8 +291,8 @@ impl<'a> Lexer<'a> {
     }
 
     /// Skips over an identifier or keyword (_ASCII_ uppercase/lowercase letter
-    /// or '_'), returning a token.
-    fn consume_ident(&mut self) -> Result<Token> {
+    /// or `_`), returning a `Token`.
+    fn consume_ident(&mut self) -> Token {
         let col = self.col();
         let token_start = self.cur;
 
@@ -304,19 +303,24 @@ impl<'a> Lexer<'a> {
         let token = self.ctx.src_slice(token_start..self.cur);
 
         if KEYWORDS.contains(&token) {
-            Ok(Token {
+            Token {
                 ty: TokenType::Keyword(token.into()),
                 loc: self.token_loc(col),
-            })
+            }
         } else {
-            Ok(Token {
+            Token {
                 ty: TokenType::Ident(token.into()),
                 loc: self.token_loc(col),
-            })
+            }
         }
     }
 
-    /// Skips over an integer constant (32-bit), returning a token.
+    /// Skips over an integer constant (32-bit signed), returning a `Token`.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the constant contains an illegal suffix or cannot
+    /// be parsed as an `i32`.
     fn consume_constant(&mut self) -> Result<Token> {
         let col = self.col();
         let token_start = self.cur;
@@ -327,8 +331,8 @@ impl<'a> Lexer<'a> {
 
         // Identifier are not allowed to begin with digits.
         //
-        // NOTE: Currently don't allow '_' as a separator or suffixes.
-        if self.first().is_ascii_alphabetic() || self.first() == b'_' {
+        // NOTE: Currently don't allow `'` as a separator or any suffixes.
+        if self.first().is_ascii_alphabetic() || self.first() == b'\'' {
             let const_len = self.cur - token_start;
             let const_end = self.cur;
 
@@ -373,6 +377,62 @@ impl<'a> Lexer<'a> {
         })
     }
 
+    /// Skips over a line directive from `GCC` preprocessor (`gcc -E`) of the
+    /// form:
+    ///
+    /// ```text
+    ///     # <decimal-line> [ "<filename>" ] [ <decimal-flag>... ]
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the `<decimal-line>` cannot be parsed.
+    fn consume_line_directive(&mut self) -> Result<()> {
+        self.cur += 1;
+
+        self.consume_whitespace();
+
+        // Parse <decimal-line>.
+        let line_token = self.consume_constant()?;
+        let line = match line_token.ty {
+            TokenType::IntConstant(i) => i,
+            _ => unreachable!("line is parsed as an integer constant"),
+        };
+
+        debug_assert!(line >= 0);
+
+        // Part of the preprocessor prologue - skip it.
+        if line == 0 {
+            while self.has_next() && self.first() != b'\n' {
+                self.cur += 1;
+            }
+
+            self.consume_newline();
+
+            return Ok(());
+        }
+
+        // Accounts for the newline consumed later.
+        self.line = (line - 1) as usize;
+
+        // NOTE: Once string literals are supported, use that function for
+        // parsing [ "<filename>" ].
+        //
+        // self.consume_whitespace();
+
+        // NOTE: Currently don't parse [ <decimal-flag>... ].
+        //
+        // self.consume_whitespace();
+
+        while self.has_next() && self.first() != b'\n' {
+            self.cur += 1;
+        }
+
+        self.consume_newline();
+
+        Ok(())
+    }
+
     /// Skips over all consecutive _ASCII_ whitespace characters.
     const fn consume_whitespace(&mut self) {
         while self.has_next() && matches!(self.first(), b'\t' | b'\x0C' | b'\r' | b' ') {
@@ -394,7 +454,7 @@ impl<'a> Lexer<'a> {
         self.line_end = i;
     }
 
-    /// Returns the location for a token beginning at `col` within the source.
+    /// Returns the location for a `Token` beginning at `col` within the source.
     #[inline]
     const fn token_loc(&self, col: usize) -> Location {
         Location {
@@ -434,7 +494,7 @@ impl Iterator for Lexer<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.has_next() {
-            // Determine the span of the first line (special case since no '\n'
+            // Determine the span of the first line (special case since no `\n`
             // byte has been seen yet).
             if self.line_end == 0 {
                 let mut i = 0;
@@ -451,7 +511,12 @@ impl Iterator for Lexer<'_> {
                 b'\n' => self.consume_newline(),
                 b'\t' | b'\x0C' | b'\r' | b' ' => self.consume_whitespace(),
                 b'0'..=b'9' => return Some(self.consume_constant()),
-                b'a'..=b'z' | b'A'..=b'Z' | b'_' => return Some(self.consume_ident()),
+                b'a'..=b'z' | b'A'..=b'Z' | b'_' => return Some(Ok(self.consume_ident())),
+                b'#' => {
+                    if let Err(err) = self.consume_line_directive() {
+                        return Some(Err(err));
+                    }
+                }
                 b'~' => {
                     self.cur += 1;
 
@@ -779,57 +844,6 @@ impl Iterator for Lexer<'_> {
                         ty: TokenType::Semicolon,
                         loc: self.token_loc(col),
                     }));
-                }
-                // Handle line directives from preprocessor (`gcc -E`).
-                //
-                // ```
-                //     # <decimal-line> [ "<filename>" ] [ <decimal-flag>... ]
-                // ```
-                b'#' => {
-                    self.cur += 1;
-
-                    self.consume_whitespace();
-
-                    let line_token = match self.consume_constant() {
-                        Ok(token) => token,
-                        Err(err) => return Some(Err(err)),
-                    };
-
-                    // Parse <decimal-line>.
-                    let line = match line_token.ty {
-                        TokenType::IntConstant(l) => l,
-                        _ => unreachable!(),
-                    };
-
-                    debug_assert!(line >= 0);
-
-                    // Part of the preprocessor prologue - skip it.
-                    if line == 0 {
-                        while self.has_next() && self.first() != b'\n' {
-                            self.cur += 1;
-                        }
-
-                        self.consume_newline();
-                        continue;
-                    }
-
-                    // Accounts for the newline consumed later.
-                    self.line = (line - 1) as usize;
-
-                    // NOTE: Once string literals are supported, use that
-                    // function for parsing [ "<filename>" ].
-
-                    // self.consume_whitespace();
-
-                    // NOTE: Currently don't parse [ <decimal-flag>... ].
-
-                    // self.consume_whitespace();
-
-                    while self.has_next() && self.first() != b'\n' {
-                        self.cur += 1;
-                    }
-
-                    self.consume_newline();
                 }
                 b => {
                     self.cur += 1;

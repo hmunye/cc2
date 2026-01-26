@@ -55,6 +55,7 @@ pub enum Instruction {
         op: UnaryOperator,
         src: Value,
         dst: Value,
+        /// NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
     },
     /// Perform a binary operation on `lhs` and `rhs`, storing the result in
@@ -66,6 +67,7 @@ pub enum Instruction {
         lhs: Value,
         rhs: Value,
         dst: Value,
+        /// NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
     },
     /// Copies the value from `src` into `dst`.
@@ -86,7 +88,7 @@ impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Instruction::Return(v) => write!(f, "{:<17}{}", "Return", v),
-            Instruction::Unary { op, src, dst, sign } => {
+            Instruction::Unary { op, src, dst, .. } => {
                 let src_str = format!("{src}");
                 let len = src_str.len();
 
@@ -96,24 +98,13 @@ impl fmt::Display for Instruction {
                 write!(
                     f,
                     "{:<17}{src_str} {:>width$}  {dst}",
-                    format!(
-                        "{op:?}({})",
-                        if let Signedness::Signed = sign {
-                            "S"
-                        } else {
-                            "U"
-                        }
-                    ),
+                    format!("{op:?}"),
                     "->",
                     width = width
                 )
             }
             Instruction::Binary {
-                op,
-                lhs,
-                rhs,
-                dst,
-                sign,
+                op, lhs, rhs, dst, ..
             } => {
                 let lhs_str = format!("{lhs}");
                 let rhs_str = format!("{rhs}");
@@ -125,14 +116,7 @@ impl fmt::Display for Instruction {
                 write!(
                     f,
                     "{:<17}{lhs_str}, {rhs_str} {:>width$}  {dst}",
-                    format!(
-                        "{op:?}({})",
-                        if let Signedness::Signed = sign {
-                            "S"
-                        } else {
-                            "U"
-                        }
-                    ),
+                    format!("{op:?}"),
                     "->",
                     width = width
                 )
@@ -481,6 +465,7 @@ fn generate_ir_function(func: &ast::Function) -> Function {
                         lhs: lhs.clone(),
                         rhs,
                         dst: dst.clone(),
+                        // NOTE: Temporary hack for arithmetic right shift.
                         sign: Signedness::Unsigned,
                     });
 
@@ -552,6 +537,8 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
             // The sign of an _IR_ instruction is determined by the
             // sub-expressions (here `expr`), not by when the operator is
             // applied to them.
+            //
+            // NOTE: Temporary hack for arithmetic right shift.
             let sign = match **expr {
                 ast::Expression::Unary { sign, .. } => sign,
                 ast::Expression::Binary { sign, .. } => sign,
@@ -566,7 +553,6 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
 
             match op {
                 UnaryOperator::Increment | UnaryOperator::Decrement => {
-                    // NOTE: Ensure the `lvalue` is a variable for now.
                     debug_assert!(matches!(src, Value::Var(_)));
 
                     let binop = match op {
@@ -628,6 +614,8 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
             // The sign of an _IR_ instruction is determined by the
             // sub-expressions (here `expr`), not by when the operator is
             // applied to them.
+            //
+            // NOTE: Temporary hack for arithmetic right shift.
             let sign = match **lhs {
                 ast::Expression::Unary { sign, .. } => sign,
                 ast::Expression::Binary { sign, .. } => sign,

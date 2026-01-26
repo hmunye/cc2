@@ -646,6 +646,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                         instructions.push(Instruction::SetC(cond_code, dst));
                     }
                     _ => {
+                        // NOTE: Temporary hack for arithmetic right shift.
                         let binop =
                             if let ast::BinaryOperator::ShiftRight = op
                                 && let Signedness::Signed = sign

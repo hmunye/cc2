@@ -34,7 +34,6 @@ impl fmt::Display for AST {
 pub struct Function {
     /// Function identifier.
     pub ident: String,
-    /// Compound statement.
     pub body: Block,
 }
 
@@ -55,7 +54,7 @@ impl Block {
     fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let pad = "  ".repeat(indent);
 
-        writeln!(f, "{}Block {{", pad)?;
+        writeln!(f, "{}Block: {{", pad)?;
 
         for item in &self.0 {
             item.fmt_with_indent(f, indent + 2)?;
@@ -77,10 +76,10 @@ impl BlockItem {
         let pad = "  ".repeat(indent);
 
         match self {
+            BlockItem::Stmt(stmt) => stmt.fmt_with_indent(f, indent),
             BlockItem::Decl(decl) => {
                 writeln!(f, "{}Decl: {}", pad, decl)
             }
-            BlockItem::Stmt(stmt) => stmt.fmt_with_indent(f, indent),
         }
     }
 }
@@ -92,24 +91,27 @@ pub enum ForInit {
     Expr(Option<Expression>),
 }
 
-/// _AST_ labeled statements.
+/// _AST_ labeled statement.
 #[derive(Debug)]
 pub enum Labeled {
     Label {
         label: String,
-        token: Token,
         stmt: Box<Statement>,
+        /// `label` identifier token.
+        token: Token,
     },
     Case {
         // NOTE: Must be a constant-expression.
         expr: Expression,
-        token: Token,
+        /// `case` keyword token.
         stmt: Box<Statement>,
+        token: Token,
         label: String,
     },
     Default {
-        token: Token,
         stmt: Box<Statement>,
+        /// `default` keyword token.
+        token: Token,
         label: String,
     },
 }
@@ -127,12 +129,15 @@ pub enum Statement {
         /// Optional statement to execute when result of `cond` is zero.
         opt_else: Option<Box<Statement>>,
     },
+    /// (target label, `goto` keyword token).
     Goto((String, Token)),
     // Labeled statement.
     LabeledStatement(Labeled),
     // Compound statement.
     Compound(Block),
+    /// (label to jump, `break` keyword token).
     Break((String, Token)),
+    /// (label to jump, `continue` keyword token).
     Continue((String, Token)),
     While {
         cond: Expression,
@@ -145,7 +150,7 @@ pub enum Statement {
         label: String,
     },
     For {
-        // Heap-allocated to reduce total size of enum on the stack.
+        // NOTE: Heap-allocated to reduce total size on call-stack.
         init: Box<ForInit>,
         opt_cond: Option<Expression>,
         opt_post: Option<Expression>,
@@ -155,15 +160,12 @@ pub enum Statement {
     Switch {
         /// Controlling expression.
         cond: Expression,
-        /// Result of `cond` is used to determine which case label to begin
-        /// execution at.
         stmt: Box<Statement>,
-        // NOTE: Must be `Labeled::Case` label and expression.
-        //
-        // Each `case` label within the switch statement. Will be backpatched
-        // during semantic analysis.
+        /// (`Labeled::Case` label, case expression).
+        ///
+        /// Result of `cond` used to determine which case label to execute at.
         cases: Vec<(String, Expression)>,
-        // NOTE: Must be `Labeled::Default` label.
+        /// `Labeled::Default` label.
         default: Option<String>,
         label: String,
     },
@@ -287,19 +289,19 @@ impl Statement {
 /// _AST_ declaration.
 #[derive(Debug)]
 pub struct Declaration {
-    /// Stringifier of the variable.
+    /// Identifier of the variable.
     pub ident: String,
-    /// Token of the identifier.
-    pub token: Token,
     /// Optional initializer.
     pub init: Option<Expression>,
+    /// Declared identifier token.
+    pub token: Token,
 }
 
 impl fmt::Display for Declaration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.init {
             Some(expr) => write!(f, "{:?} = {}", self.ident, expr),
-            None => write!(f, "{} = uninit", self.ident),
+            None => write!(f, "{:?} = uninit", self.ident),
         }
     }
 }
@@ -307,14 +309,15 @@ impl fmt::Display for Declaration {
 /// _AST_ expression.
 #[derive(Debug, Clone)]
 pub enum Expression {
-    /// Constant `int` value (32-bit).
+    /// Integer constant (32-bit signed).
     IntConstant(i32),
-    /// Variable expression with identifier token.
+    /// (Variable identifier, identifier token).
     Var((String, Token)),
     /// Unary operator applied to an expression.
     Unary {
         op: UnaryOperator,
         expr: Box<Expression>,
+        /// NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
         prefix: bool,
     },
@@ -323,12 +326,14 @@ pub enum Expression {
         op: BinaryOperator,
         lhs: Box<Expression>,
         rhs: Box<Expression>,
+        /// NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
     },
-    /// Assigns an `rvalue` to an `lvalue`, with assignment operator token.
+    /// Assigns an `rvalue` to an `lvalue`.
     Assignment {
         lvalue: Box<Expression>,
         rvalue: Box<Expression>,
+        /// Assignment operator token.
         token: Token,
     },
     /// Ternary expression which evaluates the first expression and returns the
@@ -339,7 +344,7 @@ pub enum Expression {
 impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expression::IntConstant(i) => write!(f, "IntConstant({})", i),
+            Expression::IntConstant(i) => write!(f, "IntConst({})", i),
             Expression::Var((ident, _)) => write!(f, "Var({:?})", ident),
             Expression::Unary {
                 op, expr, prefix, ..
@@ -363,7 +368,7 @@ impl fmt::Display for Expression {
     }
 }
 
-/// _AST_ unary operators.
+/// _AST_ unary operator.
 #[derive(Debug, Clone, Copy)]
 pub enum UnaryOperator {
     /// `~` - unary operator.
@@ -391,7 +396,7 @@ impl fmt::Display for UnaryOperator {
     }
 }
 
-/// _AST_ binary operators.
+/// _AST_ binary operator.
 #[derive(Debug, Clone, Copy)]
 pub enum BinaryOperator {
     /// `+` - binary operator.
@@ -511,37 +516,30 @@ impl fmt::Display for BinaryOperator {
             BinaryOperator::Multiply => "*",
             BinaryOperator::Divide => "/",
             BinaryOperator::Modulo => "%",
-
             BinaryOperator::BitAnd => "&",
             BinaryOperator::BitOr => "|",
             BinaryOperator::BitXor => "^",
-
             BinaryOperator::ShiftLeft => "<<",
             BinaryOperator::ShiftRight => ">>",
-
             BinaryOperator::LogAnd => "&&",
             BinaryOperator::LogOr => "||",
-
             BinaryOperator::Eq => "==",
             BinaryOperator::NotEq => "!=",
             BinaryOperator::OrdLess => "<",
             BinaryOperator::OrdLessEq => "<=",
             BinaryOperator::OrdGreater => ">",
             BinaryOperator::OrdGreaterEq => ">=",
-
             BinaryOperator::Assign => "=",
             BinaryOperator::AssignAdd => "+=",
             BinaryOperator::AssignSubtract => "-=",
             BinaryOperator::AssignMultiply => "*=",
             BinaryOperator::AssignDivide => "/=",
             BinaryOperator::AssignModulo => "%=",
-
             BinaryOperator::AssignBitAnd => "&=",
             BinaryOperator::AssignBitOr => "|=",
             BinaryOperator::AssignBitXor => "^=",
             BinaryOperator::AssignShiftLeft => "<<=",
             BinaryOperator::AssignShiftRight => ">>=",
-
             BinaryOperator::Conditional => "?",
         };
         write!(f, "{op}")
@@ -604,7 +602,7 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
     });
 
     // Pass 3 - Control-flow labeling.
-    sema::resolve_breakable_ctrl(&mut ast, ctx).unwrap_or_else(|err| {
+    sema::resolve_escapable_ctrl(&mut ast, ctx).unwrap_or_else(|err| {
         if cfg!(test) {
             panic!("{err}");
         }
@@ -627,19 +625,20 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 }
 
 /// Parses an _AST_ function definition from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a function could not be parsed.
 fn parse_function<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
 ) -> Result<Function> {
-    // NOTE: Currently only support the `int` type.
     expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
+
     let (ident, _) = parse_ident(ctx, iter)?;
 
     expect_token(ctx, iter, TokenType::LParen)?;
-
-    // NOTE: Currently not processing function parameters.
     expect_token(ctx, iter, TokenType::Keyword("void".into()))?;
-
     expect_token(ctx, iter, TokenType::RParen)?;
 
     let block = parse_block(ctx, iter)?;
@@ -648,6 +647,10 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
 }
 
 /// Parse an _AST_ block from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a block could not be parsed.
 fn parse_block<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -671,6 +674,10 @@ fn parse_block<I: Iterator<Item = Result<Token>>>(
 }
 
 /// Parse an _AST_ block item from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a block item could not be parsed.
 fn parse_block_item<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -693,11 +700,14 @@ fn parse_block_item<I: Iterator<Item = Result<Token>>>(
 }
 
 /// Parse an _AST_ declaration from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a declaration could not be parsed.
 fn parse_declaration<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
 ) -> Result<Declaration> {
-    // NOTE: Currently only support the `int` type.
     expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
 
     let (ident, token) = parse_ident(ctx, iter)?;
@@ -718,6 +728,10 @@ fn parse_declaration<I: Iterator<Item = Result<Token>>>(
 }
 
 /// Parse an _AST_ `for` initial clause from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a `for` statement initial clause could not be parsed.
 fn parse_for_init<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -745,6 +759,10 @@ fn parse_for_init<I: Iterator<Item = Result<Token>>>(
 }
 
 /// Parse an _AST_ statement from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a statement could not be parsed.
 fn parse_statement<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -875,7 +893,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 expect_token(ctx, iter, TokenType::LParen)?;
 
-                let init = parse_for_init(ctx, iter)?;
+                let opt_init = parse_for_init(ctx, iter)?;
 
                 let opt_cond = parse_opt_expression(ctx, iter, TokenType::Semicolon)?;
                 expect_token(ctx, iter, TokenType::Semicolon)?;
@@ -886,7 +904,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 let stmt = parse_statement(ctx, iter)?;
 
                 Ok(Statement::For {
-                    init: Box::new(init),
+                    init: Box::new(opt_init),
                     opt_cond,
                     opt_post,
                     stmt: Box::new(stmt),
@@ -987,7 +1005,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
             _ => {
                 let expr = parse_expression(ctx, iter, 0)?;
 
-                // A labeled statement encountered - next token is colon (`:`).
+                // Labeled statement encountered if next token is colon (`:`).
                 if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
                     && let TokenType::Colon = token.ty
                 {
@@ -1031,6 +1049,10 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 }
 
 /// Parse an _AST_ identifier from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if an identifier could not be parsed.
 fn parse_ident<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1065,6 +1087,10 @@ fn parse_ident<I: Iterator<Item = Result<Token>>>(
 
 /// Parse an _AST_ expression from the provided `Token` iterator using
 /// `precedence climbing`.
+///
+/// # Errors
+///
+/// Will return `Err` if an expression could not be parsed.
 fn parse_expression<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1176,8 +1202,38 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
     Ok(lhs)
 }
 
+/// Parse an _AST_ expression from the provided `Token` iterator, or `None` if
+/// the `end_token` is encountered first.
+///
+/// # Errors
+///
+/// Will return `Err` if an optional expression could not be parsed.
+fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+    end_token: TokenType,
+) -> Result<Option<Expression>> {
+    if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        if token.ty == end_token {
+            // Not consuming the `end_token`.
+            Ok(None)
+        } else {
+            Ok(Some(parse_expression(ctx, iter, 0)?))
+        }
+    } else {
+        Err(fmt_err!(
+            ctx.in_path.display(),
+            "expected '{end_token}' or '<expr>' at end of input",
+        ))
+    }
+}
+
 /// Parse an _AST_ expression or sub-expression (factor) from the provided
 /// `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a factor could not be parsed.
 fn parse_factor<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1227,6 +1283,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                     Ok(Expression::Unary {
                         op: unop,
                         expr: Box::new(Expression::Var((s.clone(), token))),
+                        // NOTE: Temporary hack for arithmetic right shift.
                         sign: Signedness::Unsigned,
                         // Postfix unary operator.
                         prefix: false,
@@ -1323,29 +1380,12 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
     }
 }
 
-/// Parse an _AST_ expression from the provided `Token` iterator, or `None` if
-/// the `end_token` is encountered first.
-fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
-    ctx: &Context<'_>,
-    iter: &mut std::iter::Peekable<I>,
-    end_token: TokenType,
-) -> Result<Option<Expression>> {
-    if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
-        if token.ty == end_token {
-            // Not consuming the `end_token`.
-            Ok(None)
-        } else {
-            Ok(Some(parse_expression(ctx, iter, 0)?))
-        }
-    } else {
-        Err(fmt_err!(
-            ctx.in_path.display(),
-            "expected '{end_token}' or '<expr>' at end of input",
-        ))
-    }
-}
-
 /// Advance the `Token` iterator if it matches the expected token type.
+///
+/// # Errors
+///
+/// Will return `Err` if the next token does not match the expected token type
+/// provided.
 fn expect_token<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1660,6 +1700,15 @@ mod tests {
     #[test]
     fn parser_valid_bin_bit_shift() {
         let source = b"int main(void) {\n    return 33 << 4 >> 2;\n}";
+        let ctx = test_ctx(source);
+
+        let lexer = crate::compiler::lexer::Lexer::new(&ctx);
+        parse_program(&ctx, lexer.peekable());
+    }
+
+    #[test]
+    fn parser_valid_redeclaration_different_scopes() {
+        let source = b"int main(void) {\n    int x = 1;\n    {\n        int x = 2;\n    }\n    {\n        int x = 3;\n    }\n    return x;\n}";
         let ctx = test_ctx(source);
 
         let lexer = crate::compiler::lexer::Lexer::new(&ctx);

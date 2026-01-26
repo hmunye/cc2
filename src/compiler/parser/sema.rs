@@ -13,7 +13,7 @@ use crate::{Context, fmt_token_err};
 
 /// Helper to track the current scope for symbol resolution.
 struct Scope {
-    stack: Vec<usize>,
+    scopes: Vec<usize>,
     next_scope: usize,
 }
 
@@ -21,29 +21,27 @@ impl Scope {
     #[inline]
     fn new() -> Self {
         Scope {
-            stack: vec![0], // Function scope.
+            scopes: vec![0], // Function scope.
             next_scope: 1,
         }
     }
 
     #[inline]
     fn current_scope(&self) -> usize {
-        *self
-            .stack
-            .last()
-            .expect("there should always be a current scope")
+        *self.scopes.last().unwrap_or(&0)
     }
 
     #[inline]
     fn enter_scope(&mut self) {
         let scope = self.next_scope;
         self.next_scope += 1;
-        self.stack.push(scope);
+
+        self.scopes.push(scope);
     }
 
     #[inline]
     fn exit_scope(&mut self) {
-        self.stack.pop();
+        self.scopes.pop();
     }
 }
 
@@ -53,18 +51,18 @@ impl Default for Scope {
     }
 }
 
-/// Helper for _AST_ to perform semantic analysis on symbols.
+/// Helper to perform semantic analysis on symbols within an _AST_.
 #[derive(Default)]
 struct SymbolResolver {
-    // key = (symbol, scope), value = resolved identifier
+    /// `key` = (ident, scope)
+    ///
+    /// `value` = resolved symbol
     symbol_map: HashMap<(String, usize), String>,
-    // Used to track current scope.
     scope: Scope,
 }
 
 impl SymbolResolver {
-    /// Returns a new temporary variable identifier, appending the current
-    /// scope to the provided prefix.
+    /// Returns a new temporary variable identifier using the provided prefix.
     #[inline]
     fn new_tmp(&self, prefix: &str) -> String {
         // The `@` in variable identifiers guarantees they won’t conflict
@@ -82,7 +80,7 @@ impl SymbolResolver {
     }
 
     /// Returns a unique identifier for the given `symbol`, recording the
-    /// declaration for the current scope.
+    /// declaration in the current scope.
     fn declare_symbol(&mut self, symbol: &str) -> String {
         let resolved_ident = self.new_tmp(symbol);
 
@@ -91,6 +89,7 @@ impl SymbolResolver {
             resolved_ident.clone(),
         );
 
+        // Ensure the key was not present before insertion.
         debug_assert!(res.is_none());
 
         resolved_ident
@@ -117,25 +116,26 @@ impl SymbolResolver {
     }
 }
 
-/// Helper for _AST_ to perform semantic analysis on label/`goto` statements.
+/// Helper to perform semantic analysis on label/`goto` statements within an
+/// _AST_.
+///
+/// Labels live in a different namespace from ordinary identifiers (variables,
+/// functions, types, etc.) within the same function scope, so they are
+/// collected separately.
 #[derive(Default)]
 struct LabelResolver<'a> {
-    // key = label
+    /// `key` = label
     labels: HashSet<&'a str>,
-    // Collected label–token pairs for every `goto` statement within a function
-    // scope. After recording all local labels, a later pass verifies that each
-    // target label exists within the same scope.
+    /// Collected label–token pairs for every `goto` statement within a function
+    /// scope.
     pending_gotos: Vec<(&'a str, &'a Token)>,
 }
 
 impl<'a> LabelResolver<'a> {
     /// Returns `true` if the label was not encountered in the current function
-    /// scope and records it as seen.
+    /// scope, recording it as seen.
     #[inline]
     fn mark_label(&mut self, label: &'a str) -> bool {
-        // Labels live in a different namespace from ordinary identifiers
-        // (variables, functions, types, etc.) within the same function scope,
-        // so they are collected separately.
         self.labels.insert(label)
     }
 
@@ -147,8 +147,12 @@ impl<'a> LabelResolver<'a> {
     }
 
     /// Validates all pending `goto` statements and ensures they point to valid
-    /// targets within the current function scope. On `Err`, returns the
-    /// (label, token) pair of the missing target.
+    /// targets within the current function scope.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` with (label, token) pair of the missing target if it
+    /// was not found in the current function scope.
     fn check_gotos(&self) -> core::result::Result<(), (&'a str, &'a Token)> {
         for (label, token) in &self.pending_gotos {
             if !self.labels.contains(label) {
@@ -160,7 +164,7 @@ impl<'a> LabelResolver<'a> {
     }
 }
 
-/// Kind of a breakable control-flow statement.
+/// Kind of a escapable control-flow statement.
 enum CtrlKind {
     /// A loop statement (`for`, `while`, `do-while`).
     Loop,
@@ -168,24 +172,24 @@ enum CtrlKind {
     Switch,
 }
 
-/// Uniquely labeled breakable control-flow statement.
+/// Uniquely labeled escapable control-flow statement.
 struct CtrlLabel<'a> {
     label: &'a str,
     kind: CtrlKind,
 }
 
-/// Helper for _AST_ to uniquely label all breakable control-flow statements
-/// (loops/switches) and to resolve `break` and `continue` targets during
-/// semantic analysis.
+/// Helper to uniquely label all escapable control-flow statements
+/// (loops/switches) and resolve `break` and `continue` targets during
+/// semantic analysis within an _AST_.
 #[derive(Default)]
 struct CtrlResolver<'a> {
-    ctrl_labels: Vec<CtrlLabel<'a>>,
+    labels: Vec<CtrlLabel<'a>>,
     loop_count: usize,
     switch_count: usize,
 }
 
 impl<'a> CtrlResolver<'a> {
-    /// Returns a new unique label identifier.
+    /// Returns a new unique label identifier based on the provided `CtrlKind`.
     #[inline]
     fn new_label(&mut self, kind: CtrlKind) -> String {
         // The `.` in variable identifiers guarantees they won’t conflict
@@ -209,20 +213,20 @@ impl<'a> CtrlResolver<'a> {
     /// `label` and `kind`.
     #[inline]
     fn enter_ctx(&mut self, label: &'a str, kind: CtrlKind) {
-        self.ctrl_labels.push(CtrlLabel { label, kind });
+        self.labels.push(CtrlLabel { label, kind });
     }
 
     /// Ends the most recent control-flow context (loop/switch).
     #[inline]
     fn exit_ctx(&mut self) {
-        self.ctrl_labels.pop();
+        self.labels.pop();
     }
 
     /// Returns a reference to the current active control-flow context, or
-    /// `None` if no loop/switch is active.
+    /// `None` if no context is available.
     #[inline]
     fn current_ctrl(&self) -> Option<&'a CtrlLabel<'_>> {
-        self.ctrl_labels.last()
+        self.labels.last()
     }
 }
 
@@ -232,20 +236,23 @@ enum LabelKind {
     Default,
 }
 
-type SwitchContext = (HashSet<i32>, Option<String>, Vec<(String, Expression)>);
-type ScopedSwitches = HashMap<String, SwitchContext>;
+/// `key` = switch statement label
+///
+/// `value` = (case values, default label, case label/expression list)
+type ScopedSwitches = HashMap<String, (HashSet<i32>, Option<String>, Vec<(String, Expression)>)>;
 
 /// Helper for _AST_ to perform semantic analysis on `switch` statement cases.
 #[derive(Default)]
 struct SwitchResolver<'a> {
     scope_cases: ScopedSwitches,
+    /// Stack of switch statement labels.
     labels: Vec<&'a str>,
     case_count: usize,
     default_count: usize,
 }
 
 impl<'a> SwitchResolver<'a> {
-    /// Returns a new unique label identifier, prepending the given prefix.
+    /// Returns a new unique label identifier based on the provided `LabelKind`.
     #[inline]
     fn new_label(&mut self, kind: LabelKind) -> String {
         // The `.` in variable identifiers guarantees they won’t conflict
@@ -253,21 +260,20 @@ impl<'a> SwitchResolver<'a> {
         // identifiers.
         match kind {
             LabelKind::Case => {
-                let label = format!("case_label.{}", self.case_count);
+                let label = format!("case.{}", self.case_count);
                 self.case_count += 1;
                 label
             }
             LabelKind::Default => {
-                let label = format!("default_label.{}", self.default_count);
+                let label = format!("default.{}", self.default_count);
                 self.default_count += 1;
                 label
             }
         }
     }
 
-    /// Returns the unique label for the given `case` expression if it has not
-    /// been encountered in the current switch context, or `None` if it has
-    /// been seen.
+    /// Returns a unique label for the given `case` expression, or `None` if it
+    /// has been encountered within the current `switch` context.
     #[inline]
     fn mark_case(&mut self, label: String, expr: &Expression) -> Option<String> {
         let case_label = self.new_label(LabelKind::Case);
@@ -280,8 +286,7 @@ impl<'a> SwitchResolver<'a> {
         entry.2.push((case_label.clone(), expr.clone()));
 
         // NOTE: Update when constant-expression eval is available to the
-        // compiler. Relying on the invariant of each `case` expression being an
-        // integer constant.
+        // compiler.
         let val = match expr {
             Expression::IntConstant(i) => *i,
             _ => unreachable!(),
@@ -294,9 +299,8 @@ impl<'a> SwitchResolver<'a> {
         }
     }
 
-    /// Returns the unique label for the given `default` statement if it has not
-    /// been encountered in the current switch context, or `None` if one has
-    /// been seen.
+    /// Returns a unique label for the given `default` statement label, or
+    /// `None` if one has been encountered within the current `switch` context.
     #[inline]
     fn mark_default(&mut self, label: String) -> Option<String> {
         let default_label = self.new_label(LabelKind::Default);
@@ -314,18 +318,18 @@ impl<'a> SwitchResolver<'a> {
         }
     }
 
-    /// Begins a new switch context with the specified `label`.
+    /// Begins a new `switch` context with the specified `label`.
     #[inline]
     fn enter_switch(&mut self, label: &'a str) {
         self.labels.push(label);
     }
 
-    /// Ends the most recent switch context, draining the collected cases within
-    /// the context to the provided container.
+    /// Ends the most recent `switch` context, appending the collected cases to
+    /// the provided container.
     #[inline]
     fn exit_switch(&mut self, cases: &mut Vec<(String, Expression)>) {
         let label = self
-            .current_ctx()
+            .current_switch()
             .expect("exit_switch should always be called in the context of a switch")
             .to_string();
 
@@ -335,29 +339,30 @@ impl<'a> SwitchResolver<'a> {
             .expect("entry should always exist for current label in exit_switch");
 
         self.labels.pop();
+
         cases.append(&mut entry.2);
     }
 
-    /// Returns a reference to the label of the active switch context, or `None`
-    /// if no switch is active.
+    /// Returns a reference to the label of the active `switch` context, or
+    /// `None` if no context is available.
     #[inline]
-    fn current_ctx(&self) -> Option<&'a &str> {
+    fn current_switch(&self) -> Option<&'a &str> {
         self.labels.last()
     }
 
     /// Returns the `default` statement label if one has been encountered in the
-    /// current switch context.
+    /// current `switch` context.
     #[inline]
-    fn current_default(&mut self) -> Option<String> {
-        let label = self.current_ctx()?.to_string();
+    fn current_default_lbl(&mut self) -> Option<String> {
+        let label = self.current_switch()?.to_string();
         let entry = self.scope_cases.get_mut(&label)?;
 
         entry.1.take()
     }
 }
 
-/// Assigns a unique identifier to every variable and performs semantic
-/// checks (e.g., duplicate definitions, undeclared references).
+/// Assigns a unique identifier to every variable and performs semantic checks
+/// (e.g., duplicate definitions, undeclared references).
 pub fn resolve_variables(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
     fn resolve_block(
         block: &mut Block,
@@ -463,16 +468,16 @@ pub fn resolve_variables(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
             } => {
                 let enter_scope = matches!(&**init, ForInit::Decl(_));
 
-                // New scope introduced enclosing for-loop header and body.
                 if enter_scope {
                     resolver.scope.enter_scope();
                 }
 
                 match &mut **init {
+                    // New scope introduced enclosing for-loop header and body.
                     ForInit::Decl(decl) => {
                         resolve_declaration(decl, ctx, resolver)?;
                     }
-                    // No new scope introduced - use current scope.
+                    // No new scope introduced - using current scope.
                     ForInit::Expr(opt_init) => {
                         if let Some(init) = opt_init {
                             resolve_expression(init, ctx, resolver)?;
@@ -539,15 +544,14 @@ pub fn resolve_variables(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
             },
             Expression::Var((v, token)) => {
                 if let Some(ident) = resolver.resolve_symbol(v) {
-                    // Use the unique variable identifier mapped from the
-                    // original symbol.
+                    // Use the unique symbol mapped from the original
+                    // identifier.
                     *v = ident;
-                    Ok(())
                 } else {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-                    Err(fmt_token_err!(
+                    return Err(fmt_token_err!(
                         token.loc.file_path.display(),
                         token.loc.line,
                         token.loc.col,
@@ -555,8 +559,10 @@ pub fn resolve_variables(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
                         tok_str.len() - 1,
                         line_content,
                         "'{tok_str}' undeclared",
-                    ))
+                    ));
                 }
+
+                Ok(())
             }
             Expression::Unary { expr, .. } => resolve_expression(expr, ctx, resolver),
             Expression::Binary { lhs, rhs, .. } => {
@@ -579,9 +585,8 @@ pub fn resolve_variables(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
     }
 }
 
-/// Ensures every label declared is unique within it's function scope
-/// and performs semantic checks (e.g., missing `goto` targets, unreachable
-/// labels).
+/// Ensures every label declared is unique within it's function scope and
+/// performs semantic checks (e.g., missing `goto` targets, unreachable labels).
 pub fn resolve_labels(ast: &AST, ctx: &Context<'_>) -> Result<()> {
     fn resolve_block<'a>(
         block: &'a Block,
@@ -683,10 +688,10 @@ pub fn resolve_labels(ast: &AST, ctx: &Context<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Assigns unique labels to all active breakable control-flow statements
+/// Assigns unique labels to all escapable control-flow statements
 /// (loops/switches) and resolves `break`/`continue` targets, as well as
-/// performing semantic checks.
-pub fn resolve_breakable_ctrl(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
+/// performing semantic checks (e.g., invalid `break`/`continue` location).
+pub fn resolve_escapable_ctrl(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
     fn resolve_block<'a>(
         block: &'a mut Block,
         ctx: &Context<'_>,
@@ -800,7 +805,8 @@ pub fn resolve_breakable_ctrl(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
 }
 
 /// Collects all `case` and `default` labels for each `switch` statement, as
-/// well as performing semantic checks.
+/// well as performing semantic checks (e.g., duplicate `case`,
+/// duplicate `default`, invalid `case`/`default` location).
 pub fn resolve_switches(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
     fn resolve_block<'a>(
         block: &'a mut Block,
@@ -833,7 +839,7 @@ pub fn resolve_switches(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
 
                 resolve_statement(stmt, ctx, resolver)?;
 
-                *default = resolver.current_default();
+                *default = resolver.current_default_lbl();
 
                 resolver.exit_switch(cases);
             }
@@ -848,7 +854,7 @@ pub fn resolve_switches(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
                     label,
                     ..
                 } => {
-                    if let Some(ctx_label) = resolver.current_ctx() {
+                    if let Some(ctx_label) = resolver.current_switch() {
                         if let Some(case_label) = resolver.mark_case(ctx_label.to_string(), expr) {
                             *label = case_label;
                         } else {
@@ -883,7 +889,7 @@ pub fn resolve_switches(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
                     resolve_statement(stmt, ctx, resolver)?;
                 }
                 Labeled::Default { token, stmt, label } => {
-                    if let Some(ctx_label) = resolver.current_ctx() {
+                    if let Some(ctx_label) = resolver.current_switch() {
                         if let Some(default_label) = resolver.mark_default(ctx_label.to_string()) {
                             *label = default_label;
                         } else {
