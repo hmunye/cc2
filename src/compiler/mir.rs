@@ -8,9 +8,7 @@ use std::collections::hash_map::Entry;
 use std::fmt;
 
 use crate::compiler::ir::{self, IR};
-use crate::compiler::parser::{self, Signedness};
-
-type Ident = String;
+use crate::compiler::parser::ast::{self, Signedness};
 
 /// Machine _IR_: structured _x86-64_ assembly representation.
 #[derive(Debug)]
@@ -23,7 +21,7 @@ impl MIRX86 {
     /// Replaces each _pseudoregister_ encountered with a stack offset,
     /// returning the stack offset of the final temporary variable.
     fn replace_pseudo_registers(&mut self) -> i32 {
-        let mut map: HashMap<Ident, i32> = Default::default();
+        let mut map: HashMap<String, i32> = Default::default();
 
         // Currently allocating in 4-byte offsets.
         let mut stack_offset = 0;
@@ -298,7 +296,7 @@ impl fmt::Display for MIRX86 {
 /// _MIR_ function definition.
 #[derive(Debug)]
 pub struct Function {
-    pub label: Ident,
+    pub label: String,
     pub instructions: Vec<Instruction>,
 }
 
@@ -334,15 +332,15 @@ pub enum Instruction {
     Cdq,
     /// Unconditionally jump to the point instructions after the label
     /// identifier.
-    Jmp(Ident),
+    Jmp(String),
     /// Conditionally jump to the point instructions after the label
     /// identifier, based on the conditional code.
-    JmpC(CondCode, Ident),
+    JmpC(CondCode, String),
     /// Move the value of the bit in `RFLAGS` based on the conditional code to
     /// the operand destination (1-byte).
     SetC(CondCode, Operand),
     /// Associates an "identifier" with instruction(s).
-    Label(Ident),
+    Label(String),
     /// Subtract the specified number of bytes from `rsp` register.
     StackAlloc(i32),
     /// Yields control back to the caller.
@@ -418,7 +416,7 @@ pub enum Operand {
     /// Register name.
     Register(Reg),
     /// Pseudoregister to represent temporary variable.
-    Pseudo(Ident),
+    Pseudo(String),
     /// Stack address with the specified offset from the `RBP` register.
     Stack(i32),
 }
@@ -514,20 +512,20 @@ pub enum BinaryOperator {
     Sar,
 }
 
-impl TryFrom<&parser::BinaryOperator> for BinaryOperator {
+impl TryFrom<&ast::BinaryOperator> for BinaryOperator {
     type Error = ();
 
-    fn try_from(binop: &parser::BinaryOperator) -> Result<Self, Self::Error> {
+    fn try_from(binop: &ast::BinaryOperator) -> Result<Self, Self::Error> {
         match binop {
-            parser::BinaryOperator::Add => Ok(BinaryOperator::Add),
-            parser::BinaryOperator::Subtract => Ok(BinaryOperator::Sub),
-            parser::BinaryOperator::Multiply => Ok(BinaryOperator::Imul),
-            parser::BinaryOperator::BitAnd => Ok(BinaryOperator::And),
-            parser::BinaryOperator::BitOr => Ok(BinaryOperator::Or),
-            parser::BinaryOperator::BitXor => Ok(BinaryOperator::Xor),
-            parser::BinaryOperator::ShiftLeft => Ok(BinaryOperator::Shl),
+            ast::BinaryOperator::Add => Ok(BinaryOperator::Add),
+            ast::BinaryOperator::Subtract => Ok(BinaryOperator::Sub),
+            ast::BinaryOperator::Multiply => Ok(BinaryOperator::Imul),
+            ast::BinaryOperator::BitAnd => Ok(BinaryOperator::And),
+            ast::BinaryOperator::BitOr => Ok(BinaryOperator::Or),
+            ast::BinaryOperator::BitXor => Ok(BinaryOperator::Xor),
+            ast::BinaryOperator::ShiftLeft => Ok(BinaryOperator::Shl),
             // Defaults to logical `shr` operator instead of arithmetic.
-            parser::BinaryOperator::ShiftRight => Ok(BinaryOperator::Shr),
+            ast::BinaryOperator::ShiftRight => Ok(BinaryOperator::Shr),
             _ => Err(()),
         }
     }
@@ -574,7 +572,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
             ir::Instruction::Unary { op, src, dst, .. } => {
                 let dst = generate_mir_operand(dst);
 
-                if let parser::UnaryOperator::Not = op {
+                if let ast::UnaryOperator::Not = op {
                     instructions.push(Instruction::Cmp(
                         Operand::Imm32(0),
                         generate_mir_operand(src),
@@ -585,8 +583,8 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                     instructions.push(Instruction::SetC(CondCode::E, dst));
                 } else {
                     let unop = match op {
-                        parser::UnaryOperator::Complement => UnaryOperator::Not,
-                        parser::UnaryOperator::Negate => UnaryOperator::Neg,
+                        ast::UnaryOperator::Complement => UnaryOperator::Not,
+                        ast::UnaryOperator::Negate => UnaryOperator::Neg,
                         _ => unreachable!(),
                     };
 
@@ -604,7 +602,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 let dst = generate_mir_operand(dst);
 
                 match op {
-                    parser::BinaryOperator::Divide | parser::BinaryOperator::Modulo => {
+                    ast::BinaryOperator::Divide | ast::BinaryOperator::Modulo => {
                         instructions.push(Instruction::Mov(
                             generate_mir_operand(lhs),
                             Operand::Register(Reg::AX),
@@ -612,7 +610,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                         instructions.push(Instruction::Cdq);
                         instructions.push(Instruction::Idiv(generate_mir_operand(rhs)));
 
-                        let src = if let parser::BinaryOperator::Divide = op {
+                        let src = if let ast::BinaryOperator::Divide = op {
                             // Quotient is in `eax` register.
                             Operand::Register(Reg::AX)
                         } else {
@@ -622,19 +620,19 @@ fn generate_mir_function(func: &ir::Function) -> Function {
 
                         instructions.push(Instruction::Mov(src, dst));
                     }
-                    parser::BinaryOperator::OrdGreater
-                    | parser::BinaryOperator::OrdLess
-                    | parser::BinaryOperator::OrdLessEq
-                    | parser::BinaryOperator::OrdGreaterEq
-                    | parser::BinaryOperator::Eq
-                    | parser::BinaryOperator::NotEq => {
+                    ast::BinaryOperator::OrdGreater
+                    | ast::BinaryOperator::OrdLess
+                    | ast::BinaryOperator::OrdLessEq
+                    | ast::BinaryOperator::OrdGreaterEq
+                    | ast::BinaryOperator::Eq
+                    | ast::BinaryOperator::NotEq => {
                         let cond_code = match op {
-                            parser::BinaryOperator::OrdGreater => CondCode::G,
-                            parser::BinaryOperator::OrdLess => CondCode::L,
-                            parser::BinaryOperator::OrdLessEq => CondCode::LE,
-                            parser::BinaryOperator::OrdGreaterEq => CondCode::GE,
-                            parser::BinaryOperator::Eq => CondCode::E,
-                            parser::BinaryOperator::NotEq => CondCode::NE,
+                            ast::BinaryOperator::OrdGreater => CondCode::G,
+                            ast::BinaryOperator::OrdLess => CondCode::L,
+                            ast::BinaryOperator::OrdLessEq => CondCode::LE,
+                            ast::BinaryOperator::OrdGreaterEq => CondCode::GE,
+                            ast::BinaryOperator::Eq => CondCode::E,
+                            ast::BinaryOperator::NotEq => CondCode::NE,
                             _ => unreachable!(),
                         };
 
@@ -648,19 +646,20 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                         instructions.push(Instruction::SetC(cond_code, dst));
                     }
                     _ => {
-                        let binop = if let parser::BinaryOperator::ShiftRight = op
-                            && let Signedness::Signed = sign
-                        {
-                            // Since the shift-right instruction is determined
-                            // to be signed, use an arithmetic right shift
-                            // instead of logical.
-                            BinaryOperator::Sar
-                        } else {
-                            op.try_into().unwrap_or_else(|_| panic!(
-                                "parser::BinaryOperator '{:?}' is an invalid mir::BinaryOperator",
+                        let binop =
+                            if let ast::BinaryOperator::ShiftRight = op
+                                && let Signedness::Signed = sign
+                            {
+                                // Since the shift-right instruction is determined
+                                // to be signed, use an arithmetic right shift
+                                // instead of logical.
+                                BinaryOperator::Sar
+                            } else {
+                                op.try_into().unwrap_or_else(|_| panic!(
+                                "ast::BinaryOperator '{:?}' is an invalid mir::BinaryOperator",
                                 op
                             ))
-                        };
+                            };
 
                         instructions.push(Instruction::Mov(generate_mir_operand(lhs), dst.clone()));
                         // ```

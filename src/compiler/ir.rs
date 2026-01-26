@@ -5,9 +5,7 @@
 
 use std::fmt;
 
-use crate::compiler::parser::{self, BinaryOperator, Signedness, UnaryOperator};
-
-type Ident = String;
+use crate::compiler::parser::ast::{self, BinaryOperator, Signedness, UnaryOperator};
 
 /// Intermediate representation (_IR_).
 #[derive(Debug)]
@@ -29,7 +27,7 @@ impl fmt::Display for IR {
 /// _IR_ function definition.
 #[derive(Debug)]
 pub struct Function {
-    pub ident: Ident,
+    pub ident: String,
     pub instructions: Vec<Instruction>,
 }
 
@@ -73,15 +71,15 @@ pub enum Instruction {
     /// Copies the value from `src` into `dst`.
     Copy { src: Value, dst: Value },
     /// Unconditionally jumps to the point in code labeled by an "identifier".
-    Jump(Ident),
+    Jump(String),
     /// Conditionally jumps to the point in code labeled by an "identifier" if
     /// the condition evaluates to zero.
-    JumpIfZero { cond: Value, target: Ident },
+    JumpIfZero { cond: Value, target: String },
     /// Conditionally jumps to the point in code labeled by an "identifier" if
     /// the condition does not evaluates to zero.
-    JumpIfNotZero { cond: Value, target: Ident },
+    JumpIfNotZero { cond: Value, target: String },
     /// Associates an "identifier" with a location in the program.
-    Label(Ident),
+    Label(String),
 }
 
 impl fmt::Display for Instruction {
@@ -196,7 +194,7 @@ pub enum Value {
     /// Constant int value (32-bit).
     IntConstant(i32),
     /// Temporary variable.
-    Var(Ident),
+    Var(String),
 }
 
 impl fmt::Display for Value {
@@ -222,7 +220,7 @@ struct TACBuilder<'a> {
 
 impl TACBuilder<'_> {
     /// Returns a new temporary variable identifier.
-    fn new_tmp(&mut self) -> Ident {
+    fn new_tmp(&mut self) -> String {
         // The `.` in temporary identifiers guarantees they won’t conflict
         // with user-defined identifiers, since the _C_ standard forbids `.` in
         // identifiers.
@@ -232,7 +230,7 @@ impl TACBuilder<'_> {
     }
 
     /// Returns a new label identifier, appending the provided suffix.
-    fn new_label(&mut self, suffix: &str) -> Ident {
+    fn new_label(&mut self, suffix: &str) -> String {
         // The `.` in labels  guarantees they won’t conflict with user-defined
         // identifiers, since the _C_ standard forbids `.` in identifiers.
         let label = format!("{}.lbl.{}.{suffix}", self.label, self.label_count);
@@ -245,24 +243,24 @@ impl TACBuilder<'_> {
 /// (_AST_). [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn generate_ir(ast: &parser::AST) -> IR {
+pub fn generate_ir(ast: &ast::AST) -> IR {
     match ast {
-        parser::AST::Program(func) => IR::Program(generate_ir_function(func)),
+        ast::AST::Program(func) => IR::Program(generate_ir_function(func)),
     }
 }
 
 /// Generate an _IR_ function definition from the provided _AST_ function.
-fn generate_ir_function(func: &parser::Function) -> Function {
-    fn process_ast_block(block: &parser::Block, builder: &mut TACBuilder<'_>) {
+fn generate_ir_function(func: &ast::Function) -> Function {
+    fn process_ast_block(block: &ast::Block, builder: &mut TACBuilder<'_>) {
         for block_item in &block.0 {
             match block_item {
-                parser::BlockItem::Stmt(stmt) => process_ast_statement(stmt, builder),
-                parser::BlockItem::Decl(decl) => process_ast_declaration(decl, builder),
+                ast::BlockItem::Stmt(stmt) => process_ast_statement(stmt, builder),
+                ast::BlockItem::Decl(decl) => process_ast_declaration(decl, builder),
             }
         }
     }
 
-    fn process_ast_declaration(decl: &parser::Declaration, builder: &mut TACBuilder<'_>) {
+    fn process_ast_declaration(decl: &ast::Declaration, builder: &mut TACBuilder<'_>) {
         if let Some(init) = &decl.init {
             // Generate and append any instructions needed to encode the
             // declaration's initializer.
@@ -277,18 +275,18 @@ fn generate_ir_function(func: &parser::Function) -> Function {
         }
     }
 
-    fn process_ast_statement(stmt: &parser::Statement, builder: &mut TACBuilder<'_>) {
+    fn process_ast_statement(stmt: &ast::Statement, builder: &mut TACBuilder<'_>) {
         match stmt {
-            parser::Statement::Return(expr) => {
+            ast::Statement::Return(expr) => {
                 let ir_val = generate_ir_value(expr, builder);
                 builder.instructions.push(Instruction::Return(ir_val));
             }
-            parser::Statement::Expression(expr) => {
+            ast::Statement::Expression(expr) => {
                 // Generate and append any instructions needed to encode the
                 // expression.
                 let _ = generate_ir_value(expr, builder);
             }
-            parser::Statement::If {
+            ast::Statement::If {
                 cond,
                 then,
                 opt_else,
@@ -327,14 +325,14 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                     builder.instructions.push(Instruction::Label(e_lbl));
                 }
             }
-            parser::Statement::Goto((target, _)) => {
+            ast::Statement::Goto((target, _)) => {
                 builder.instructions.push(Instruction::Jump(target.clone()));
             }
-            parser::Statement::LabeledStatement(labeled) => {
+            ast::Statement::LabeledStatement(labeled) => {
                 match labeled {
-                    parser::Labeled::Label { label, stmt, .. }
-                    | parser::Labeled::Case { label, stmt, .. }
-                    | parser::Labeled::Default { label, stmt, .. } => {
+                    ast::Labeled::Label { label, stmt, .. }
+                    | ast::Labeled::Case { label, stmt, .. }
+                    | ast::Labeled::Default { label, stmt, .. } => {
                         builder.instructions.push(Instruction::Label(label.clone()));
 
                         // Handle appending instructions for statements
@@ -343,18 +341,18 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                     }
                 }
             }
-            parser::Statement::Compound(block) => process_ast_block(block, builder),
-            parser::Statement::Break((label, _)) => {
+            ast::Statement::Compound(block) => process_ast_block(block, builder),
+            ast::Statement::Break((label, _)) => {
                 builder
                     .instructions
                     .push(Instruction::Jump(format!("break_{label}")));
             }
-            parser::Statement::Continue((label, _)) => {
+            ast::Statement::Continue((label, _)) => {
                 builder
                     .instructions
                     .push(Instruction::Jump(format!("cont_{label}")));
             }
-            parser::Statement::Do { stmt, cond, label } => {
+            ast::Statement::Do { stmt, cond, label } => {
                 let start_label = builder.new_label("do.start");
                 let cont_label = format!("cont_{label}");
                 let break_label = format!("break_{label}");
@@ -379,7 +377,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                 // Always emitting labels for `break` statements.
                 builder.instructions.push(Instruction::Label(break_label));
             }
-            parser::Statement::While { cond, stmt, label } => {
+            ast::Statement::While { cond, stmt, label } => {
                 let cont_label = format!("cont_{label}");
                 let break_label = format!("break_{label}");
 
@@ -403,7 +401,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                 // Always emitting labels for `break` statements.
                 builder.instructions.push(Instruction::Label(break_label));
             }
-            parser::Statement::For {
+            ast::Statement::For {
                 init,
                 opt_cond,
                 opt_post,
@@ -411,8 +409,8 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                 label,
             } => {
                 match &**init {
-                    parser::ForInit::Decl(decl) => process_ast_declaration(decl, builder),
-                    parser::ForInit::Expr(opt_expr) => {
+                    ast::ForInit::Decl(decl) => process_ast_declaration(decl, builder),
+                    ast::ForInit::Expr(opt_expr) => {
                         if let Some(expr) = opt_expr {
                             // Generate and append any instructions needed to
                             // encode the expression.
@@ -462,7 +460,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                 // Always emitting labels for `break` statements.
                 builder.instructions.push(Instruction::Label(break_label));
             }
-            parser::Statement::Switch {
+            ast::Statement::Switch {
                 cond,
                 stmt,
                 cases,
@@ -504,7 +502,7 @@ fn generate_ir_function(func: &parser::Function) -> Function {
                 // Always emitting labels for `break` statements.
                 builder.instructions.push(Instruction::Label(break_label));
             }
-            parser::Statement::Empty => {}
+            ast::Statement::Empty => {}
         }
     }
 
@@ -544,19 +542,19 @@ fn generate_ir_function(func: &parser::Function) -> Function {
 }
 
 /// Generate an _IR_ value from the provided _AST_ expression.
-fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) -> Value {
+fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Value {
     match expr {
-        parser::Expression::IntConstant(v) => Value::IntConstant(*v),
-        parser::Expression::Var((v, _)) => Value::Var(v.clone()),
-        parser::Expression::Unary {
+        ast::Expression::IntConstant(v) => Value::IntConstant(*v),
+        ast::Expression::Var((v, _)) => Value::Var(v.clone()),
+        ast::Expression::Unary {
             op, expr, prefix, ..
         } => {
             // The sign of an _IR_ instruction is determined by the
             // sub-expressions (here `expr`), not by when the operator is
             // applied to them.
             let sign = match **expr {
-                parser::Expression::Unary { sign, .. } => sign,
-                parser::Expression::Binary { sign, .. } => sign,
+                ast::Expression::Unary { sign, .. } => sign,
+                ast::Expression::Binary { sign, .. } => sign,
                 _ => Signedness::Unsigned,
             };
 
@@ -626,25 +624,25 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
             // the recursion.
             dst
         }
-        parser::Expression::Binary { op, lhs, rhs, .. } => {
+        ast::Expression::Binary { op, lhs, rhs, .. } => {
             // The sign of an _IR_ instruction is determined by the
             // sub-expressions (here `expr`), not by when the operator is
             // applied to them.
             let sign = match **lhs {
-                parser::Expression::Unary { sign, .. } => sign,
-                parser::Expression::Binary { sign, .. } => sign,
+                ast::Expression::Unary { sign, .. } => sign,
+                ast::Expression::Binary { sign, .. } => sign,
                 _ => Signedness::Unsigned,
             };
 
             match op {
                 // Need to short-circuit if the `lhs` is 0 for `&&`, or `lhs` is
                 // non-zero for `||` according to the _C_ language standard.
-                parser::BinaryOperator::LogAnd | parser::BinaryOperator::LogOr => {
+                ast::BinaryOperator::LogAnd | ast::BinaryOperator::LogOr => {
                     let lhs = generate_ir_value(lhs, builder);
                     let rhs = generate_ir_value(rhs, builder);
                     let dst = Value::Var(builder.new_tmp());
 
-                    let instructions = if let parser::BinaryOperator::LogAnd = op {
+                    let instructions = if let ast::BinaryOperator::LogAnd = op {
                         let f_lbl = builder.new_label("and.false");
                         let e_lbl = builder.new_label("and.end");
 
@@ -721,9 +719,9 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
                 }
             }
         }
-        parser::Expression::Assignment { lvalue, rvalue, .. } => {
+        ast::Expression::Assignment { lvalue, rvalue, .. } => {
             let dst = match &**lvalue {
-                parser::Expression::Var((v, _)) => Value::Var(v.clone()),
+                ast::Expression::Var((v, _)) => Value::Var(v.clone()),
                 _ => unreachable!("lvalue of an expression should be an `Expression::Var`"),
             };
 
@@ -736,7 +734,7 @@ fn generate_ir_value(expr: &parser::Expression, builder: &mut TACBuilder<'_>) ->
 
             dst
         }
-        parser::Expression::Conditional(lhs, mid, rhs) => {
+        ast::Expression::Conditional(lhs, mid, rhs) => {
             let dst = Value::Var(builder.new_tmp());
             let e_lbl = builder.new_label("cond.end");
             let rhs_lbl = builder.new_label("cond.false");
