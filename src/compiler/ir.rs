@@ -624,21 +624,25 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
 
             match op {
                 // Need to short-circuit if the `lhs` is 0 for `&&`, or `lhs` is
-                // non-zero for `||` according to the _C_ language standard.
+                // non-zero for `||`. In those cases, `rhs` instructions are
+                // never executed.
                 ast::BinaryOperator::LogAnd | ast::BinaryOperator::LogOr => {
                     let lhs = generate_ir_value(lhs, builder);
-                    let rhs = generate_ir_value(rhs, builder);
                     let dst = Value::Var(builder.new_tmp());
 
-                    let instructions = if let ast::BinaryOperator::LogAnd = op {
+                    if let ast::BinaryOperator::LogAnd = op {
                         let f_lbl = builder.new_label("and.false");
                         let e_lbl = builder.new_label("and.end");
 
-                        [
-                            Instruction::JumpIfZero {
-                                cond: lhs,
-                                target: f_lbl.clone(),
-                            },
+                        builder.instructions.push(Instruction::JumpIfZero {
+                            cond: lhs,
+                            target: f_lbl.clone(),
+                        });
+
+                        // Evaluate `rhs` iff `lhs` is non-zero.
+                        let rhs = generate_ir_value(rhs, builder);
+
+                        builder.instructions.extend([
                             Instruction::JumpIfZero {
                                 cond: rhs,
                                 target: f_lbl.clone(),
@@ -654,16 +658,20 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
                                 dst: dst.clone(),
                             },
                             Instruction::Label(e_lbl),
-                        ]
+                        ]);
                     } else {
                         let t_lbl = builder.new_label("or.true");
                         let e_lbl = builder.new_label("or.end");
 
-                        [
-                            Instruction::JumpIfNotZero {
-                                cond: lhs,
-                                target: t_lbl.clone(),
-                            },
+                        builder.instructions.push(Instruction::JumpIfNotZero {
+                            cond: lhs,
+                            target: t_lbl.clone(),
+                        });
+
+                        // Evaluate `rhs` iff `lhs` is zero.
+                        let rhs = generate_ir_value(rhs, builder);
+
+                        builder.instructions.extend([
                             Instruction::JumpIfNotZero {
                                 cond: rhs,
                                 target: t_lbl.clone(),
@@ -679,10 +687,9 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
                                 dst: dst.clone(),
                             },
                             Instruction::Label(e_lbl),
-                        ]
-                    };
+                        ]);
+                    }
 
-                    builder.instructions.extend(instructions);
                     dst
                 }
                 _ => {
