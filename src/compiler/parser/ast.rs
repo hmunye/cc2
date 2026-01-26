@@ -1325,7 +1325,52 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
 
                 expect_token(ctx, iter, TokenType::RParen)?;
 
-                Ok(inner_expr)
+                if let Some(tok) = iter.peek().map(Result::as_ref).transpose()?
+                    && let TokenType::Operator(OperatorKind::Increment | OperatorKind::Decrement) =
+                        tok.ty
+                {
+                    let unop = ty_to_unop(&tok.ty).expect(
+                        "expected postfix increment or decrement when parsing parenthesized expression"
+                    );
+
+                    // Consume the postfix increment/decrement operator.
+                    let token = iter
+                        .next()
+                        .expect("next token should be present")
+                        .expect("next token should be ok");
+
+                    if let Expression::Var(_) = inner_expr {
+                        Ok(Expression::Unary {
+                            op: unop,
+                            expr: Box::new(inner_expr),
+                            // NOTE: Temporary hack for arithmetic right shift.
+                            sign: Signedness::Unsigned,
+                            // Postfix unary operator.
+                            prefix: false,
+                        })
+                    } else {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span);
+
+                        let err_msg = if let UnaryOperator::Increment = unop {
+                            "lvalue required as increment operand"
+                        } else {
+                            "lvalue required as decrement operand"
+                        };
+
+                        Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "{err_msg}",
+                        ))
+                    }
+                } else {
+                    Ok(inner_expr)
+                }
             }
             tok => {
                 let tok_str = format!("{tok:?}");
