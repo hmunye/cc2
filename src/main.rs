@@ -135,8 +135,7 @@ fn preprocess_input(args: &args::Args) -> fs::File {
             process::exit(1);
         });
 
-    let output = process::Command::new("gcc")
-        .arg("-E") // Run only the preprocessor (cpp).
+    let output = process::Command::new("cpp")
         .arg(args.in_path)
         .arg("-o")
         .arg(tmp_path)
