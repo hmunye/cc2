@@ -885,5 +885,3 @@ impl fmt::Display for Lexer<'_> {
         Ok(())
     }
 }
-
-// Reference: https://github.com/nlsandler/writing-a-c-compiler-tests

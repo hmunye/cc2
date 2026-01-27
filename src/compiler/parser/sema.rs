@@ -228,6 +228,16 @@ impl<'a> CtrlResolver<'a> {
     fn current_ctrl(&self) -> Option<&'a CtrlLabel<'_>> {
         self.labels.last()
     }
+
+    /// Returns a reference to the nearest enclosing loop, skipping switches, or
+    /// `None` if no loop context is active.
+    #[inline]
+    fn current_loop(&self) -> Option<&'a CtrlLabel<'_>> {
+        self.labels
+            .iter()
+            .rev()
+            .find(|ctrl| matches!(ctrl.kind, CtrlKind::Loop))
+    }
 }
 
 /// Kind of labeled statement within `switch`.
@@ -335,8 +345,8 @@ impl<'a> SwitchResolver<'a> {
 
         let entry = self
             .scope_cases
-            .get_mut(&label)
-            .expect("entry should always exist for current label in exit_switch");
+            .entry(label)
+            .or_insert((HashSet::new(), None, Vec::new()));
 
         self.labels.pop();
 
@@ -731,9 +741,9 @@ pub fn resolve_escapable_ctrl(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
                 }
             }
             Statement::Continue((label, token)) => {
-                if let Some(ctrl) = resolver.current_ctrl()
-                    && let CtrlKind::Loop = ctrl.kind
-                {
+                // Ensures a `continue` inside a `switch` context doesn’t
+                // immediately trigger a error.
+                if let Some(ctrl) = resolver.current_loop() {
                     *label = ctrl.label.to_string();
                 } else {
                     let tok_str = format!("{token:?}");

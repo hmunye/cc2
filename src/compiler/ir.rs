@@ -451,41 +451,49 @@ fn generate_ir_function(func: &ast::Function) -> Function {
                 default,
                 label,
             } => {
-                let break_label = format!("break_{label}");
-
                 let lhs = generate_ir_value(cond, builder);
 
-                for (label, expr) in cases {
-                    let dst = Value::Var(builder.new_tmp());
+                // Only generate code for the switch if there are case labels or
+                // a default.
+                if !cases.is_empty() || default.is_some() {
+                    let break_label = format!("break_{label}");
 
-                    let rhs = generate_ir_value(expr, builder);
+                    for (label, expr) in cases {
+                        let dst = Value::Var(builder.new_tmp());
 
-                    builder.instructions.push(Instruction::Binary {
-                        op: BinaryOperator::Eq,
-                        lhs: lhs.clone(),
-                        rhs,
-                        dst: dst.clone(),
-                        // NOTE: Temporary hack for arithmetic right shift.
-                        sign: Signedness::Unsigned,
-                    });
+                        let rhs = generate_ir_value(expr, builder);
 
-                    builder.instructions.push(Instruction::JumpIfNotZero {
-                        cond: dst,
-                        target: label.clone(),
-                    });
+                        builder.instructions.push(Instruction::Binary {
+                            op: BinaryOperator::Eq,
+                            lhs: lhs.clone(),
+                            rhs,
+                            dst: dst.clone(),
+                            // NOTE: Temporary hack for arithmetic right shift.
+                            sign: Signedness::Unsigned,
+                        });
+
+                        builder.instructions.push(Instruction::JumpIfNotZero {
+                            cond: dst,
+                            target: label.clone(),
+                        });
+                    }
+
+                    if let Some(default_label) = default {
+                        builder
+                            .instructions
+                            .push(Instruction::Jump(default_label.clone()));
+                    } else {
+                        builder
+                            .instructions
+                            .push(Instruction::Jump(break_label.clone()));
+                    }
+
+                    // Handle appending instructions for statements recursively.
+                    process_ast_statement(stmt, builder);
+
+                    // Always emitting labels for `break` statements.
+                    builder.instructions.push(Instruction::Label(break_label));
                 }
-
-                if let Some(default_label) = default {
-                    builder
-                        .instructions
-                        .push(Instruction::Jump(default_label.clone()));
-                }
-
-                // Handle appending instructions for statements recursively.
-                process_ast_statement(stmt, builder);
-
-                // Always emitting labels for `break` statements.
-                builder.instructions.push(Instruction::Label(break_label));
             }
             ast::Statement::Empty => {}
         }
