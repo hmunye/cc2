@@ -2,22 +2,22 @@
 
 set -uo pipefail
 
-SRC=example.c
-ASM=example.s
-BIN=a.out
+src=example.c
+asm=example.s
+bin=a.out
 
-echo "=== cc2 ==="
-cargo r -q -- "$SRC" -p &&
-    (gcc "$ASM" -o "$BIN"; "./$BIN"; echo "exit code: $?")
-
-echo
-echo "=== gcc ==="
-gcc "$SRC" -o "$BIN" &&
-    ("./$BIN"; echo "exit code: $?")
+printf "\x1b[1;45m=== cc2 ===\x1b[0m\n"
+cargo r -q -- "$src" -p &&
+    (gcc "$asm" -o "$bin"; "./$bin"; echo "exit code: $?")
 
 echo
-echo "=== clang ==="
-clang "$SRC" -o "$BIN" &&
-    ("./$BIN"; echo "exit code: $?")
+printf "\x1b[1;45m=== gcc ===\x1b[0m\n"
+gcc "$src" -o "$bin" &&
+    ("./$bin"; echo "exit code: $?")
 
-rm -f "$BIN" "$ASM"
+echo
+printf "\x1b[1;45m=== clang ===\x1b[0m\n"
+clang "$src" -o "$bin" &&
+    ("./$bin"; echo "exit code: $?")
+
+rm -f "$bin" "$asm"
