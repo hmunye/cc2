@@ -600,7 +600,6 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 ) -> AST {
     let mut funcs = vec![];
 
-    // TODO: Ensure this matches `<program> ::= { <function_declaration> }`.
     while iter.peek().is_some() {
         funcs.push(parse_function(ctx, &mut iter, None).unwrap_or_else(|err| {
             eprintln!("{err}");
@@ -611,7 +610,7 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
     let mut ast = AST::Program(funcs);
 
     // Pass 1 - Symbol resolution.
-    sema::resolve_variables(&mut ast, ctx).unwrap_or_else(|err| {
+    sema::resolve_symbols(&mut ast, ctx).unwrap_or_else(|err| {
         eprintln!("{err}");
         process::exit(1);
     });
