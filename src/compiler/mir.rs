@@ -537,8 +537,10 @@ impl TryFrom<&ast::BinaryOperator> for BinaryOperator {
 /// [Exits]: std::process::exit
 pub fn generate_x86_64_mir(ir: &IR) -> MIRX86 {
     match ir {
-        IR::Program(func) => {
-            let mir_func = generate_mir_function(func);
+        IR::Program(funcs) => {
+            // TODO: Update this to process all functions after `AST` and `IR`
+            // implementation.
+            let mir_func = generate_mir_function(&funcs[0]);
 
             let mut mir = MIRX86::Program(mir_func);
 

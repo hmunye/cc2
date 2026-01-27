@@ -9,40 +9,54 @@ use super::sema;
 
 use crate::compiler::Result;
 use crate::compiler::lexer::{OperatorKind, Token, TokenType};
-use crate::{Context, fmt_err, fmt_token_err, report_err};
+use crate::{Context, fmt_err, fmt_token_err};
 
 /// Abstract Syntax Tree (_AST_).
 #[derive(Debug)]
 pub enum AST {
-    /// Function that represent the structure of the program.
-    Program(Function),
+    /// Functions that represent the structure of the program.
+    Program(Vec<Function>),
 }
 
 impl fmt::Display for AST {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AST::Program(func) => {
+            AST::Program(funcs) => {
                 writeln!(f, "AST Program")?;
-                func.fmt_with_indent(f, 2)
+                for func in funcs {
+                    func.fmt_with_indent(f, 2)?;
+                }
+
+                Ok(())
             }
         }
     }
 }
 
-/// _AST_ function definition.
+/// _AST_ function declaration/definition.
 #[derive(Debug)]
 pub struct Function {
     /// Function identifier.
     pub ident: String,
-    pub body: Block,
+    pub params: Vec<String>,
+    /// Optional body, `None` indicates it is a function _declaration_.
+    pub body: Option<Block>,
+    /// Function identifier token.
+    token: Token,
 }
 
 impl Function {
     fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let pad = "  ".repeat(indent);
+        let params = self.params.join(", ");
 
-        writeln!(f, "{}Fn({:?})", pad, self.ident)?;
-        self.body.fmt_with_indent(f, indent + 2)
+        writeln!(f, "{}Fn {:?}({})", pad, self.ident, params)?;
+
+        if let Some(body) = &self.body {
+            body.fmt_with_indent(f, indent + 2)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -87,6 +101,7 @@ impl BlockItem {
 /// _AST_ `for` statement initial clause.
 #[derive(Debug)]
 pub enum ForInit {
+    // NOTE: Must be `Declaration::Var`.
     Decl(Declaration),
     Expr(Option<Expression>),
 }
@@ -288,20 +303,26 @@ impl Statement {
 
 /// _AST_ declaration.
 #[derive(Debug)]
-pub struct Declaration {
-    /// Identifier of the variable.
-    pub ident: String,
-    /// Optional initializer.
-    pub init: Option<Expression>,
-    /// Declared identifier token.
-    pub token: Token,
+pub enum Declaration {
+    Var {
+        /// Identifier of the variable.
+        ident: String,
+        /// Optional initializer.
+        init: Option<Expression>,
+        /// Declared identifier token.
+        token: Token,
+    },
+    Func(Function),
 }
 
 impl fmt::Display for Declaration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.init {
-            Some(expr) => write!(f, "{:?} = {}", self.ident, expr),
-            None => write!(f, "{:?} = uninit", self.ident),
+        match self {
+            Declaration::Var { ident, init, .. } => match init {
+                Some(expr) => write!(f, "{:?} = {}", ident, expr),
+                None => write!(f, "{:?} = uninit", ident),
+            },
+            Declaration::Func(func) => func.fmt_with_indent(f, 0),
         }
     }
 }
@@ -339,12 +360,16 @@ pub enum Expression {
     /// Ternary expression which evaluates the first expression and returns the
     /// result of the second if true, otherwise the third.
     Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
+    FuncCall {
+        ident: String,
+        args: Option<Vec<Expression>>,
+    },
 }
 
 impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expression::IntConstant(i) => write!(f, "IntConst({})", i),
+            Expression::IntConstant(i) => write!(f, "Int({})", i),
             Expression::Var((ident, _)) => write!(f, "Var({:?})", ident),
             Expression::Unary {
                 op, expr, prefix, ..
@@ -363,6 +388,18 @@ impl fmt::Display for Expression {
             }
             Expression::Conditional(lhs, mid, rhs) => {
                 write!(f, "{} ? {} : {}", lhs, mid, rhs)
+            }
+            Expression::FuncCall { ident, args } => {
+                let args_str = if let Some(args) = args {
+                    args.iter()
+                        .map(|a| format!("{}", a))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                } else {
+                    "".into()
+                };
+
+                write!(f, "{ident}({})", args_str)
             }
         }
     }
@@ -561,17 +598,17 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     mut iter: std::iter::Peekable<I>,
 ) -> AST {
-    let func = parse_function(ctx, &mut iter).unwrap_or_else(|err| {
-        eprintln!("{err}");
-        process::exit(1);
-    });
+    let mut funcs = vec![];
 
-    if iter.peek().is_some() {
-        report_err!(ctx.in_path.display(), "tokens remaining after parsing");
-        process::exit(1);
+    // TODO: Ensure this matches `<program> ::= { <function_declaration> }`.
+    while iter.peek().is_some() {
+        funcs.push(parse_function(ctx, &mut iter, None).unwrap_or_else(|err| {
+            eprintln!("{err}");
+            process::exit(1);
+        }));
     }
 
-    let mut ast = AST::Program(func);
+    let mut ast = AST::Program(funcs);
 
     // Pass 1 - Symbol resolution.
     sema::resolve_variables(&mut ast, ctx).unwrap_or_else(|err| {
@@ -600,7 +637,8 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
     ast
 }
 
-/// Parses an _AST_ function definition from the provided `Token` iterator.
+/// Parses an _AST_ function declaration/definition from the provided `Token`
+/// iterator. Optionally accepts a partially parsed function header.
 ///
 /// # Errors
 ///
@@ -608,18 +646,146 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 fn parse_function<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
+    parsed_header: Option<(&'static str, String, Token)>,
 ) -> Result<Function> {
-    expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
-
-    let (ident, _) = parse_ident(ctx, iter)?;
+    let (ident, token) = if let Some(parsed_header) = parsed_header {
+        // NOTE: Only allow `int` return type for now.
+        debug_assert!(parsed_header.0 == "int");
+        (parsed_header.1, parsed_header.2)
+    } else {
+        expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
+        parse_ident(ctx, iter)?
+    };
 
     expect_token(ctx, iter, TokenType::LParen)?;
-    expect_token(ctx, iter, TokenType::Keyword("void".into()))?;
+    let params = parse_params(ctx, iter)?;
     expect_token(ctx, iter, TokenType::RParen)?;
 
-    let block = parse_block(ctx, iter)?;
+    if let Some(tok) = iter.peek().map(Result::as_ref).transpose()?
+        && let TokenType::Semicolon = tok.ty
+    {
+        // Consume the ";" token.
+        let _ = iter.next();
 
-    Ok(Function { ident, body: block })
+        return Ok(Function {
+            ident,
+            params,
+            body: None,
+            token,
+        });
+    }
+
+    let body = parse_block(ctx, iter)?;
+
+    Ok(Function {
+        ident,
+        params,
+        body: Some(body),
+        token,
+    })
+}
+
+/// Parse an _AST_ parameter list from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a parameter list could not be parsed.
+fn parse_params<I: Iterator<Item = Result<Token>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Vec<String>> {
+    let mut params = vec![];
+
+    if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        match token.ty {
+            TokenType::Keyword(ref s) if s == "void" => {
+                params.push(s.clone());
+
+                // Consume the "void" token.
+                let _ = iter.next();
+
+                Ok(params)
+            }
+            TokenType::Keyword(ref s) if s == "int" => {
+                // Consume the "int" token.
+                let _ = iter.next();
+
+                let (ident, _) = parse_ident(ctx, iter)?;
+                params.push(ident);
+
+                while let Some(token) = iter.peek().map(Result::as_ref).transpose()?
+                    && let TokenType::Comma = token.ty
+                {
+                    // Consume the "," token.
+                    let _ = iter.next();
+
+                    expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
+
+                    let (ident, _) = parse_ident(ctx, iter)?;
+                    params.push(ident);
+                }
+
+                Ok(params)
+            }
+            _ => {
+                let tok_str = format!("{token:?}");
+                let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    line_content,
+                    "unknown type name '{tok_str}'",
+                ))
+            }
+        }
+    } else {
+        Err(fmt_err!(
+            ctx.in_path.display(),
+            "expected '<params>' at end of input",
+        ))
+    }
+}
+
+/// Parse an _AST_ declaration from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a declaration could not be parsed.
+fn parse_declaration<I: Iterator<Item = Result<Token>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Declaration> {
+    expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
+
+    let (ident, token) = parse_ident(ctx, iter)?;
+
+    let mut init = None;
+
+    if let Some(tok) = iter.peek().map(Result::as_ref).transpose()? {
+        match &tok.ty {
+            // Function declaration/definition.
+            TokenType::LParen => {
+                let func = parse_function(ctx, iter, Some(("int", ident, token)))?;
+                return Ok(Declaration::Func(func));
+            }
+            // Variable declaration with initializer.
+            TokenType::Operator(OperatorKind::Assign) => {
+                // Consume the "=" token.
+                let _ = iter.next();
+                init = Some(parse_expression(ctx, iter, 0)?);
+            }
+            // Variable declaration with no initializer.
+            _ => {}
+        }
+    }
+
+    expect_token(ctx, iter, TokenType::Semicolon)?;
+
+    Ok(Declaration::Var { ident, token, init })
 }
 
 /// Parse an _AST_ block from the provided `Token` iterator.
@@ -675,34 +841,6 @@ fn parse_block_item<I: Iterator<Item = Result<Token>>>(
     }
 }
 
-/// Parse an _AST_ declaration from the provided `Token` iterator.
-///
-/// # Errors
-///
-/// Will return `Err` if a declaration could not be parsed.
-fn parse_declaration<I: Iterator<Item = Result<Token>>>(
-    ctx: &Context<'_>,
-    iter: &mut std::iter::Peekable<I>,
-) -> Result<Declaration> {
-    expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
-
-    let (ident, token) = parse_ident(ctx, iter)?;
-
-    let mut init = None;
-
-    if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
-        && let TokenType::Operator(OperatorKind::Assign) = token.ty
-    {
-        // Consume the "=" token.
-        let _ = iter.next();
-        init = Some(parse_expression(ctx, iter, 0)?);
-    }
-
-    expect_token(ctx, iter, TokenType::Semicolon)?;
-
-    Ok(Declaration { ident, token, init })
-}
-
 /// Parse an _AST_ `for` initial clause from the provided `Token` iterator.
 ///
 /// # Errors
@@ -715,9 +853,25 @@ fn parse_for_init<I: Iterator<Item = Result<Token>>>(
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
             // Parse this as a declaration (starts with a type).
-            TokenType::Keyword(ref s) if s == "int" => {
-                Ok(ForInit::Decl(parse_declaration(ctx, iter)?))
-            }
+            TokenType::Keyword(ref s) if s == "int" => match parse_declaration(ctx, iter)? {
+                Declaration::Func(func) => {
+                    let token = &func.token;
+
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "declaration of non-variable '{tok_str}' in 'for' loop initial declaration",
+                    ))
+                }
+                decl => Ok(ForInit::Decl(decl)),
+            },
             // Parse this as an optional expression.
             _ => {
                 let opt_expr = parse_opt_expression(ctx, iter, TokenType::Semicolon)?;
@@ -1246,27 +1400,42 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                 }
             }
             TokenType::Ident(ref s) => {
-                if let Some(tok) = iter.peek().map(Result::as_ref).transpose()?
-                    && let TokenType::Operator(OperatorKind::Increment | OperatorKind::Decrement) =
-                        tok.ty
-                {
-                    let unop = ty_to_unop(&tok.ty)
-                        .expect("expected postfix increment or decrement when parsing factor");
+                if let Some(tok) = iter.peek().map(Result::as_ref).transpose()? {
+                    match &tok.ty {
+                        TokenType::Operator(OperatorKind::Increment | OperatorKind::Decrement) => {
+                            let unop = ty_to_unop(&tok.ty).expect(
+                                "expected postfix increment or decrement when parsing factor",
+                            );
 
-                    // Consume the postfix increment/decrement operator.
-                    let _ = iter.next();
+                            // Consume the postfix increment/decrement operator.
+                            let _ = iter.next();
 
-                    Ok(Expression::Unary {
-                        op: unop,
-                        expr: Box::new(Expression::Var((s.clone(), token))),
-                        // NOTE: Temporary hack for arithmetic right shift.
-                        sign: Signedness::Unsigned,
-                        // Postfix unary operator.
-                        prefix: false,
-                    })
-                } else {
-                    Ok(Expression::Var((s.clone(), token)))
+                            return Ok(Expression::Unary {
+                                op: unop,
+                                expr: Box::new(Expression::Var((s.clone(), token))),
+                                // NOTE: Temporary hack for arithmetic right shift.
+                                sign: Signedness::Unsigned,
+                                // Postfix unary operator.
+                                prefix: false,
+                            });
+                        }
+                        TokenType::LParen => {
+                            // Consume the "(" token.
+                            let _ = iter.next();
+
+                            let args = parse_opt_args(ctx, iter)?;
+                            expect_token(ctx, iter, TokenType::RParen)?;
+
+                            return Ok(Expression::FuncCall {
+                                ident: s.clone(),
+                                args,
+                            });
+                        }
+                        _ => {}
+                    }
                 }
+
+                Ok(Expression::Var((s.clone(), token)))
             }
             TokenType::Operator(
                 OperatorKind::BitNot
@@ -1397,6 +1566,45 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
         Err(fmt_err!(
             ctx.in_path.display(),
             "expected '<factor>' at end of input",
+        ))
+    }
+}
+
+/// Parse an _AST_ optional argument list from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if an optional argument list could not be parsed.
+fn parse_opt_args<I: Iterator<Item = Result<Token>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Option<Vec<Expression>>> {
+    if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        if token.ty == TokenType::RParen {
+            // Not consuming the ")".
+            Ok(None)
+        } else {
+            let mut args = vec![];
+
+            let expr = parse_expression(ctx, iter, 0)?;
+            args.push(expr);
+
+            while let Some(token) = iter.peek().map(Result::as_ref).transpose()?
+                && let TokenType::Comma = token.ty
+            {
+                // Consume the "," token.
+                let _ = iter.next();
+
+                let expr = parse_expression(ctx, iter, 0)?;
+                args.push(expr);
+            }
+
+            Ok(Some(args))
+        }
+    } else {
+        Err(fmt_err!(
+            ctx.in_path.display(),
+            "expected ')' or '<expr>' at end of input",
         ))
     }
 }

@@ -12,12 +12,12 @@ cargo r -q -- "$src" -p &&
 
 echo
 printf "\x1b[1;45m=== gcc ===\x1b[0m\n"
-gcc "$src" -o "$bin" &&
+gcc -std=c17 -pedantic "$src" -o "$bin" &&
     ("./$bin"; echo "exit code: $?")
 
 echo
 printf "\x1b[1;45m=== clang ===\x1b[0m\n"
-clang "$src" -o "$bin" &&
+clang -std=c17 -pedantic "$src" -o "$bin" &&
     ("./$bin"; echo "exit code: $?")
 
 rm -f "$bin" "$asm"

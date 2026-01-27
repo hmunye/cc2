@@ -11,14 +11,19 @@ use crate::compiler::parser::ast::{self, BinaryOperator, Signedness, UnaryOperat
 #[derive(Debug)]
 pub enum IR {
     /// Function that represent the structure of the program.
-    Program(Function),
+    Program(Vec<Function>),
 }
 
 impl fmt::Display for IR {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            IR::Program(func) => {
-                write!(f, "IR Program\n{:4}{func}", "")
+            IR::Program(funcs) => {
+                writeln!(f, "IR Program")?;
+                for func in funcs {
+                    writeln!(f, "{:4}{func}", "")?;
+                }
+
+                Ok(())
             }
         }
     }
@@ -229,7 +234,15 @@ impl TACBuilder<'_> {
 /// [Exits]: std::process::exit
 pub fn generate_ir(ast: &ast::AST) -> IR {
     match ast {
-        ast::AST::Program(func) => IR::Program(generate_ir_function(func)),
+        ast::AST::Program(funcs) => {
+            let mut ir_funcs = vec![];
+
+            for func in funcs {
+                ir_funcs.push(generate_ir_function(func))
+            }
+
+            IR::Program(ir_funcs)
+        }
     }
 }
 
@@ -245,17 +258,22 @@ fn generate_ir_function(func: &ast::Function) -> Function {
     }
 
     fn process_ast_declaration(decl: &ast::Declaration, builder: &mut TACBuilder<'_>) {
-        if let Some(init) = &decl.init {
-            // Generate and append any instructions needed to encode the
-            // declaration's initializer.
-            let ir_val = generate_ir_value(init, builder);
+        match decl {
+            ast::Declaration::Var { ident, init, .. } => {
+                if let Some(init) = &init {
+                    // Generate and append any instructions needed to encode the
+                    // declaration's initializer.
+                    let ir_val = generate_ir_value(init, builder);
 
-            // Ensure the initializer expression result is copied to the
-            // destination.
-            builder.instructions.push(Instruction::Copy {
-                src: ir_val,
-                dst: Value::Var(decl.ident.clone()),
-            });
+                    // Ensure the initializer expression result is copied to the
+                    // destination.
+                    builder.instructions.push(Instruction::Copy {
+                        src: ir_val,
+                        dst: Value::Var(ident.clone()),
+                    });
+                }
+            }
+            ast::Declaration::Func(..) => todo!(),
         }
     }
 
@@ -508,7 +526,9 @@ fn generate_ir_function(func: &ast::Function) -> Function {
         label: &label,
     };
 
-    process_ast_block(&func.body, &mut builder);
+    if let Some(body) = &func.body {
+        process_ast_block(body, &mut builder);
+    }
 
     // _C17_ 5.1.2.2.3 (Program termination)
     //
@@ -768,5 +788,6 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
 
             dst
         }
+        ast::Expression::FuncCall { .. } => todo!(),
     }
 }

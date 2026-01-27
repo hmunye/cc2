@@ -43,6 +43,12 @@ impl Scope {
     fn exit_scope(&mut self) {
         self.scopes.pop();
     }
+
+    #[inline]
+    fn reset(&mut self) {
+        self.scopes.clear();
+        self.next_scope = 1;
+    }
 }
 
 impl Default for Scope {
@@ -114,6 +120,14 @@ impl SymbolResolver {
 
         resolved_ident
     }
+
+    /// Resets the resolver state so it may be used within another function
+    /// scope.
+    #[inline]
+    fn reset(&mut self) {
+        self.symbol_map.clear();
+        self.scope.reset();
+    }
 }
 
 /// Helper to perform semantic analysis on label/`goto` statements within an
@@ -162,6 +176,14 @@ impl<'a> LabelResolver<'a> {
 
         Ok(())
     }
+
+    /// Resets the resolver state so it may be used within another function
+    /// scope.
+    #[inline]
+    fn reset(&mut self) {
+        self.labels.clear();
+        self.pending_gotos.clear();
+    }
 }
 
 /// Kind of a escapable control-flow statement.
@@ -190,7 +212,6 @@ struct CtrlResolver<'a> {
 
 impl<'a> CtrlResolver<'a> {
     /// Returns a new unique label identifier based on the provided `CtrlKind`.
-    #[inline]
     fn new_label(&mut self, kind: CtrlKind) -> String {
         // The `.` in variable identifiers guarantees they won’t conflict
         // with user-defined identifiers, since the _C_ standard forbids `.` in
@@ -238,6 +259,15 @@ impl<'a> CtrlResolver<'a> {
             .rev()
             .find(|ctrl| matches!(ctrl.kind, CtrlKind::Loop))
     }
+
+    /// Resets the resolver state so it may be used within another function
+    /// scope.
+    #[inline]
+    fn reset(&mut self) {
+        self.labels.clear();
+        self.loop_count = 0;
+        self.switch_count = 0;
+    }
 }
 
 /// Kind of labeled statement within `switch`.
@@ -263,7 +293,6 @@ struct SwitchResolver<'a> {
 
 impl<'a> SwitchResolver<'a> {
     /// Returns a new unique label identifier based on the provided `LabelKind`.
-    #[inline]
     fn new_label(&mut self, kind: LabelKind) -> String {
         // The `.` in variable identifiers guarantees they won’t conflict
         // with user-defined identifiers, since the _C_ standard forbids `.` in
@@ -284,7 +313,6 @@ impl<'a> SwitchResolver<'a> {
 
     /// Returns a unique label for the given `case` expression, or `None` if it
     /// has been encountered within the current `switch` context.
-    #[inline]
     fn mark_case(&mut self, label: String, expr: &Expression) -> Option<String> {
         let case_label = self.new_label(LabelKind::Case);
 
@@ -311,7 +339,6 @@ impl<'a> SwitchResolver<'a> {
 
     /// Returns a unique label for the given `default` statement label, or
     /// `None` if one has been encountered within the current `switch` context.
-    #[inline]
     fn mark_default(&mut self, label: String) -> Option<String> {
         let default_label = self.new_label(LabelKind::Default);
 
@@ -336,7 +363,6 @@ impl<'a> SwitchResolver<'a> {
 
     /// Ends the most recent `switch` context, appending the collected cases to
     /// the provided container.
-    #[inline]
     fn exit_switch(&mut self, cases: &mut Vec<(String, Expression)>) {
         let label = self
             .current_switch()
@@ -362,12 +388,21 @@ impl<'a> SwitchResolver<'a> {
 
     /// Returns the `default` statement label if one has been encountered in the
     /// current `switch` context.
-    #[inline]
     fn current_default_lbl(&mut self) -> Option<String> {
         let label = self.current_switch()?.to_string();
         let entry = self.scope_cases.get_mut(&label)?;
 
         entry.1.take()
+    }
+
+    /// Resets the resolver state so it may be used within another function
+    /// scope.
+    #[inline]
+    fn reset(&mut self) {
+        self.scope_cases.clear();
+        self.labels.clear();
+        self.case_count = 0;
+        self.default_count = 0;
     }
 }
 
@@ -396,31 +431,34 @@ pub fn resolve_variables(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
         ctx: &Context<'_>,
         resolver: &mut SymbolResolver,
     ) -> Result<()> {
-        if resolver.is_redeclaration(&decl.ident) {
-            let token = &decl.token;
+        match decl {
+            Declaration::Var { ident, init, token } => {
+                if resolver.is_redeclaration(ident) {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-            let tok_str = format!("{token:?}");
-            let line_content = ctx.src_slice(token.loc.line_span.clone());
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "redeclaration of '{tok_str}'",
+                    ));
+                }
 
-            return Err(fmt_token_err!(
-                token.loc.file_path.display(),
-                token.loc.line,
-                token.loc.col,
-                tok_str,
-                tok_str.len() - 1,
-                line_content,
-                "redeclaration of '{tok_str}'",
-            ));
+                let resolved_ident = resolver.declare_symbol(ident);
+                *ident = resolved_ident;
+
+                if let Some(init) = init {
+                    resolve_expression(init, ctx, resolver)?;
+                }
+
+                Ok(())
+            }
+            Declaration::Func(_) => todo!(),
         }
-
-        let resolved_ident = resolver.declare_symbol(&decl.ident);
-        decl.ident = resolved_ident;
-
-        if let Some(init) = &mut decl.init {
-            resolve_expression(init, ctx, resolver)?;
-        }
-
-        Ok(())
     }
 
     fn resolve_statement(
@@ -584,6 +622,7 @@ pub fn resolve_variables(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
                 resolve_expression(mid, ctx, resolver)?;
                 resolve_expression(rhs, ctx, resolver)
             }
+            Expression::FuncCall { .. } => todo!(),
             Expression::IntConstant(_) => Ok(()),
         }
     }
@@ -591,8 +630,17 @@ pub fn resolve_variables(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
     let mut sym_resolver: SymbolResolver = Default::default();
 
     match ast {
-        AST::Program(func) => resolve_block(&mut func.body, ctx, &mut sym_resolver),
+        AST::Program(funcs) => {
+            for func in funcs {
+                if let Some(body) = &mut func.body {
+                    resolve_block(body, ctx, &mut sym_resolver)?;
+                    sym_resolver.reset();
+                }
+            }
+        }
     }
+
+    Ok(())
 }
 
 /// Ensures every label declared is unique within it's function scope and
@@ -671,26 +719,32 @@ pub fn resolve_labels(ast: &AST, ctx: &Context<'_>) -> Result<()> {
     let mut lbl_resolver: LabelResolver<'_> = Default::default();
 
     match ast {
-        AST::Program(func) => {
-            // Collect and validate all labels within the function in the
-            // first pass.
-            resolve_block(&func.body, ctx, &mut lbl_resolver)?;
+        AST::Program(funcs) => {
+            for func in funcs {
+                if let Some(body) = &func.body {
+                    // Collect and validate all labels within the function in the
+                    // first pass.
+                    resolve_block(body, ctx, &mut lbl_resolver)?;
 
-            // Second pass ensures all `goto` statements point to a valid
-            // target within the same function scope.
-            if let Err((label, token)) = lbl_resolver.check_gotos() {
-                let tok_str = format!("{token:?}");
-                let line_content = ctx.src_slice(token.loc.line_span.clone());
+                    // Second pass ensures all `goto` statements point to a valid
+                    // target within the same function scope.
+                    if let Err((label, token)) = lbl_resolver.check_gotos() {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-                return Err(fmt_token_err!(
-                    token.loc.file_path.display(),
-                    token.loc.line,
-                    token.loc.col,
-                    tok_str,
-                    tok_str.len() - 1,
-                    line_content,
-                    "label '{label}' used but not defined",
-                ));
+                        return Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "label '{label}' used but not defined",
+                        ));
+                    }
+
+                    lbl_resolver.reset();
+                }
             }
         }
     }
@@ -810,8 +864,17 @@ pub fn resolve_escapable_ctrl(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
     let mut ctrl_resolver: CtrlResolver<'_> = Default::default();
 
     match ast {
-        AST::Program(func) => resolve_block(&mut func.body, ctx, &mut ctrl_resolver),
+        AST::Program(funcs) => {
+            for func in funcs {
+                if let Some(body) = &mut func.body {
+                    resolve_block(body, ctx, &mut ctrl_resolver)?;
+                    ctrl_resolver.reset();
+                }
+            }
+        }
     }
+
+    Ok(())
 }
 
 /// Collects all `case` and `default` labels for each `switch` statement, as
@@ -962,6 +1025,15 @@ pub fn resolve_switches(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
     let mut switch_resolver: SwitchResolver<'_> = Default::default();
 
     match ast {
-        AST::Program(func) => resolve_block(&mut func.body, ctx, &mut switch_resolver),
+        AST::Program(funcs) => {
+            for func in funcs {
+                if let Some(body) = &mut func.body {
+                    resolve_block(body, ctx, &mut switch_resolver)?;
+                    switch_resolver.reset();
+                }
+            }
+        }
     }
+
+    Ok(())
 }

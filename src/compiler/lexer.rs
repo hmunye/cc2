@@ -189,6 +189,8 @@ pub enum TokenType {
     Question,
     /// `:`.
     Colon,
+    /// `,`.
+    Comma,
     /// `;`.
     Semicolon,
 }
@@ -206,6 +208,7 @@ impl fmt::Display for TokenType {
             TokenType::RBrace => write!(f, "'}}'"),
             TokenType::Question => write!(f, "'?'"),
             TokenType::Colon => write!(f, "':'"),
+            TokenType::Comma => write!(f, "','"),
             TokenType::Semicolon => write!(f, "';'"),
         }
     }
@@ -224,6 +227,7 @@ impl fmt::Debug for TokenType {
             TokenType::RBrace => write!(f, "}}"),
             TokenType::Question => write!(f, "?"),
             TokenType::Colon => write!(f, ":"),
+            TokenType::Comma => write!(f, ","),
             TokenType::Semicolon => write!(f, ";"),
         }
     }
@@ -834,6 +838,14 @@ impl Iterator for Lexer<'_> {
 
                     return Some(Ok(Token {
                         ty: TokenType::Colon,
+                        loc: self.token_loc(col),
+                    }));
+                }
+                b',' => {
+                    self.cur += 1;
+
+                    return Some(Ok(Token {
+                        ty: TokenType::Comma,
                         loc: self.token_loc(col),
                     }));
                 }
