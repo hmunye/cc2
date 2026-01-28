@@ -35,15 +35,15 @@ impl<'a> LabelResolver<'a> {
         self.pending_gotos.push(pair);
     }
 
-    /// Validates all pending `goto` statements and ensures they point to valid
-    /// targets within the current function scope.
+    /// Validates and removes all pending `goto` statements and ensures they
+    /// point to valid targets within the current function scope.
     ///
     /// # Errors
     ///
     /// Will return `Err` with (label, token) pair of the missing target if it
     /// was not found in the current function scope.
-    fn check_gotos(&self) -> core::result::Result<(), (&'a str, &'a Token)> {
-        for (label, token) in &self.pending_gotos {
+    fn check_gotos(&mut self) -> core::result::Result<(), (&'a str, &'a Token)> {
+        for (label, token) in self.pending_gotos.drain(..) {
             if !self.labels.contains(label) {
                 return Err((label, token));
             }
@@ -57,7 +57,6 @@ impl<'a> LabelResolver<'a> {
     #[inline]
     fn reset(&mut self) {
         self.labels.clear();
-        self.pending_gotos.clear();
     }
 }
 
@@ -140,12 +139,12 @@ pub fn resolve_labels(ast: &AST, ctx: &Context<'_>) -> Result<()> {
         AST::Program(funcs) => {
             for func in funcs {
                 if let Some(body) = &func.body {
-                    // Collect and validate all labels within the function in the
-                    // first pass.
+                    // Collect and validate all labels within the function in
+                    // the first pass.
                     resolve_block(body, ctx, &mut lbl_resolver)?;
 
-                    // Second pass ensures all `goto` statements point to a valid
-                    // target within the same function scope.
+                    // Second pass ensures all `goto` statements point to a
+                    // valid target within the same function scope.
                     if let Err((label, token)) = lbl_resolver.check_gotos() {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());

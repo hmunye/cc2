@@ -1,29 +1,41 @@
 use std::collections::HashMap;
 
 use crate::compiler::Result;
+use crate::compiler::lexer::Token;
 use crate::compiler::parser::ast::{
-    AST, Block, BlockItem, Declaration, Expression, ForInit, Labeled, Statement,
+    AST, Block, BlockItem, Declaration, Expression, ForInit, Function, Labeled, Statement,
 };
 use crate::{Context, fmt_token_err};
 
-/// Helper to track the current scope for symbol resolution.
+/// Helper to track scopes in _AST_ traversal.
+#[derive(Debug)]
 struct Scope {
+    /// Currently active scope IDs.
     scopes: Vec<usize>,
+    /// Monotonic counter for unique scope IDs.
     next_scope: usize,
 }
 
 impl Scope {
+    /// Global scope (top-level declarations).
+    const FILE_SCOPE: usize = 0;
+    /// Function scope (e.g., local variables, function parameters).
+    const FUNCTION_SCOPE: usize = 1;
+
     #[inline]
     fn new() -> Self {
         Scope {
-            scopes: vec![0], // Function scope.
-            next_scope: 1,
+            scopes: vec![Self::FILE_SCOPE],
+            next_scope: Self::FUNCTION_SCOPE,
         }
     }
 
     #[inline]
     fn current_scope(&self) -> usize {
-        *self.scopes.last().unwrap_or(&0)
+        *self
+            .scopes
+            .last()
+            .expect("file scope should always be on the stack")
     }
 
     #[inline]
@@ -36,13 +48,19 @@ impl Scope {
 
     #[inline]
     fn exit_scope(&mut self) {
+        debug_assert!(!self.at_file_scope(), "attempting to exit file scope");
         self.scopes.pop();
     }
 
     #[inline]
-    fn reset(&mut self) {
-        self.scopes.clear();
-        self.next_scope = 1;
+    const fn at_file_scope(&self) -> bool {
+        self.scopes.len() == 1
+    }
+
+    #[inline]
+    fn reset_active(&mut self) {
+        // `FILE_SCOPE` always remains active
+        self.scopes.truncate(1);
     }
 }
 
@@ -52,86 +70,295 @@ impl Default for Scope {
     }
 }
 
-/// Helper to perform semantic analysis on symbols within an _AST_.
+/// Declaration status of an identifier within a scope.
+#[derive(Debug, PartialEq)]
+enum DeclStatus {
+    /// Invalid re-declaration with different binding types.
+    Type,
+    /// Invalid variable re-declaration.
+    Var,
+    /// No re-declaration (e.g., first declaration, multiple function
+    /// declarations).
+    None,
+}
+
+/// Types of linkage for identifiers.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+enum Linkage {
+    /// Visible across translation units.
+    External,
+    #[allow(unused)]
+    /// Local to a translation unit.
+    Internal,
+}
+
+/// Binding context for an identifier within a scope.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct NameBinding {
+    ident: String,
+    scope: usize,
+    /// `None` -> no linkage (lexically scoped/local).
+    linkage: Option<Linkage>,
+}
+/// Types of bindings that can be declared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindingType {
+    Func,
+    Var,
+}
+
+/// Resolved binding information for an identifier within a scope.
+#[derive(Debug, Clone)]
+struct BindingInfo {
+    /// Resolved binding identifier.
+    canonical: String,
+    is_definition: bool,
+    ty: BindingType,
+}
+
+/// Helper to perform semantic analysis on identifiers within an _AST_.
 #[derive(Default)]
-struct SymbolResolver {
-    /// `key` = (ident, scope)
-    ///
-    /// `value` = resolved symbol
-    symbol_map: HashMap<(String, usize), String>,
+struct IdentResolver {
+    bindings: HashMap<NameBinding, BindingInfo>,
     scope: Scope,
 }
 
-impl SymbolResolver {
-    /// Returns a new temporary variable identifier using the provided prefix.
+impl IdentResolver {
+    /// Returns a new temporary identifier using the provided prefix.
     #[inline]
     fn new_tmp(&self, prefix: &str) -> String {
-        // The `@` in variable identifiers guarantees they won’t conflict
-        // with user-defined identifiers, since the _C_ standard forbids `@` in
-        // identifiers.
+        // `@` guarantees it won’t conflict with user-defined identifiers, since
+        // the _C_ standard forbids using `@` in identifiers.
         format!("{prefix}@{}", self.scope.current_scope())
     }
 
-    /// Returns `true` if the given `symbol` has already been declared in the
-    /// current scope.
+    /// Returns `true` if the given identifier has already been defined in the
+    /// current scope (or file scope for external/internal linkage).
     #[inline]
-    fn is_redeclaration(&self, symbol: &str) -> bool {
-        self.symbol_map
-            .contains_key(&(symbol.to_string(), self.scope.current_scope()))
+    fn is_redefinition(&self, ident: &str, linkage: Option<Linkage>) -> bool {
+        let scope = match linkage {
+            Some(Linkage::External) | Some(Linkage::Internal) => Scope::FILE_SCOPE,
+            None => self.scope.current_scope(),
+        };
+
+        self.bindings
+            .get(&NameBinding {
+                ident: ident.to_string(),
+                scope,
+                linkage,
+            })
+            .map(|bind_info| bind_info.is_definition)
+            .unwrap_or(false)
     }
 
-    /// Returns a unique identifier for the given `symbol`, recording the
-    /// declaration in the current scope.
-    fn declare_symbol(&mut self, symbol: &str) -> String {
-        let resolved_ident = self.new_tmp(symbol);
+    /// Checks if an identifier has already been declared in the current scope
+    /// (or file scope for external/internal linkage), returning the declaration
+    /// status.
+    #[inline]
+    fn is_redeclaration(
+        &self,
+        ident: &str,
+        linkage: Option<Linkage>,
+        ty: BindingType,
+    ) -> DeclStatus {
+        match linkage {
+            // Identifiers with external linkage may appear multiple times.
+            Some(Linkage::External) => DeclStatus::None,
+            Some(Linkage::Internal) => todo!(),
+            // Identifiers with no linkage cannot be redeclared in the current
+            // scope.
+            None => {
+                if let Some(bind_info) = self.bindings.get(&NameBinding {
+                    ident: ident.to_string(),
+                    scope: self.scope.current_scope(),
+                    linkage,
+                }) {
+                    if bind_info.ty != ty {
+                        return DeclStatus::Type;
+                    }
 
-        let res = self.symbol_map.insert(
-            (symbol.to_string(), self.scope.current_scope()),
-            resolved_ident.clone(),
-        );
+                    if bind_info.ty == BindingType::Var {
+                        return DeclStatus::Var;
+                    }
 
-        // Ensure the key was not present before insertion.
-        debug_assert!(res.is_none());
-
-        resolved_ident
-    }
-
-    /// Returns the unique identifier for a given `symbol`, searching the
-    /// current scope and all outer scopes (up to the function scope), or `None`
-    /// if no existing declaration could be found.
-    fn resolve_symbol(&self, symbol: &str) -> Option<String> {
-        let mut resolved_ident = None;
-
-        // Starts at the current scope then searches all outer scopes until
-        // reaching the function scope (0).
-        let scopes = (0..=self.scope.current_scope()).rev();
-
-        for scope in scopes {
-            if let Some(ident) = self.symbol_map.get(&(symbol.to_string(), scope)) {
-                resolved_ident = Some(ident.clone());
-                break;
+                    // Multiple function declarations within the same scope are
+                    // allowed.
+                    DeclStatus::None
+                } else {
+                    // First declaration of the identifier.
+                    DeclStatus::None
+                }
             }
         }
-
-        resolved_ident
     }
 
-    /// Resets the resolver state so it may be used within another function
-    /// scope.
-    #[inline]
-    fn reset(&mut self) {
-        self.symbol_map.clear();
-        self.scope.reset();
+    /// Returns the binding information for the given identifier, recording the
+    /// declaration in the appropriate scope according to its linkage.
+    fn declare_ident(
+        &mut self,
+        ident: &str,
+        linkage: Option<Linkage>,
+        ty: BindingType,
+        is_definition: bool,
+    ) -> BindingInfo {
+        let (resolved_ident, scope) = match linkage {
+            Some(Linkage::External) => (ident.to_string(), Scope::FILE_SCOPE),
+            Some(Linkage::Internal) => todo!(),
+            None => (self.new_tmp(ident), self.scope.current_scope()),
+        };
+
+        let bind_info = BindingInfo {
+            canonical: resolved_ident.clone(),
+            is_definition,
+            ty,
+        };
+
+        self.bindings.insert(
+            NameBinding {
+                ident: ident.to_string(),
+                scope,
+                linkage,
+            },
+            bind_info.clone(),
+        );
+
+        bind_info
+    }
+
+    /// Returns the binding information for a given identifier, searching the
+    /// appropriate scopes based on its linkage, or `None` if not found.
+    fn resolve_ident(&self, ident: &str, linkage: Option<Linkage>) -> Option<BindingInfo> {
+        match linkage {
+            Some(Linkage::Internal) | Some(Linkage::External) => {
+                let key = NameBinding {
+                    ident: ident.to_string(),
+                    scope: Scope::FILE_SCOPE,
+                    linkage,
+                };
+
+                self.bindings.get(&key).cloned()
+            }
+            None => {
+                for scope in self.scope.scopes.iter().rev() {
+                    let key = NameBinding {
+                        ident: ident.to_string(),
+                        scope: *scope,
+                        linkage: None,
+                    };
+
+                    if let Some(bind_info) = self.bindings.get(&key) {
+                        return Some(bind_info.clone());
+                    }
+                }
+
+                None
+            }
+        }
     }
 }
 
-/// Assigns a unique identifier to every symbol and performs semantic checks
-/// (e.g., duplicate definitions, undeclared references).
-pub fn resolve_symbols(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
+/// Assigns a canonical identifier to each identifier encountered, performing
+/// semantic checks (e.g., duplicate definitions, undeclared references).
+pub fn resolve_idents(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
+    fn resolve_function(
+        func: &mut Function,
+        ctx: &Context<'_>,
+        resolver: &mut IdentResolver,
+    ) -> Result<()> {
+        let Function {
+            ident,
+            params,
+            body,
+            token,
+        } = func;
+
+        if resolver.is_redefinition(ident, Some(Linkage::External)) {
+            let tok_str = format!("{token:?}");
+            let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+            return Err(fmt_token_err!(
+                token.loc.file_path.display(),
+                token.loc.line,
+                token.loc.col,
+                tok_str,
+                tok_str.len() - 1,
+                line_content,
+                "redefinition of '{tok_str}'",
+            ));
+        }
+
+        let is_definition = body.is_some();
+
+        let bind_info = resolver.declare_ident(
+            ident,
+            Some(Linkage::External),
+            BindingType::Func,
+            is_definition,
+        );
+
+        *ident = bind_info.canonical;
+
+        if let Some(body) = &mut func.body {
+            resolver.scope.enter_scope();
+
+            for (param, token) in params {
+                resolve_variable((param, &mut None, token), ctx, resolver)?;
+            }
+
+            resolve_block(body, ctx, resolver)?;
+
+            resolver.scope.reset_active();
+        }
+
+        Ok(())
+    }
+
+    fn resolve_variable(
+        var: (&mut String, &mut Option<Expression>, &mut Token),
+        ctx: &Context<'_>,
+        resolver: &mut IdentResolver,
+    ) -> Result<()> {
+        let (ident, init, token) = var;
+
+        match resolver.is_redeclaration(ident, None, BindingType::Var) {
+            DeclStatus::None => {
+                // Has no linkage, meaning it is considered a definition.
+                let bind_info = resolver.declare_ident(ident, None, BindingType::Var, true);
+                *ident = bind_info.canonical;
+
+                if let Some(init) = init {
+                    resolve_expression(init, ctx, resolver)?;
+                }
+            }
+            status => {
+                let tok_str = format!("{token:?}");
+                let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                let msg = if let DeclStatus::Type = status {
+                    format!("'{tok_str}' redeclared as different kind of symbol")
+                } else {
+                    format!("redeclaration of '{tok_str}'")
+                };
+
+                return Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    line_content,
+                    "{msg}",
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     fn resolve_block(
         block: &mut Block,
         ctx: &Context<'_>,
-        resolver: &mut SymbolResolver,
+        resolver: &mut IdentResolver,
     ) -> Result<()> {
         for block_item in &mut block.0 {
             match block_item {
@@ -145,45 +372,10 @@ pub fn resolve_symbols(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
         Ok(())
     }
 
-    fn resolve_declaration(
-        decl: &mut Declaration,
-        ctx: &Context<'_>,
-        resolver: &mut SymbolResolver,
-    ) -> Result<()> {
-        match decl {
-            Declaration::Var { ident, init, token } => {
-                if resolver.is_redeclaration(ident) {
-                    let tok_str = format!("{token:?}");
-                    let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                    return Err(fmt_token_err!(
-                        token.loc.file_path.display(),
-                        token.loc.line,
-                        token.loc.col,
-                        tok_str,
-                        tok_str.len() - 1,
-                        line_content,
-                        "redeclaration of '{tok_str}'",
-                    ));
-                }
-
-                let resolved_ident = resolver.declare_symbol(ident);
-                *ident = resolved_ident;
-
-                if let Some(init) = init {
-                    resolve_expression(init, ctx, resolver)?;
-                }
-
-                Ok(())
-            }
-            Declaration::Func(_) => todo!(),
-        }
-    }
-
     fn resolve_statement(
         stmt: &mut Statement,
         ctx: &Context<'_>,
-        resolver: &mut SymbolResolver,
+        resolver: &mut IdentResolver,
     ) -> Result<()> {
         match stmt {
             Statement::Return(expr) => resolve_expression(expr, ctx, resolver),
@@ -279,10 +471,73 @@ pub fn resolve_symbols(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
         }
     }
 
+    fn resolve_declaration(
+        decl: &mut Declaration,
+        ctx: &Context<'_>,
+        resolver: &mut IdentResolver,
+    ) -> Result<()> {
+        match decl {
+            Declaration::Var { ident, init, token } => {
+                resolve_variable((ident, init, token), ctx, resolver)?
+            }
+            Declaration::Func(func) => {
+                if func.body.is_some() {
+                    let token = &func.token;
+
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "ISO C forbids nested functions",
+                    ));
+                }
+
+                // Check if the function declaration is in conflict with a
+                // different identifier within the current scope (no-linkage).
+                match resolver.is_redeclaration(&func.ident, None, BindingType::Func) {
+                    DeclStatus::None => {
+                        resolver.declare_ident(
+                            &func.ident,
+                            Some(Linkage::External),
+                            BindingType::Func,
+                            false,
+                        );
+                    }
+                    status => {
+                        debug_assert!(status != DeclStatus::Var);
+
+                        let token = &func.token;
+
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                        return Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "'{tok_str}' redeclared as different kind of symbol",
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn resolve_expression(
         expr: &mut Expression,
         ctx: &Context<'_>,
-        resolver: &mut SymbolResolver,
+        resolver: &mut IdentResolver,
     ) -> Result<()> {
         match expr {
             Expression::Assignment {
@@ -310,10 +565,10 @@ pub fn resolve_symbols(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
                 }
             },
             Expression::Var((v, token)) => {
-                if let Some(ident) = resolver.resolve_symbol(v) {
-                    // Use the unique symbol mapped from the original
+                if let Some(bind_info) = resolver.resolve_ident(v, None) {
+                    // Use the canonical identifier mapped from the original
                     // identifier.
-                    *v = ident;
+                    *v = bind_info.canonical;
                 } else {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -341,20 +596,42 @@ pub fn resolve_symbols(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
                 resolve_expression(mid, ctx, resolver)?;
                 resolve_expression(rhs, ctx, resolver)
             }
-            Expression::FuncCall { .. } => todo!(),
+            Expression::FuncCall { ident, args, token } => {
+                if let Some(bind_info) = resolver.resolve_ident(ident, Some(Linkage::External)) {
+                    *ident = bind_info.canonical;
+
+                    if let Some(exprs) = args {
+                        for expr in exprs {
+                            resolve_expression(expr, ctx, resolver)?;
+                        }
+                    }
+                } else {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "implicit declaration of function '{tok_str}'",
+                    ));
+                }
+
+                Ok(())
+            }
             Expression::IntConstant(_) => Ok(()),
         }
     }
 
-    let mut sym_resolver: SymbolResolver = Default::default();
+    let mut ident_resolver: IdentResolver = Default::default();
 
     match ast {
         AST::Program(funcs) => {
             for func in funcs {
-                if let Some(body) = &mut func.body {
-                    resolve_block(body, ctx, &mut sym_resolver)?;
-                    sym_resolver.reset();
-                }
+                resolve_function(func, ctx, &mut ident_resolver)?;
             }
         }
     }

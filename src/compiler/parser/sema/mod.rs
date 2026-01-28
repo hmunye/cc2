@@ -11,4 +11,4 @@ pub mod symbols;
 pub use ctrl_flow::resolve_escapable_ctrl;
 pub use labels::resolve_labels;
 pub use switches::resolve_switches;
-pub use symbols::resolve_symbols;
+pub use symbols::resolve_idents;

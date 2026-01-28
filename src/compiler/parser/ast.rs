@@ -38,17 +38,22 @@ impl fmt::Display for AST {
 pub struct Function {
     /// Function identifier.
     pub ident: String,
-    pub params: Vec<String>,
+    pub params: Vec<(String, Token)>,
     /// Optional body, `None` indicates it is a function _declaration_.
     pub body: Option<Block>,
     /// Function identifier token.
-    token: Token,
+    pub token: Token,
 }
 
 impl Function {
     fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let pad = "  ".repeat(indent);
-        let params = self.params.join(", ");
+        let params = self
+            .params
+            .iter()
+            .map(|pair| pair.0.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
 
         writeln!(f, "{}Fn {:?}({})", pad, self.ident, params)?;
 
@@ -322,7 +327,16 @@ impl fmt::Display for Declaration {
                 Some(expr) => write!(f, "{:?} = {}", ident, expr),
                 None => write!(f, "{:?} = uninit", ident),
             },
-            Declaration::Func(func) => func.fmt_with_indent(f, 0),
+            Declaration::Func(func) => {
+                let params = func
+                    .params
+                    .iter()
+                    .map(|pair| pair.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                write!(f, "Fn {:?}({})", func.ident, params)
+            }
         }
     }
 }
@@ -363,6 +377,8 @@ pub enum Expression {
     FuncCall {
         ident: String,
         args: Option<Vec<Expression>>,
+        /// Function identifier token.
+        token: Token,
     },
 }
 
@@ -389,7 +405,7 @@ impl fmt::Display for Expression {
             Expression::Conditional(lhs, mid, rhs) => {
                 write!(f, "{} ? {} : {}", lhs, mid, rhs)
             }
-            Expression::FuncCall { ident, args } => {
+            Expression::FuncCall { ident, args, .. } => {
                 let args_str = if let Some(args) = args {
                     args.iter()
                         .map(|a| format!("{}", a))
@@ -399,7 +415,7 @@ impl fmt::Display for Expression {
                     "".into()
                 };
 
-                write!(f, "{ident}({})", args_str)
+                write!(f, "{ident:?}({})", args_str)
             }
         }
     }
@@ -609,8 +625,8 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 
     let mut ast = AST::Program(funcs);
 
-    // Pass 1 - Symbol resolution.
-    sema::resolve_symbols(&mut ast, ctx).unwrap_or_else(|err| {
+    // Pass 1 - Identifier resolution.
+    sema::resolve_idents(&mut ast, ctx).unwrap_or_else(|err| {
         eprintln!("{err}");
         process::exit(1);
     });
@@ -692,14 +708,12 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
 fn parse_params<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, Token)>> {
     let mut params = vec![];
 
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
             TokenType::Keyword(ref s) if s == "void" => {
-                params.push(s.clone());
-
                 // Consume the "void" token.
                 let _ = iter.next();
 
@@ -709,8 +723,8 @@ fn parse_params<I: Iterator<Item = Result<Token>>>(
                 // Consume the "int" token.
                 let _ = iter.next();
 
-                let (ident, _) = parse_ident(ctx, iter)?;
-                params.push(ident);
+                let (ident, token) = parse_ident(ctx, iter)?;
+                params.push((ident, token));
 
                 while let Some(token) = iter.peek().map(Result::as_ref).transpose()?
                     && let TokenType::Comma = token.ty
@@ -720,8 +734,8 @@ fn parse_params<I: Iterator<Item = Result<Token>>>(
 
                     expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
 
-                    let (ident, _) = parse_ident(ctx, iter)?;
-                    params.push(ident);
+                    let (ident, token) = parse_ident(ctx, iter)?;
+                    params.push((ident, token));
                 }
 
                 Ok(params)
@@ -1428,6 +1442,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                             return Ok(Expression::FuncCall {
                                 ident: s.clone(),
                                 args,
+                                token,
                             });
                         }
                         _ => {}

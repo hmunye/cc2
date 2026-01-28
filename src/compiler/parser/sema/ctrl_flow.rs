@@ -75,15 +75,6 @@ impl<'a> CtrlResolver<'a> {
             .rev()
             .find(|ctrl| matches!(ctrl.kind, CtrlKind::Loop))
     }
-
-    /// Resets the resolver state so it may be used within another function
-    /// scope.
-    #[inline]
-    fn reset(&mut self) {
-        self.labels.clear();
-        self.loop_count = 0;
-        self.switch_count = 0;
-    }
 }
 
 /// Assigns unique labels to all escapable control-flow statements
@@ -202,7 +193,6 @@ pub fn resolve_escapable_ctrl(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
             for func in funcs {
                 if let Some(body) = &mut func.body {
                     resolve_block(body, ctx, &mut ctrl_resolver)?;
-                    ctrl_resolver.reset();
                 }
             }
         }

@@ -37,7 +37,7 @@ Tiny C Compiler (subset of _C17_).
 
 - [x] Integer constants
 - [x] Variable references
-- [x] Unary operators: `-`, `!`, `~`, `++`, `--`
+- [x] Unary operators: `-`, `!`, `~`, `++` (postfix and prefix), `--` (postfix and prefix)
 - [x] Binary operators: `+`, `-`, `*`, `/`, `%`
 - [x] Binary bitwise operators: `&`, `|`, `^`
 - [x] Binary shift operators: `<<`, `>>`
