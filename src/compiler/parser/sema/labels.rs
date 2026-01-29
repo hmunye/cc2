@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use crate::compiler::Result;
 use crate::compiler::lexer::Token;
@@ -14,27 +15,48 @@ use crate::{Context, fmt_token_err};
 /// functions, types, etc.) within the same function scope, so they are
 /// collected separately.
 #[derive(Default)]
-struct LabelResolver<'a> {
+struct LabelResolver {
     /// `key` = label
-    labels: HashSet<&'a str>,
-    /// Collected label–token pairs for every `goto` statement within a function
+    ///
+    /// `value` = canonical identifier
+    labels: HashMap<String, String>,
+    /// Collected label/token pairs for every `goto` statement within a function
     /// scope.
-    pending_gotos: Vec<(&'a str, &'a Token)>,
+    pending_gotos: Vec<(String, Token)>,
+    /// Current function identifier for canonical identifier generation.
+    fn_ident: String,
 }
 
-impl<'a> LabelResolver<'a> {
+impl LabelResolver {
+    /// Returns a new label using the provided suffix.
+    #[inline]
+    fn new_label(&self, suffix: &str) -> String {
+        // `.` guarantees it won’t conflict with user-defined identifiers, since
+        // the _C_ standard forbids using `.` in identifiers.
+        format!("{}.{suffix}", self.fn_ident)
+    }
+
     /// Returns `true` if the label was not encountered in the current function
     /// scope, recording it as seen.
     #[inline]
-    fn mark_label(&mut self, label: &'a str) -> bool {
-        self.labels.insert(label)
+    fn mark_label(&mut self, label: &str) -> bool {
+        let canonical = self.new_label(label);
+
+        match self.labels.entry(label.to_string()) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(entry) => {
+                entry.insert(canonical);
+                true
+            }
+        }
     }
 
     /// Records a `goto` statement's contents so they can be validated after
     /// processing labels.
     #[inline]
-    fn mark_goto(&mut self, pair: (&'a str, &'a Token)) {
-        self.pending_gotos.push(pair);
+    fn mark_goto(&mut self, pair: (&str, &Token)) {
+        self.pending_gotos
+            .push((pair.0.to_string(), pair.1.clone()));
     }
 
     /// Validates and removes all pending `goto` statements and ensures they
@@ -44,9 +66,9 @@ impl<'a> LabelResolver<'a> {
     ///
     /// Will return `Err` with (label, token) pair of the missing target if it
     /// was not found in the current function scope.
-    fn check_gotos(&mut self) -> core::result::Result<(), (&'a str, &'a Token)> {
+    fn check_gotos(&mut self) -> core::result::Result<(), (String, Token)> {
         for (label, token) in self.pending_gotos.drain(..) {
-            if !self.labels.contains(label) {
+            if !self.labels.contains_key(&label) {
                 return Err((label, token));
             }
         }
@@ -57,18 +79,16 @@ impl<'a> LabelResolver<'a> {
     /// Resets the resolver state so it may be used within another function
     /// scope.
     #[inline]
-    fn reset(&mut self) {
+    fn reset(&mut self, ident: &str) {
         self.labels.clear();
+        self.fn_ident = ident.to_string();
     }
 }
 
-/// Validates labels and `goto` targets within each function scope.
-pub fn resolve_labels(ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<LabelPhase>> {
-    fn resolve_block<'a>(
-        block: &'a Block,
-        ctx: &Context<'_>,
-        resolver: &mut LabelResolver<'a>,
-    ) -> Result<()> {
+/// Verifies labels and `goto` targets within each function scope, ensuring
+/// uniqueness across different function scopes.
+pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<LabelPhase>> {
+    fn resolve_block(block: &Block, ctx: &Context<'_>, resolver: &mut LabelResolver) -> Result<()> {
         for block_item in &block.0 {
             if let BlockItem::Stmt(stmt) = block_item {
                 resolve_statement_labels(stmt, ctx, resolver)?;
@@ -78,10 +98,10 @@ pub fn resolve_labels(ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<Labe
         Ok(())
     }
 
-    fn resolve_statement_labels<'a>(
-        stmt: &'a Statement,
+    fn resolve_statement_labels(
+        stmt: &Statement,
         ctx: &Context<'_>,
-        resolver: &mut LabelResolver<'a>,
+        resolver: &mut LabelResolver,
     ) -> Result<()> {
         match stmt {
             Statement::If { then, opt_else, .. } => {
@@ -134,10 +154,12 @@ pub fn resolve_labels(ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<Labe
         Ok(())
     }
 
-    let mut lbl_resolver: LabelResolver<'_> = Default::default();
+    let mut lbl_resolver: LabelResolver = Default::default();
 
-    for func in &ast.program {
-        if let Some(body) = &func.body {
+    for func in &mut ast.program {
+        if let Some(body) = &mut func.body {
+            lbl_resolver.reset(&func.ident);
+
             // Collect and validate all labels within the function in
             // the first pass.
             resolve_block(body, ctx, &mut lbl_resolver)?;
@@ -159,7 +181,9 @@ pub fn resolve_labels(ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<Labe
                 ));
             }
 
-            lbl_resolver.reset();
+            // Third pass updates each label within the current function scope
+            // with its canonical identifier.
+            update_labels(body, &lbl_resolver);
         }
     }
 
@@ -167,4 +191,67 @@ pub fn resolve_labels(ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<Labe
         program: ast.program,
         _phase: std::marker::PhantomData,
     })
+}
+
+/// Updates original labels/`goto` target identifiers with their canonical
+/// identifier.
+fn update_labels(body: &mut Block, resolver: &LabelResolver) {
+    fn resolve_block(block: &mut Block, resolver: &LabelResolver) {
+        for block_item in &mut block.0 {
+            if let BlockItem::Stmt(stmt) = block_item {
+                resolve_statement_labels(stmt, resolver);
+            }
+        }
+    }
+
+    fn resolve_statement_labels(stmt: &mut Statement, resolver: &LabelResolver) {
+        match stmt {
+            Statement::If { then, opt_else, .. } => {
+                resolve_statement_labels(then, resolver);
+
+                if let Some(else_stmt) = opt_else {
+                    resolve_statement_labels(else_stmt, resolver);
+                }
+            }
+            Statement::Goto((label, _)) => {
+                label.clone_from(
+                    resolver
+                        .labels
+                        .get(label.as_str())
+                        .expect("goto target should have been encountered during label resolution"),
+                );
+            }
+            Statement::LabeledStatement(labeled) => match labeled {
+                Labeled::Label { label, stmt, .. } => {
+                    label.clone_from(
+                        resolver
+                            .labels
+                            .get(label.as_str())
+                            .expect("label should have been encountered during label resolution"),
+                    );
+
+                    resolve_statement_labels(stmt, resolver);
+                }
+                Labeled::Case { stmt, .. } | Labeled::Default { stmt, .. } => {
+                    resolve_statement_labels(stmt, resolver);
+                }
+            },
+            Statement::While { stmt, .. }
+            | Statement::Do { stmt, .. }
+            | Statement::For { stmt, .. } => {
+                resolve_statement_labels(stmt, resolver);
+            }
+            Statement::Compound(block) => resolve_block(block, resolver),
+            Statement::Switch { stmt, .. } => {
+                resolve_statement_labels(stmt, resolver);
+            }
+            Statement::Return(_)
+            | Statement::Expression(_)
+            | Statement::Break(_)
+            | Statement::Continue(_)
+            | Statement::Empty => {}
+        }
+    }
+
+    resolve_block(body, resolver);
 }
