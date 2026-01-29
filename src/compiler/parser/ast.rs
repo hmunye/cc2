@@ -11,25 +11,50 @@ use crate::compiler::Result;
 use crate::compiler::lexer::{OperatorKind, Token, TokenType};
 use crate::{Context, fmt_err, fmt_token_err};
 
+/// Zero-sized marker indicating a parsed _AST_ (no semantic analysis).
+#[derive(Debug)]
+pub struct Parsed;
+
+/// Zero-sized marker indicating _AST_ after identifier resolution.
+#[derive(Debug)]
+pub struct IdentPhase;
+
+/// Zero-sized marker indicating _AST_ after type checking.
+#[derive(Debug)]
+pub struct TypePhase;
+
+/// Zero-sized marker indicating _AST_ after label resolution.
+#[derive(Debug)]
+pub struct LabelPhase;
+
+/// Zero-sized marker indicating _AST_ after control-flow resolution.
+#[derive(Debug)]
+pub struct CtrlFlowPhase;
+
+/// Zero-sized marker indicating _AST_ after `switch` resolution.
+#[derive(Debug)]
+pub struct SwitchPhase;
+
+/// Zero-sized marker indicating all semantic analysis completed on _AST_.
+#[derive(Debug)]
+pub struct Analyzed;
+
 /// Abstract Syntax Tree (_AST_).
 #[derive(Debug)]
-pub enum AST {
+pub struct AST<P> {
     /// Functions that represent the structure of the program.
-    Program(Vec<Function>),
+    pub program: Vec<Function>,
+    pub _phase: std::marker::PhantomData<P>,
 }
 
-impl fmt::Display for AST {
+impl<P> fmt::Display for AST<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AST::Program(funcs) => {
-                writeln!(f, "AST Program")?;
-                for func in funcs {
-                    func.fmt_with_indent(f, 2)?;
-                }
-
-                Ok(())
-            }
+        writeln!(f, "AST Program")?;
+        for func in &self.program {
+            func.fmt_with_indent(f, 2)?;
         }
+
+        Ok(())
     }
 }
 
@@ -610,46 +635,54 @@ pub enum Signedness {
 /// [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn parse_program<I: Iterator<Item = Result<Token>>>(
+pub fn parse_ast<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     mut iter: std::iter::Peekable<I>,
-) -> AST {
+) -> AST<Analyzed> {
+    // Run all semantic analysis passes in order after parsing _AST_.
+    (|| {
+        let ast = parse_program(ctx, &mut iter)?;
+
+        // Pass 1 - Identifier resolution.
+        let ast = sema::resolve_idents(ast, ctx)?;
+
+        // Pass 2 - Type checking.
+        let ast = sema::resolve_types(ast, ctx)?;
+
+        // Pass 3 - Label/`goto` resolution.
+        let ast = sema::resolve_labels(ast, ctx)?;
+
+        // Pass 4 - Control-flow labeling.
+        let ast = sema::resolve_escapable_ctrl(ast, ctx)?;
+
+        // Pass 5 - Switch statement resolution.
+        sema::resolve_switches(ast, ctx)
+    })()
+    .unwrap_or_else(|err| {
+        eprintln!("{err}");
+        process::exit(1);
+    })
+}
+
+/// Parses an _AST_ program from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Will return `Err` if a program could not be parsed.
+pub fn parse_program<I: Iterator<Item = Result<Token>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<AST<Parsed>> {
     let mut funcs = vec![];
 
     while iter.peek().is_some() {
-        funcs.push(parse_function(ctx, &mut iter, None).unwrap_or_else(|err| {
-            eprintln!("{err}");
-            process::exit(1);
-        }));
+        funcs.push(parse_function(ctx, iter, None)?);
     }
 
-    let mut ast = AST::Program(funcs);
-
-    // Pass 1 - Identifier resolution.
-    sema::resolve_idents(&mut ast, ctx).unwrap_or_else(|err| {
-        eprintln!("{err}");
-        process::exit(1);
-    });
-
-    // Pass 2 - Label/`goto` resolution.
-    sema::resolve_labels(&ast, ctx).unwrap_or_else(|err| {
-        eprintln!("{err}");
-        process::exit(1);
-    });
-
-    // Pass 3 - Control-flow labeling.
-    sema::resolve_escapable_ctrl(&mut ast, ctx).unwrap_or_else(|err| {
-        eprintln!("{err}");
-        process::exit(1);
-    });
-
-    // Pass 4 - Switch statement resolution.
-    sema::resolve_switches(&mut ast, ctx).unwrap_or_else(|err| {
-        eprintln!("{err}");
-        process::exit(1);
-    });
-
-    ast
+    Ok(AST {
+        program: funcs,
+        _phase: std::marker::PhantomData,
+    })
 }
 
 /// Parses an _AST_ function declaration/definition from the provided `Token`

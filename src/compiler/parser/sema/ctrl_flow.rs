@@ -1,5 +1,7 @@
 use crate::compiler::Result;
-use crate::compiler::parser::ast::{AST, Block, BlockItem, Labeled, Statement};
+use crate::compiler::parser::ast::{
+    AST, Block, BlockItem, CtrlFlowPhase, LabelPhase, Labeled, Statement,
+};
 use crate::{Context, fmt_token_err};
 
 /// Kind of a escapable control-flow statement.
@@ -77,10 +79,12 @@ impl<'a> CtrlResolver<'a> {
     }
 }
 
-/// Assigns unique labels to all escapable control-flow statements
-/// (loops/switches) and resolves `break`/`continue` targets, as well as
-/// performing semantic checks (e.g., invalid `break`/`continue` location).
-pub fn resolve_escapable_ctrl(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
+/// Resolves labels for escapable control-flow statements (loops/switches) and
+/// validates `break`/`continue` usage within each function scope.
+pub fn resolve_escapable_ctrl(
+    mut ast: AST<LabelPhase>,
+    ctx: &Context<'_>,
+) -> Result<AST<CtrlFlowPhase>> {
     fn resolve_block<'a>(
         block: &'a mut Block,
         ctx: &Context<'_>,
@@ -188,15 +192,14 @@ pub fn resolve_escapable_ctrl(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
 
     let mut ctrl_resolver: CtrlResolver<'_> = Default::default();
 
-    match ast {
-        AST::Program(funcs) => {
-            for func in funcs {
-                if let Some(body) = &mut func.body {
-                    resolve_block(body, ctx, &mut ctrl_resolver)?;
-                }
-            }
+    for func in &mut ast.program {
+        if let Some(body) = &mut func.body {
+            resolve_block(body, ctx, &mut ctrl_resolver)?;
         }
     }
 
-    Ok(())
+    Ok(AST {
+        program: ast.program,
+        _phase: std::marker::PhantomData,
+    })
 }

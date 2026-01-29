@@ -71,23 +71,23 @@ fn main() {
             print!("{lexer}");
         }
         "parse" => {
-            let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
+            let ast = compiler::parser::parse_ast(&ctx, lexer.peekable());
             print!("{ast}");
         }
         "ir" => {
-            let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
+            let ast = compiler::parser::parse_ast(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
             print!("{ir}");
         }
         "mir" => {
-            let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
+            let ast = compiler::parser::parse_ast(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
 
             let mir = compiler::mir::generate_x86_64_mir(&ir);
             print!("{mir}");
         }
         stage => {
-            let ast = compiler::parser::parse_program(&ctx, lexer.peekable());
+            let ast = compiler::parser::parse_ast(&ctx, lexer.peekable());
             let ir = compiler::ir::generate_ir(&ast);
 
             let mir = compiler::mir::generate_x86_64_mir(&ir);

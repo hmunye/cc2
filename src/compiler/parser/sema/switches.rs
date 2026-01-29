@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::Result;
-use crate::compiler::parser::ast::{AST, Block, BlockItem, Expression, Labeled, Statement};
+use crate::compiler::parser::ast::{
+    AST, Analyzed, Block, BlockItem, CtrlFlowPhase, Expression, Labeled, Statement,
+};
 use crate::{Context, fmt_token_err};
 
 /// Kind of labeled statement within `switch`.
@@ -135,15 +137,11 @@ impl<'a> SwitchResolver<'a> {
     fn reset(&mut self) {
         self.scope_cases.clear();
         self.labels.clear();
-        self.case_count = 0;
-        self.default_count = 0;
     }
 }
 
-/// Collects all `case` and `default` labels for each `switch` statement, as
-/// well as performing semantic checks (e.g., duplicate `case`,
-/// duplicate `default`, invalid `case`/`default` location).
-pub fn resolve_switches(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
+/// Resolves `switch` statements and their `case`/`default` labels.
+pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Result<AST<Analyzed>> {
     fn resolve_block<'a>(
         block: &'a mut Block,
         ctx: &Context<'_>,
@@ -287,16 +285,15 @@ pub fn resolve_switches(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
 
     let mut switch_resolver: SwitchResolver<'_> = Default::default();
 
-    match ast {
-        AST::Program(funcs) => {
-            for func in funcs {
-                if let Some(body) = &mut func.body {
-                    resolve_block(body, ctx, &mut switch_resolver)?;
-                    switch_resolver.reset();
-                }
-            }
+    for func in &mut ast.program {
+        if let Some(body) = &mut func.body {
+            resolve_block(body, ctx, &mut switch_resolver)?;
+            switch_resolver.reset();
         }
     }
 
-    Ok(())
+    Ok(AST {
+        program: ast.program,
+        _phase: std::marker::PhantomData,
+    })
 }

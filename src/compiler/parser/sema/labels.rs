@@ -2,7 +2,9 @@ use std::collections::HashSet;
 
 use crate::compiler::Result;
 use crate::compiler::lexer::Token;
-use crate::compiler::parser::ast::{AST, Block, BlockItem, Labeled, Statement};
+use crate::compiler::parser::ast::{
+    AST, Block, BlockItem, LabelPhase, Labeled, Statement, TypePhase,
+};
 use crate::{Context, fmt_token_err};
 
 /// Helper to perform semantic analysis on label/`goto` statements within an
@@ -60,9 +62,8 @@ impl<'a> LabelResolver<'a> {
     }
 }
 
-/// Ensures every label declared is unique within it's function scope and
-/// performs semantic checks (e.g., missing `goto` targets, unreachable labels).
-pub fn resolve_labels(ast: &AST, ctx: &Context<'_>) -> Result<()> {
+/// Validates labels and `goto` targets within each function scope.
+pub fn resolve_labels(ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<LabelPhase>> {
     fn resolve_block<'a>(
         block: &'a Block,
         ctx: &Context<'_>,
@@ -135,36 +136,35 @@ pub fn resolve_labels(ast: &AST, ctx: &Context<'_>) -> Result<()> {
 
     let mut lbl_resolver: LabelResolver<'_> = Default::default();
 
-    match ast {
-        AST::Program(funcs) => {
-            for func in funcs {
-                if let Some(body) = &func.body {
-                    // Collect and validate all labels within the function in
-                    // the first pass.
-                    resolve_block(body, ctx, &mut lbl_resolver)?;
+    for func in &ast.program {
+        if let Some(body) = &func.body {
+            // Collect and validate all labels within the function in
+            // the first pass.
+            resolve_block(body, ctx, &mut lbl_resolver)?;
 
-                    // Second pass ensures all `goto` statements point to a
-                    // valid target within the same function scope.
-                    if let Err((label, token)) = lbl_resolver.check_gotos() {
-                        let tok_str = format!("{token:?}");
-                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+            // Second pass ensures all `goto` statements point to a
+            // valid target within the same function scope.
+            if let Err((label, token)) = lbl_resolver.check_gotos() {
+                let tok_str = format!("{token:?}");
+                let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-                        return Err(fmt_token_err!(
-                            token.loc.file_path.display(),
-                            token.loc.line,
-                            token.loc.col,
-                            tok_str,
-                            tok_str.len() - 1,
-                            line_content,
-                            "label '{label}' used but not defined",
-                        ));
-                    }
-
-                    lbl_resolver.reset();
-                }
+                return Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    line_content,
+                    "label '{label}' used but not defined",
+                ));
             }
+
+            lbl_resolver.reset();
         }
     }
 
-    Ok(())
+    Ok(AST {
+        program: ast.program,
+        _phase: std::marker::PhantomData,
+    })
 }

@@ -6,4 +6,4 @@
 pub mod ast;
 pub mod sema;
 
-pub use ast::parse_program;
+pub use ast::parse_ast;

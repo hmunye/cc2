@@ -16,28 +16,22 @@ use crate::{Context, report_err};
 ///
 /// [Exits]: std::process::exit
 pub fn emit_gas_x86_64_linux(ctx: &Context<'_>, mir: &MIRX86, mut f: Box<dyn IoWrite>) {
-    match mir {
-        MIRX86::Program(func) => {
-            // Write the file prologue in GNU `as` (assembler) format.
-            writeln!(
-                &mut f,
-                "\t.file\t\"{}\"\n\t.text\n\t.globl\t{label}\n\t.type\t{label}, @function\n{label}:",
-                ctx.in_path.display(),
-                label = func.label
-            ).unwrap_or_else(|err| {
-               report_err!(
-                   ctx.program,
-                   "failed to emit assembly: {err}",
-               );
-               process::exit(1);
-            });
+    // Write the file prologue in GNU `as` (assembler) format.
+    writeln!(
+        &mut f,
+        "\t.file\t\"{}\"\n\t.text\n\t.globl\t{label}\n\t.type\t{label}, @function\n{label}:",
+        ctx.in_path.display(),
+        label = &mir.program.label
+    )
+    .unwrap_or_else(|err| {
+        report_err!(ctx.program, "failed to emit assembly: {err}");
+        process::exit(1);
+    });
 
-            write!(&mut f, "{}", emit_asm_function(ctx, func)).unwrap_or_else(|err| {
-                report_err!(ctx.program, "failed to emit assembly: {err}");
-                process::exit(1);
-            });
-        }
-    }
+    write!(&mut f, "{}", emit_asm_function(ctx, &mir.program)).unwrap_or_else(|err| {
+        report_err!(ctx.program, "failed to emit assembly: {err}");
+        process::exit(1);
+    });
 
     // Indicates the program does not need an executable stack on Linux.
     writeln!(&mut f, "\t.section\t.note.GNU-stack,\"\",@progbits").unwrap_or_else(|err| {

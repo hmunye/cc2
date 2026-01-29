@@ -5,27 +5,23 @@
 
 use std::fmt;
 
-use crate::compiler::parser::ast::{self, BinaryOperator, Signedness, UnaryOperator};
+use crate::compiler::parser::ast::{self, Analyzed, BinaryOperator, Signedness, UnaryOperator};
 
 /// Intermediate representation (_IR_).
 #[derive(Debug)]
-pub enum IR {
+pub struct IR {
     /// Function that represent the structure of the program.
-    Program(Vec<Function>),
+    pub program: Vec<Function>,
 }
 
 impl fmt::Display for IR {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            IR::Program(funcs) => {
-                writeln!(f, "IR Program")?;
-                for func in funcs {
-                    writeln!(f, "{:4}{func}", "")?;
-                }
-
-                Ok(())
-            }
+        writeln!(f, "IR Program")?;
+        for func in &self.program {
+            writeln!(f, "{:4}{func}", "")?;
         }
+
+        Ok(())
     }
 }
 
@@ -232,18 +228,14 @@ impl TACBuilder<'_> {
 /// (_AST_). [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
-pub fn generate_ir(ast: &ast::AST) -> IR {
-    match ast {
-        ast::AST::Program(funcs) => {
-            let mut ir_funcs = vec![];
+pub fn generate_ir(ast: &ast::AST<Analyzed>) -> IR {
+    let mut ir_funcs = vec![];
 
-            for func in funcs {
-                ir_funcs.push(generate_ir_function(func))
-            }
-
-            IR::Program(ir_funcs)
-        }
+    for func in &ast.program {
+        ir_funcs.push(generate_ir_function(func))
     }
+
+    IR { program: ir_funcs }
 }
 
 /// Generate an _IR_ function definition from the provided _AST_ function.

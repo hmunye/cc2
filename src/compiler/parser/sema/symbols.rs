@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::compiler::Result;
 use crate::compiler::lexer::Token;
 use crate::compiler::parser::ast::{
-    AST, Block, BlockItem, Declaration, Expression, ForInit, Function, Labeled, Statement,
+    AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled, Parsed,
+    Statement,
 };
 use crate::{Context, fmt_token_err};
 
@@ -17,16 +18,14 @@ struct Scope {
 }
 
 impl Scope {
-    /// Global scope (top-level declarations).
+    /// Global scope (e.g, functions, global variables).
     const FILE_SCOPE: usize = 0;
-    /// Function scope (e.g., local variables, function parameters).
-    const FUNCTION_SCOPE: usize = 1;
 
     #[inline]
     fn new() -> Self {
         Scope {
             scopes: vec![Self::FILE_SCOPE],
-            next_scope: Self::FUNCTION_SCOPE,
+            next_scope: Self::FILE_SCOPE + 1,
         }
     }
 
@@ -100,6 +99,7 @@ struct NameBinding {
     /// `None` -> no linkage (lexically scoped/local).
     linkage: Option<Linkage>,
 }
+
 /// Types of bindings that can be declared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BindingType {
@@ -259,7 +259,7 @@ impl IdentResolver {
 
 /// Assigns a canonical identifier to each identifier encountered, performing
 /// semantic checks (e.g., duplicate definitions, undeclared references).
-pub fn resolve_idents(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
+pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<IdentPhase>> {
     fn resolve_function(
         func: &mut Function,
         ctx: &Context<'_>,
@@ -628,13 +628,12 @@ pub fn resolve_idents(ast: &mut AST, ctx: &Context<'_>) -> Result<()> {
 
     let mut ident_resolver: IdentResolver = Default::default();
 
-    match ast {
-        AST::Program(funcs) => {
-            for func in funcs {
-                resolve_function(func, ctx, &mut ident_resolver)?;
-            }
-        }
+    for func in &mut ast.program {
+        resolve_function(func, ctx, &mut ident_resolver)?;
     }
 
-    Ok(())
+    Ok(AST {
+        program: ast.program,
+        _phase: std::marker::PhantomData,
+    })
 }
