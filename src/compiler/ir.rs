@@ -29,12 +29,15 @@ impl fmt::Display for IR {
 #[derive(Debug)]
 pub struct Function {
     pub ident: String,
+    pub params: Vec<String>,
     pub instructions: Vec<Instruction>,
 }
 
 impl fmt::Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Ident({:?})", self.ident)?;
+        let params = self.params.join(", ");
+
+        writeln!(f, "Fn {:?}({})", self.ident, params)?;
 
         for inst in &self.instructions {
             writeln!(f, "{:8}{inst}", "")?;
@@ -83,6 +86,12 @@ pub enum Instruction {
     JumpIfNotZero { cond: Value, target: String },
     /// Associates an "identifier" with a location in the program.
     Label(String),
+    /// Function call.
+    Call {
+        ident: String,
+        args: Vec<Value>,
+        dst: Value,
+    },
 }
 
 impl fmt::Display for Instruction {
@@ -168,6 +177,27 @@ impl fmt::Display for Instruction {
                     width = width
                 )
             }
+            Instruction::Call { ident, args, dst } => {
+                let src_str = args
+                    .iter()
+                    .map(|val| format!("{val}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let len = src_str.len();
+
+                let max_width: usize = 32;
+                let width = max_width.saturating_sub(len);
+
+                let prefix = format!("Call({ident:?})");
+
+                write!(
+                    f,
+                    "{:<17}{src_str} {:>width$}  {dst}",
+                    prefix,
+                    "->",
+                    width = width
+                )
+            }
             Instruction::Label(i) => write!(f, "{:<17}{:?}", "Label", i),
         }
     }
@@ -203,7 +233,7 @@ struct TACBuilder<'a> {
     label: &'a str,
 }
 
-impl TACBuilder<'_> {
+impl<'a> TACBuilder<'a> {
     /// Returns a new temporary variable identifier.
     fn new_tmp(&mut self) -> String {
         // The `.` in temporary identifiers guarantees they won’t conflict
@@ -222,6 +252,16 @@ impl TACBuilder<'_> {
         self.label_count += 1;
         label
     }
+
+    /// Resets the builder state, given the next _AST_ function label.
+    fn reset(&mut self, label: &'a str) {
+        // Function label already ensures uniqueness for identifiers and labels
+        // across the translation unit.
+        self.tmp_count = 0;
+        self.label_count = 0;
+
+        self.label = label;
+    }
 }
 
 /// Generate intermediate representation (_IR_), given an abstract syntax tree
@@ -231,15 +271,25 @@ impl TACBuilder<'_> {
 pub fn generate_ir(ast: &ast::AST<Analyzed>) -> IR {
     let mut ir_funcs = vec![];
 
+    let mut builder = TACBuilder {
+        instructions: vec![],
+        tmp_count: 0,
+        label_count: 0,
+        label: "",
+    };
+
     for func in &ast.program {
-        ir_funcs.push(generate_ir_function(func))
+        if func.body.is_some() {
+            builder.reset(&func.ident);
+            ir_funcs.push(generate_ir_function(func, &mut builder))
+        }
     }
 
     IR { program: ir_funcs }
 }
 
 /// Generate an _IR_ function definition from the provided _AST_ function.
-fn generate_ir_function(func: &ast::Function) -> Function {
+fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> Function {
     fn process_ast_block(block: &ast::Block, builder: &mut TACBuilder<'_>) {
         for block_item in &block.0 {
             match block_item {
@@ -250,22 +300,19 @@ fn generate_ir_function(func: &ast::Function) -> Function {
     }
 
     fn process_ast_declaration(decl: &ast::Declaration, builder: &mut TACBuilder<'_>) {
-        match decl {
-            ast::Declaration::Var { ident, init, .. } => {
-                if let Some(init) = &init {
-                    // Generate and append any instructions needed to encode the
-                    // declaration's initializer.
-                    let ir_val = generate_ir_value(init, builder);
+        if let ast::Declaration::Var { ident, init, .. } = decl
+            && let Some(init) = &init
+        {
+            // Generate and append any instructions needed to encode the
+            // declaration's initializer.
+            let ir_val = generate_ir_value(init, builder);
 
-                    // Ensure the initializer expression result is copied to the
-                    // destination.
-                    builder.instructions.push(Instruction::Copy {
-                        src: ir_val,
-                        dst: Value::Var(ident.clone()),
-                    });
-                }
-            }
-            ast::Declaration::Func(..) => todo!(),
+            // Ensure the initializer expression result is copied to the
+            // destination.
+            builder.instructions.push(Instruction::Copy {
+                src: ir_val,
+                dst: Value::Var(ident.clone()),
+            });
         }
     }
 
@@ -510,17 +557,18 @@ fn generate_ir_function(func: &ast::Function) -> Function {
     }
 
     let label = func.ident.clone();
+    let params = func
+        .params
+        .iter()
+        .map(|pair| pair.0.clone())
+        .collect::<Vec<_>>();
 
-    let mut builder = TACBuilder {
-        instructions: vec![],
-        tmp_count: 0,
-        label_count: 0,
-        label: &label,
-    };
+    let body = &func
+        .body
+        .as_ref()
+        .expect("should not generate IR for function declarations");
 
-    if let Some(body) = &func.body {
-        process_ast_block(body, &mut builder);
-    }
+    process_ast_block(body, builder);
 
     // _C17_ 5.1.2.2.3 (Program termination)
     //
@@ -533,16 +581,17 @@ fn generate_ir_function(func: &ast::Function) -> Function {
     // reached, and the value of the function call is used by the caller, the
     // behavior is undefined.
     //
-    // As a hack, just appending an extra `Instruction::Return` handles the edge
-    // cases of the return value being used by the caller or ignored (no
-    // undefined behavior if the value is never used).
+    // Just appending an extra `Instruction::Return` handles the edge cases of
+    // the return value being used by the caller or ignored (no undefined
+    // behavior if the value is never used).
     builder
         .instructions
         .push(Instruction::Return(Value::IntConstant(0)));
 
     Function {
-        instructions: builder.instructions,
+        instructions: builder.instructions.drain(..).collect(),
         ident: label,
+        params,
     }
 }
 
@@ -780,6 +829,21 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
 
             dst
         }
-        ast::Expression::FuncCall { .. } => todo!(),
+        ast::Expression::FuncCall { ident, args, .. } => {
+            let mut ir_args = vec![];
+            let dst = Value::Var(builder.new_tmp());
+
+            for expr in args {
+                ir_args.push(generate_ir_value(expr, builder));
+            }
+
+            builder.instructions.push(Instruction::Call {
+                ident: ident.clone(),
+                args: ir_args,
+                dst: dst.clone(),
+            });
+
+            dst
+        }
     }
 }

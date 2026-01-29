@@ -517,8 +517,6 @@ impl TryFrom<&ast::BinaryOperator> for BinaryOperator {
 ///
 /// [Exits]: std::process::exit
 pub fn generate_x86_64_mir(ir: &IR) -> MIRX86 {
-    // TODO: Update this to process all functions after `AST` and `IR`
-    // implementation.
     let mir_func = generate_mir_function(&ir.program[0]);
 
     let mut mir = MIRX86 { program: mir_func };
@@ -677,6 +675,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 ));
                 instructions.push(Instruction::JmpC(CondCode::NE, target.clone()));
             }
+            ir::Instruction::Call { .. } => todo!(),
             ir::Instruction::Label(label) => {
                 instructions.push(Instruction::Label(label.clone()));
             }

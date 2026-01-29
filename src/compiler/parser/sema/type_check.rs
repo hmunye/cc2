@@ -245,7 +245,7 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
 
                 match f_type {
                     Type::Func { params } => {
-                        let args_len = args.as_ref().map_or(0, |args| args.len());
+                        let args_len = args.len();
 
                         if *params != args_len {
                             let tok_str = format!("{token:?}");
@@ -262,10 +262,8 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
                             ));
                         }
 
-                        if let Some(exprs) = args {
-                            for expr in exprs {
-                                type_check_expression(expr, ctx, type_map)?;
-                            }
+                        for expr in args {
+                            type_check_expression(expr, ctx, type_map)?;
                         }
 
                         Ok(())

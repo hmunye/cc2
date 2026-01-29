@@ -600,10 +600,8 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                 if let Some(bind_info) = resolver.resolve_ident(ident, Some(Linkage::External)) {
                     *ident = bind_info.canonical;
 
-                    if let Some(exprs) = args {
-                        for expr in exprs {
-                            resolve_expression(expr, ctx, resolver)?;
-                        }
+                    for expr in args {
+                        resolve_expression(expr, ctx, resolver)?;
                     }
                 } else {
                     let tok_str = format!("{token:?}");

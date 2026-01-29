@@ -401,7 +401,7 @@ pub enum Expression {
     Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
     FuncCall {
         ident: String,
-        args: Option<Vec<Expression>>,
+        args: Vec<Expression>,
         /// Function identifier token.
         token: Token,
     },
@@ -431,14 +431,11 @@ impl fmt::Display for Expression {
                 write!(f, "{} ? {} : {}", lhs, mid, rhs)
             }
             Expression::FuncCall { ident, args, .. } => {
-                let args_str = if let Some(args) = args {
-                    args.iter()
-                        .map(|a| format!("{}", a))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                } else {
-                    "".into()
-                };
+                let args_str = args
+                    .iter()
+                    .map(|a| format!("{}", a))
+                    .collect::<Vec<_>>()
+                    .join(", ");
 
                 write!(f, "{ident:?}({})", args_str)
             }
@@ -1469,7 +1466,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                             // Consume the "(" token.
                             let _ = iter.next();
 
-                            let args = parse_opt_args(ctx, iter)?;
+                            let args = parse_args(ctx, iter)?;
                             expect_token(ctx, iter, TokenType::RParen)?;
 
                             return Ok(Expression::FuncCall {
@@ -1617,22 +1614,22 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
     }
 }
 
-/// Parse an _AST_ optional argument list from the provided `Token` iterator.
+/// Parse an _AST_ argument list from the provided `Token` iterator.
 ///
 /// # Errors
 ///
-/// Will return `Err` if an optional argument list could not be parsed.
-fn parse_opt_args<I: Iterator<Item = Result<Token>>>(
+/// Will return `Err` if an argument list could not be parsed.
+fn parse_args<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Option<Vec<Expression>>> {
+) -> Result<Vec<Expression>> {
+    let mut args = vec![];
+
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         if token.ty == TokenType::RParen {
             // Not consuming the ")".
-            Ok(None)
+            Ok(args)
         } else {
-            let mut args = vec![];
-
             let expr = parse_expression(ctx, iter, 0)?;
             args.push(expr);
 
@@ -1646,7 +1643,7 @@ fn parse_opt_args<I: Iterator<Item = Result<Token>>>(
                 args.push(expr);
             }
 
-            Ok(Some(args))
+            Ok(args)
         }
     } else {
         Err(fmt_err!(
