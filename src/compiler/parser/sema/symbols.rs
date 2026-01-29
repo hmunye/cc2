@@ -298,7 +298,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
 
         *ident = bind_info.canonical;
 
-        if let Some(body) = &mut func.body {
+        if let Some(body) = body {
             resolver.scope.enter_scope();
 
             for (param, token) in params {
