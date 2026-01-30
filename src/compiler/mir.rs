@@ -3,8 +3,8 @@
 //! Compiler pass that lowers three-address code (_TAC_) intermediate
 //! representation (_IR_) into machine intermediate representation (_x86-64_).
 
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::compiler::ir::{self, IR};
@@ -14,263 +14,19 @@ use crate::compiler::parser::ast::{self, Signedness};
 #[derive(Debug)]
 pub struct MIRX86 {
     /// Function that represent the structure of the assembly program.
-    pub program: Function,
-}
-
-impl MIRX86 {
-    /// Replaces each _pseudoregister_ encountered with a stack offset,
-    /// returning the stack offset of the final temporary variable.
-    fn replace_pseudo_registers(&mut self) -> i32 {
-        let mut map: HashMap<String, i32> = Default::default();
-
-        // Currently allocating in 4-byte offsets.
-        let mut stack_offset = 0;
-
-        // Either increment the current stack offset, or use the stored offset
-        // if the identifier has already been seen.
-        let mut get_offset = |ident: &mut String| match map.entry(ident.clone()) {
-            Entry::Occupied(entry) => *entry.get(),
-            Entry::Vacant(entry) => {
-                stack_offset += 4;
-                entry.insert(stack_offset);
-                stack_offset
-            }
-        };
-
-        for inst in &mut self.program.instructions {
-            match inst {
-                Instruction::Mov(src, dst) => {
-                    if let Operand::Pseudo(ident) = src {
-                        *src = Operand::Stack(get_offset(ident));
-                    }
-                    if let Operand::Pseudo(ident) = dst {
-                        *dst = Operand::Stack(get_offset(ident));
-                    }
-                }
-                Instruction::Unary(_, operand) => {
-                    if let Operand::Pseudo(ident) = operand {
-                        *operand = Operand::Stack(get_offset(ident));
-                    }
-                }
-                Instruction::Binary(_, lhs, rhs) => {
-                    if let Operand::Pseudo(ident) = lhs {
-                        *lhs = Operand::Stack(get_offset(ident));
-                    }
-                    if let Operand::Pseudo(ident) = rhs {
-                        *rhs = Operand::Stack(get_offset(ident));
-                    }
-                }
-                Instruction::Idiv(div) => {
-                    if let Operand::Pseudo(ident) = div {
-                        *div = Operand::Stack(get_offset(ident));
-                    }
-                }
-                Instruction::Cmp(src, dst) => {
-                    if let Operand::Pseudo(ident) = src {
-                        *src = Operand::Stack(get_offset(ident));
-                    }
-                    if let Operand::Pseudo(ident) = dst {
-                        *dst = Operand::Stack(get_offset(ident));
-                    }
-                }
-                Instruction::SetC(_, dst) => {
-                    if let Operand::Pseudo(ident) = dst {
-                        *dst = Operand::Stack(get_offset(ident));
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        stack_offset
-    }
-
-    /// Prepends a `Instruction::StackAlloc` to the current instruction
-    /// sequence, given the number of bytes to allocate.
-    fn emit_stack_allocation(&mut self, bytes: i32) {
-        // NOTE: O(n) time complexity.
-        self.program
-            .instructions
-            .insert(0, Instruction::StackAlloc(bytes));
-    }
-
-    /// Normalizes instructions with invalid operand forms into valid _x86-64_
-    /// instruction representations.
-    fn rewrite_invalid_instructions(&mut self) {
-        let mut i = 0;
-
-        while i < self.program.instructions.len() {
-            let inst = &mut self.program.instructions[i];
-
-            match inst {
-                // `mov` instruction that uses a memory address for both
-                // operands (illegal).
-                Instruction::Mov(src, dst)
-                    if matches!(src, Operand::Stack(_)) && matches!(dst, Operand::Stack(_)) =>
-                {
-                    let src = src.clone();
-                    let dst = dst.clone();
-
-                    // Use the `r10d` register as temporary storage for
-                    // intermediate values in the new instructions.
-                    //
-                    // `r10d`, unlike other hardware registers on
-                    // x86-64, serves no special purpose, so we are less
-                    // likely to encounter a conflict.
-                    self.program.instructions.splice(
-                        i..=i,
-                        [
-                            Instruction::Mov(src, Operand::Register(Reg::R10)),
-                            Instruction::Mov(Operand::Register(Reg::R10), dst),
-                        ],
-                    );
-
-                    // Increment `i` to ensure the two new instructions
-                    // inserted are skipped.
-                    i += 1;
-                }
-                // `idivl` instruction that uses an immediate value as
-                // it's operand (illegal)
-                Instruction::Idiv(div) if matches!(div, Operand::Imm32(_)) => {
-                    let div = div.clone();
-
-                    self.program.instructions.splice(
-                        i..=i,
-                        [
-                            Instruction::Mov(div, Operand::Register(Reg::R10)),
-                            Instruction::Idiv(Operand::Register(Reg::R10)),
-                        ],
-                    );
-
-                    // Increment `i` to ensure the two new instructions
-                    // inserted are skipped.
-                    i += 1;
-                }
-                // `add`, `sub`, `and`, `or`, or, `xor` instruction that
-                // uses a memory address for both operands (illegal).
-                Instruction::Binary(op, lhs, rhs)
-                    if matches!(
-                        op,
-                        BinaryOperator::Add
-                            | BinaryOperator::Sub
-                            | BinaryOperator::And
-                            | BinaryOperator::Or
-                            | BinaryOperator::Xor
-                    ) && matches!(lhs, Operand::Stack(_))
-                        && matches!(rhs, Operand::Stack(_)) =>
-                {
-                    let lhs = lhs.clone();
-                    let rhs = rhs.clone();
-                    let binop = *op;
-
-                    self.program.instructions.splice(
-                        i..=i,
-                        [
-                            Instruction::Mov(lhs, Operand::Register(Reg::R10)),
-                            Instruction::Binary(binop, Operand::Register(Reg::R10), rhs),
-                        ],
-                    );
-
-                    // Increment `i` to ensure the two new instructions
-                    // inserted are skipped.
-                    i += 1;
-                }
-                // `imul` instruction that uses a memory address as it's
-                // destination operand (illegal).
-                Instruction::Binary(BinaryOperator::Imul, lhs, rhs)
-                    if matches!(rhs, Operand::Stack(_)) =>
-                {
-                    let lhs = lhs.clone();
-                    let rhs = rhs.clone();
-
-                    // Use the `r11d` register as temporary storage for
-                    // intermediate values in the new instructions.
-                    self.program.instructions.splice(
-                        i..=i,
-                        [
-                            Instruction::Mov(rhs.clone(), Operand::Register(Reg::R11)),
-                            Instruction::Binary(
-                                BinaryOperator::Imul,
-                                lhs,
-                                Operand::Register(Reg::R11),
-                            ),
-                            Instruction::Mov(Operand::Register(Reg::R11), rhs),
-                        ],
-                    );
-
-                    // Increment `i` to ensure the three new
-                    // instructions inserted are skipped.
-                    i += 2;
-                }
-                // `shl` or `shr`/`sar` instruction that uses a memory
-                // address or register not `%cl` as source operand
-                // (illegal).
-                Instruction::Binary(op, lhs, rhs)
-                    if matches!(
-                        op,
-                        BinaryOperator::Shl | BinaryOperator::Shr | BinaryOperator::Sar
-                    ) && !matches!(lhs, Operand::Imm32(_) | Operand::Register(Reg::CX)) =>
-                {
-                    let lhs = lhs.clone();
-                    let rhs = rhs.clone();
-                    let binop = *op;
-
-                    // `Reg::CX` here represents the `%cl` register.
-                    self.program.instructions.splice(
-                        i..=i,
-                        [
-                            Instruction::Mov(lhs, Operand::Register(Reg::CX)),
-                            Instruction::Binary(binop, Operand::Register(Reg::CX), rhs),
-                        ],
-                    );
-
-                    // Increment `i` to ensure the two new instructions
-                    // inserted are skipped.
-                    i += 1;
-                }
-                // `cmp` instruction that uses a memory address for both
-                // operands or immediate value as destination operand
-                // (illegal).
-                Instruction::Cmp(src, dst)
-                    if (matches!(src, Operand::Stack(_)) && matches!(dst, Operand::Stack(_)))
-                        || matches!(dst, Operand::Imm32(_)) =>
-                {
-                    let src = src.clone();
-                    let dst = dst.clone();
-
-                    if let Operand::Imm32(_) = dst {
-                        self.program.instructions.splice(
-                            i..=i,
-                            [
-                                Instruction::Mov(dst, Operand::Register(Reg::R11)),
-                                Instruction::Cmp(src, Operand::Register(Reg::R11)),
-                            ],
-                        );
-                    } else {
-                        self.program.instructions.splice(
-                            i..=i,
-                            [
-                                Instruction::Mov(src, Operand::Register(Reg::R10)),
-                                Instruction::Cmp(Operand::Register(Reg::R10), dst),
-                            ],
-                        );
-                    }
-
-                    // Increment `i` to ensure the two new instructions
-                    // inserted are skipped.
-                    i += 1;
-                }
-                _ => {}
-            }
-
-            i += 1;
-        }
-    }
+    pub program: Vec<Function>,
+    /// Tracks the set of functions defined within the translation unit.
+    pub locales: HashSet<String>,
 }
 
 impl fmt::Display for MIRX86 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "MIR Program\n{:4}{}", "", self.program)
+        writeln!(f, "MIR (x86-64) Program")?;
+        for func in &self.program {
+            writeln!(f, "{:4}{func}", "")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -323,7 +79,14 @@ pub enum Instruction {
     /// Associates an "identifier" with instruction(s).
     Label(String),
     /// Subtract the specified number of bytes from `rsp` register.
-    StackAlloc(i32),
+    StackAlloc(isize),
+    /// Add the specified number of bytes to `rsp` register.
+    StackDealloc(usize),
+    /// Pushes the operand onto the call stack.
+    Push(Operand),
+    /// Calls the function specified by the identifier, transferring control to
+    /// it.
+    Call(String),
     /// Yields control back to the caller.
     Ret,
 }
@@ -384,6 +147,9 @@ impl fmt::Display for Instruction {
             Instruction::SetC(code, o) => write!(f, "{:<15}{o}", format!("Set{code:?}")),
             Instruction::Label(i) => write!(f, "{:<15}{i}", "Label"),
             Instruction::StackAlloc(v) => write!(f, "{:<15}{v}", "StackAlloc"),
+            Instruction::StackDealloc(v) => write!(f, "{:<15}{v}", "StackDealloc"),
+            Instruction::Push(o) => write!(f, "{:<15}{o}", "Push"),
+            Instruction::Call(i) => write!(f, "{:<15}{i:?}", "Call"),
             Instruction::Ret => write!(f, "Ret"),
         }
     }
@@ -399,7 +165,7 @@ pub enum Operand {
     /// Pseudoregister to represent temporary variable.
     Pseudo(String),
     /// Stack address with the specified offset from the `RBP` register.
-    Stack(i32),
+    Stack(isize),
 }
 
 impl fmt::Display for Operand {
@@ -425,6 +191,14 @@ pub enum Reg {
     /// `rdx` (64-bit), `edx` (32-bit), `dx` (16-bit), `dl` (8-bit low),
     /// `dh` (8-bit high).
     DX,
+    /// `rdi` (64-bit), `edi` (32-bit), `di` (16-bit), `dil` (8-bit low).
+    DI,
+    /// `rsi` (64-bit), `esi` (32-bit), `si` (16-bit), `sil` (8-bit low).
+    SI,
+    /// `r8` (64-bit), `r8d` (32-bit), `r8w` (16-bit), `r8b` (8-bit low).
+    R8,
+    /// `r9` (64-bit), `r9d` (32-bit), `r9w` (16-bit), `r9b` (8-bit low).
+    R9,
     /// `r10` (64-bit), `r10d` (32-bit), `r10w` (16-bit), `r10b` (8-bit low)
     R10,
     /// `r11` (64-bit), `r11d` (32-bit), `r11w` (16-bit), `r11b` (8-bit low)
@@ -517,25 +291,26 @@ impl TryFrom<&ast::BinaryOperator> for BinaryOperator {
 ///
 /// [Exits]: std::process::exit
 pub fn generate_x86_64_mir(ir: &IR) -> MIRX86 {
-    let mir_func = generate_mir_function(&ir.program[0]);
+    let mut mir_funcs = vec![];
+    let mut locales = HashSet::new();
 
-    let mut mir = MIRX86 { program: mir_func };
+    for func in &ir.program {
+        locales.insert(func.ident.clone());
+        mir_funcs.push(generate_mir_function(func));
+    }
 
-    // Pass 1 - Each pseudoregister replaced with stack offsets.
-    let stack_offset = mir.replace_pseudo_registers();
-
-    // Pass 2 - Rewrite invalid instructions.
-    mir.rewrite_invalid_instructions();
-
-    // Pass 3 - Insert instruction for allocating `stack_offset` bytes.
-    mir.emit_stack_allocation(stack_offset);
-
-    mir
+    MIRX86 {
+        program: mir_funcs,
+        locales,
+    }
 }
 
 /// Generate a _MIR_ function definition from the provided _IR_ function.
 fn generate_mir_function(func: &ir::Function) -> Function {
     let mut instructions = vec![];
+
+    // Lower any function parameters before processing the instructions.
+    lower_ir_function_params(&mut instructions, &func.params);
 
     for inst in &func.instructions {
         match inst {
@@ -675,17 +450,108 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 ));
                 instructions.push(Instruction::JmpC(CondCode::NE, target.clone()));
             }
-            ir::Instruction::Call { .. } => todo!(),
+            ir::Instruction::Call { ident, args, dst } => {
+                // According to the System-V ABI calling convention, the first
+                // six function arguments are passed in the following registers:
+                //
+                // 64-bit: `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`
+                // 32-bit: `%edi`, `%esi`, `%edx`, `%ecx`, `%r8d`, `%r9d`
+                let registers = [Reg::DI, Reg::SI, Reg::DX, Reg::CX, Reg::R8, Reg::R9];
+
+                let stack_args = args.len().saturating_sub(6);
+                let needs_padding = (stack_args > 0) && ((stack_args % 2) == 1);
+
+                if needs_padding {
+                    // Align the stack to 16 bytes by adding padding, as
+                    // required by the System-V ABI.
+                    instructions.push(Instruction::StackAlloc(8));
+                }
+
+                for (i, arg) in args.iter().take(6).enumerate() {
+                    instructions.push(Instruction::Mov(
+                        generate_mir_operand(arg),
+                        Operand::Register(registers[i]),
+                    ));
+                }
+
+                // Any remaining arguments are passed on the stack in right-to-left order.
+                if stack_args > 0 {
+                    let remaining_args = &args[6..];
+
+                    // Additional arguments are pushed in reverse order (`LIFO`).
+                    for arg in remaining_args.iter().rev() {
+                        let mir_arg = generate_mir_operand(arg);
+
+                        match &mir_arg {
+                            Operand::Register(_) | Operand::Imm32(_) => {
+                                instructions.push(Instruction::Push(mir_arg));
+                            }
+                            // Pushing directly from a 4-byte stack offset
+                            // (e.g., -4(%rbp)) is not valid because the `push`
+                            // instruction requires an 8-byte operand. This would
+                            // result in improper stack manipulation or even
+                            // exceptions as the operand is extended to 8 bytes.
+                            // Instead, we load the 4-byte value into a register
+                            // first, then push it as an 8-byte value.
+                            _ => {
+                                instructions
+                                    .push(Instruction::Mov(mir_arg, Operand::Register(Reg::AX)));
+                                instructions.push(Instruction::Push(Operand::Register(Reg::AX)));
+                            }
+                        }
+                    }
+                }
+
+                instructions.push(Instruction::Call(ident.clone()));
+
+                // Adjust the stack pointer to deallocate the arguments and any
+                // alignment padding.
+                let bytes_dealloc = 8 * stack_args + (if needs_padding { 8 } else { 0 });
+                if bytes_dealloc != 0 {
+                    instructions.push(Instruction::StackDealloc(bytes_dealloc));
+                }
+
+                // According to the System-V ABI calling convention, the return
+                // value is always stored in `%rax` (for 64-bit) or `%eax`
+                // (for 32-bit).
+                instructions.push(Instruction::Mov(
+                    Operand::Register(Reg::AX),
+                    generate_mir_operand(dst),
+                ));
+            }
             ir::Instruction::Label(label) => {
                 instructions.push(Instruction::Label(label.clone()));
             }
         }
     }
 
-    Function {
+    let mut func = Function {
         label: func.ident.clone(),
         instructions,
-    }
+    };
+
+    // Pass 1 - Each pseudoregister replaced with stack offsets.
+    let stack_offset = replace_pseudo_registers(&mut func);
+
+    // Pass 2 - Rewrite invalid instructions.
+    rewrite_invalid_instructions(&mut func);
+
+    // Ensure that the stack offset is aligned to a 16-byte boundary by adding
+    // padding if necessary. A length that is a multiple of 16 will always
+    // have the last four bits set to `0000`.
+    let padding = if stack_offset & 0xF != 0 {
+        16 - (stack_offset & 0xF)
+    } else {
+        0
+    };
+
+    // Pass 3 - Insert instruction for allocating `stack_offset` bytes.
+    //
+    // NOTE: O(n) time complexity.
+    func.instructions
+        .insert(0, Instruction::StackAlloc(stack_offset + padding));
+
+    func
 }
 
 /// Generate a _MIR_ operand from the provided _IR_ value.
@@ -693,5 +559,279 @@ fn generate_mir_operand(val: &ir::Value) -> Operand {
     match val {
         ir::Value::IntConstant(v) => Operand::Imm32(*v),
         ir::Value::Var(v) => Operand::Pseudo(v.clone()),
+    }
+}
+
+/// Lowers _IR_ function parameters into _MIR_ instructions, appending to
+/// `out`.
+fn lower_ir_function_params(out: &mut Vec<Instruction>, params: &[String]) {
+    if params.is_empty() {
+        return;
+    }
+
+    // According to the System-V ABI calling convention, the first six function
+    // parameters are passed in the following registers:
+    //
+    // 64-bit: `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`
+    // 32-bit: `%edi`, `%esi`, `%edx`, `%ecx`, `%r8d`, `%r9d`
+    //
+    // Copying parameters to the stack ensures no caller/callee-saved registers
+    // are affected.
+    let registers = [Reg::DI, Reg::SI, Reg::DX, Reg::CX, Reg::R8, Reg::R9];
+    for (i, param) in params.iter().take(6).enumerate() {
+        out.push(Instruction::Mov(
+            Operand::Register(registers[i]),
+            Operand::Pseudo(param.clone()),
+        ));
+    }
+
+    // Any remaining parameters are passed on the stack in right-to-left order.
+    if params.len().saturating_sub(6) > 0 {
+        let remaining_params = &params[6..];
+
+        // Since the `call` instruction pushes the return address (8 bytes) onto
+        // the stack before transferring control, the seventh parameter begins
+        // at `16(%rbp)`.
+        let mut stack_offset = 16;
+
+        for param in remaining_params {
+            out.push(Instruction::Mov(
+                // Positive offsets are used for stack parameters relative to
+                // `%rbp` (e.g., `16(%rbp)`).
+                Operand::Stack(stack_offset),
+                Operand::Pseudo(param.clone()),
+            ));
+
+            stack_offset += 8; // Each parameter is 8 bytes.
+        }
+    }
+}
+
+/// Replaces each _pseudoregister_ encountered with a stack offset, returning
+/// the stack offset of the final temporary variable.
+fn replace_pseudo_registers(func: &mut Function) -> isize {
+    let mut map: HashMap<String, isize> = Default::default();
+
+    // Currently allocating in 4-byte offsets.
+    let mut stack_offset = 0;
+
+    // Either increment the current stack offset, or use the stored offset
+    // if the identifier has already been seen.
+    let mut get_offset = |ident: &mut String| match map.entry(ident.clone()) {
+        Entry::Occupied(entry) => *entry.get(),
+        Entry::Vacant(entry) => {
+            stack_offset += 4;
+            // Negating the offset indicates a local variable on the stack
+            // relative to `%rbp` (e.g., `-16(%rbp)`).
+            entry.insert(-stack_offset);
+            -stack_offset
+        }
+    };
+
+    for inst in &mut func.instructions {
+        match inst {
+            Instruction::Mov(src, dst) => {
+                if let Operand::Pseudo(ident) = src {
+                    *src = Operand::Stack(get_offset(ident));
+                }
+                if let Operand::Pseudo(ident) = dst {
+                    *dst = Operand::Stack(get_offset(ident));
+                }
+            }
+            Instruction::Unary(_, operand) => {
+                if let Operand::Pseudo(ident) = operand {
+                    *operand = Operand::Stack(get_offset(ident));
+                }
+            }
+            Instruction::Binary(_, lhs, rhs) => {
+                if let Operand::Pseudo(ident) = lhs {
+                    *lhs = Operand::Stack(get_offset(ident));
+                }
+                if let Operand::Pseudo(ident) = rhs {
+                    *rhs = Operand::Stack(get_offset(ident));
+                }
+            }
+            Instruction::Idiv(div) => {
+                if let Operand::Pseudo(ident) = div {
+                    *div = Operand::Stack(get_offset(ident));
+                }
+            }
+            Instruction::Cmp(src, dst) => {
+                if let Operand::Pseudo(ident) = src {
+                    *src = Operand::Stack(get_offset(ident));
+                }
+                if let Operand::Pseudo(ident) = dst {
+                    *dst = Operand::Stack(get_offset(ident));
+                }
+            }
+            Instruction::SetC(_, dst) => {
+                if let Operand::Pseudo(ident) = dst {
+                    *dst = Operand::Stack(get_offset(ident));
+                }
+            }
+            Instruction::Push(op) => {
+                if let Operand::Pseudo(ident) = op {
+                    *op = Operand::Stack(get_offset(ident));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    stack_offset
+}
+
+/// Normalizes instructions with invalid operand forms into valid _x86-64_
+/// instruction representations.
+fn rewrite_invalid_instructions(func: &mut Function) {
+    let mut i = 0;
+
+    while i < func.instructions.len() {
+        let inst = &mut func.instructions[i];
+
+        match inst {
+            Instruction::Mov(src, dst)
+                if matches!(src, Operand::Stack(_)) && matches!(dst, Operand::Stack(_)) =>
+            {
+                let src = src.clone();
+                let dst = dst.clone();
+
+                // Use the `r10d` register as temporary storage for
+                // intermediate values in the new instructions.
+                //
+                // `r10d`, unlike other hardware registers on
+                // x86-64, serves no special purpose, so we are less
+                // likely to encounter a conflict.
+                func.instructions.splice(
+                    i..=i,
+                    [
+                        Instruction::Mov(src, Operand::Register(Reg::R10)),
+                        Instruction::Mov(Operand::Register(Reg::R10), dst),
+                    ],
+                );
+
+                // Increment `i` to ensure the two new instructions
+                // inserted are skipped.
+                i += 1;
+            }
+            Instruction::Idiv(div) if matches!(div, Operand::Imm32(_)) => {
+                let div = div.clone();
+
+                func.instructions.splice(
+                    i..=i,
+                    [
+                        Instruction::Mov(div, Operand::Register(Reg::R10)),
+                        Instruction::Idiv(Operand::Register(Reg::R10)),
+                    ],
+                );
+
+                // Increment `i` to ensure the two new instructions
+                // inserted are skipped.
+                i += 1;
+            }
+            Instruction::Binary(op, lhs, rhs)
+                if matches!(
+                    op,
+                    BinaryOperator::Add
+                        | BinaryOperator::Sub
+                        | BinaryOperator::And
+                        | BinaryOperator::Or
+                        | BinaryOperator::Xor
+                ) && matches!(lhs, Operand::Stack(_))
+                    && matches!(rhs, Operand::Stack(_)) =>
+            {
+                let lhs = lhs.clone();
+                let rhs = rhs.clone();
+                let binop = *op;
+
+                func.instructions.splice(
+                    i..=i,
+                    [
+                        Instruction::Mov(lhs, Operand::Register(Reg::R10)),
+                        Instruction::Binary(binop, Operand::Register(Reg::R10), rhs),
+                    ],
+                );
+
+                // Increment `i` to ensure the two new instructions
+                // inserted are skipped.
+                i += 1;
+            }
+            Instruction::Binary(BinaryOperator::Imul, lhs, rhs)
+                if matches!(rhs, Operand::Stack(_)) =>
+            {
+                let lhs = lhs.clone();
+                let rhs = rhs.clone();
+
+                // Use the `r11d` register as temporary storage for
+                // intermediate values in the new instructions.
+                func.instructions.splice(
+                    i..=i,
+                    [
+                        Instruction::Mov(rhs.clone(), Operand::Register(Reg::R11)),
+                        Instruction::Binary(BinaryOperator::Imul, lhs, Operand::Register(Reg::R11)),
+                        Instruction::Mov(Operand::Register(Reg::R11), rhs),
+                    ],
+                );
+
+                // Increment `i` to ensure the three new
+                // instructions inserted are skipped.
+                i += 2;
+            }
+            Instruction::Binary(op, lhs, rhs)
+                if matches!(
+                    op,
+                    BinaryOperator::Shl | BinaryOperator::Shr | BinaryOperator::Sar
+                ) && !matches!(lhs, Operand::Imm32(_) | Operand::Register(Reg::CX)) =>
+            {
+                let lhs = lhs.clone();
+                let rhs = rhs.clone();
+                let binop = *op;
+
+                // `Reg::CX` here represents the `%cl` register.
+                func.instructions.splice(
+                    i..=i,
+                    [
+                        Instruction::Mov(lhs, Operand::Register(Reg::CX)),
+                        Instruction::Binary(binop, Operand::Register(Reg::CX), rhs),
+                    ],
+                );
+
+                // Increment `i` to ensure the two new instructions
+                // inserted are skipped.
+                i += 1;
+            }
+            Instruction::Cmp(src, dst)
+                if (matches!(src, Operand::Stack(_)) && matches!(dst, Operand::Stack(_)))
+                    || matches!(dst, Operand::Imm32(_)) =>
+            {
+                let src = src.clone();
+                let dst = dst.clone();
+
+                if let Operand::Imm32(_) = dst {
+                    func.instructions.splice(
+                        i..=i,
+                        [
+                            Instruction::Mov(dst, Operand::Register(Reg::R11)),
+                            Instruction::Cmp(src, Operand::Register(Reg::R11)),
+                        ],
+                    );
+                } else {
+                    func.instructions.splice(
+                        i..=i,
+                        [
+                            Instruction::Mov(src, Operand::Register(Reg::R10)),
+                            Instruction::Cmp(Operand::Register(Reg::R10), dst),
+                        ],
+                    );
+                }
+
+                // Increment `i` to ensure the two new instructions
+                // inserted are skipped.
+                i += 1;
+            }
+            _ => {}
+        }
+
+        i += 1;
     }
 }

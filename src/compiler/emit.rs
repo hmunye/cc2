@@ -3,6 +3,7 @@
 //! Compiler pass that emits textual _gas-x86-64-linux_ assembly from the
 //! compiler's _MIR_.
 
+use std::collections::HashSet;
 use std::process;
 use std::{fmt::Write, io::Write as IoWrite};
 
@@ -17,31 +18,56 @@ use crate::{Context, report_err};
 /// [Exits]: std::process::exit
 pub fn emit_gas_x86_64_linux(ctx: &Context<'_>, mir: &MIRX86, mut f: Box<dyn IoWrite>) {
     // Write the file prologue in GNU `as` (assembler) format.
-    writeln!(
-        &mut f,
-        "\t.file\t\"{}\"\n\t.text\n\t.globl\t{label}\n\t.type\t{label}, @function\n{label}:",
-        ctx.in_path.display(),
-        label = &mir.program.label
-    )
-    .unwrap_or_else(|err| {
+    writeln!(&mut f, "\t.file\t\"{}\"\n\t.text", ctx.in_path.display()).unwrap_or_else(|err| {
         report_err!(ctx.program, "failed to emit assembly: {err}");
         process::exit(1);
     });
 
-    write!(&mut f, "{}", emit_asm_function(ctx, &mir.program)).unwrap_or_else(|err| {
-        report_err!(ctx.program, "failed to emit assembly: {err}");
-        process::exit(1);
-    });
+    for (i, func) in mir.program.iter().enumerate() {
+        // `.L` is the local label prefix for Linux.
+        writeln!(
+            &mut f,
+            "\t.globl\t{label}\n\t.type\t{label}, @function\n{label}:\n.LFB{i}:",
+            label = &func.label
+        )
+        .unwrap_or_else(|err| {
+            report_err!(ctx.program, "failed to emit assembly: {err}");
+            process::exit(1);
+        });
+
+        write!(&mut f, "{}", emit_asm_function(ctx, func, &mir.locales)).unwrap_or_else(|err| {
+            report_err!(ctx.program, "failed to emit assembly: {err}");
+            process::exit(1);
+        });
+
+        // Records the byte size of the function in the _ELF_ symbol table.
+        //
+        // `.L` is the local label prefix for Linux.
+        writeln!(
+            &mut f,
+            ".LFE{i}:\n\t.size\t{label}, .-{label}",
+            label = &func.label
+        )
+        .unwrap_or_else(|err| {
+            report_err!(ctx.program, "failed to emit assembly: {err}");
+            process::exit(1);
+        });
+    }
 
     // Indicates the program does not need an executable stack on Linux.
-    writeln!(&mut f, "\t.section\t.note.GNU-stack,\"\",@progbits").unwrap_or_else(|err| {
+    writeln!(
+        &mut f,
+        "\t.ident\t\"cc2: {}\"\n\t.section\t.note.GNU-stack,\"\",@progbits",
+        env!("CARGO_PKG_VERSION")
+    )
+    .unwrap_or_else(|err| {
         report_err!(ctx.program, "failed to emit assembly: {err}");
         process::exit(1);
     });
 }
 
 /// Return a string assembly representation of the given _MIR_ function.
-fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
+fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function, locales: &HashSet<String>) -> String {
     let mut asm = String::new();
 
     // Generate the function prologue:
@@ -57,26 +83,17 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
         process::exit(1);
     });
 
-    // Updated if a `StackAlloc` instruction is encountered, so the allocated
-    // stack memory can be deallocated when returning.
-    let mut alloc = 0;
-
     for inst in &func.instructions {
-        if let mir::Instruction::StackAlloc(b) = inst {
-            // Accumulate any allocations made before any `Return` instruction
-            // is reached.
-            alloc += *b;
-        }
-
         if let mir::Instruction::Label(label) = inst {
             writeln!(&mut asm, ".L{label}:").unwrap_or_else(|err| {
                 report_err!(ctx.program, "failed to emit assembly: {err}");
                 process::exit(1);
             });
+
             continue;
         }
 
-        writeln!(&mut asm, "\t{}", emit_asm_instruction(inst, alloc)).unwrap_or_else(|err| {
+        writeln!(&mut asm, "\t{}", emit_asm_instruction(inst, locales)).unwrap_or_else(|err| {
             report_err!(ctx.program, "failed to emit assembly: {err}");
             process::exit(1);
         });
@@ -86,7 +103,7 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function) -> String {
 }
 
 /// Return a string assembly representation of the given _MIR_ instruction.
-fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
+fn emit_asm_instruction(instruction: &mir::Instruction, locales: &HashSet<String>) -> String {
     match instruction {
         mir::Instruction::Mov(src, dst) => {
             format!(
@@ -134,6 +151,20 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
         mir::Instruction::JmpC(code, label) => format!("j{code}\t.L{label}"),
         mir::Instruction::SetC(code, dst) => format!("set{code}\t{}", emit_asm_operand(dst, 1)),
         mir::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
+        mir::Instruction::StackDealloc(v) => format!("addq\t${v}, %rsp"),
+        mir::Instruction::Push(src) => format!("pushq\t{}", emit_asm_operand(src, 8)),
+        // On _macOS_, function names are prefixed with underscore
+        // (e.g., `call _foo`).
+        //
+        // On Linux, function names not defined in the current translation unit
+        // are suffixed with `@PLT` (Procedure Linkage Table), a section in
+        // `ELF` binaries (e.g., `call puts@PLT`).
+        mir::Instruction::Call(label) => {
+            format!(
+                "call\t{label}{}",
+                if locales.contains(label) { "" } else { "@PLT" }
+            )
+        }
         // Include the function epilogue before returning to the caller:
         //
         // 1. Move the current base pointer (`rbp`) into the stack pointer
@@ -145,13 +176,7 @@ fn emit_asm_instruction(instruction: &mir::Instruction, alloc: i32) -> String {
         //
         // 3. Return control to the caller, jumping to the return address stored
         // on the caller's stack frame.
-        mir::Instruction::Ret => {
-            if alloc == 0 {
-                "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into()
-            } else {
-                format!("addq\t${alloc}, %rsp\n\tmovq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret")
-            }
-        }
+        mir::Instruction::Ret => "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into(),
         mir::Instruction::Label(_) => panic!("label emission should not be handled here"),
     }
 }
@@ -187,6 +212,38 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 _ => panic!("invalid register size for DX: '{}'", size),
             }
             .to_string(),
+            mir::Reg::DI => match size {
+                1 => "%dil",
+                2 => "%di",
+                4 => "%edi",
+                8 => "%rdi",
+                _ => panic!("invalid register size for DI: '{}'", size),
+            }
+            .to_string(),
+            mir::Reg::SI => match size {
+                1 => "%sil",
+                2 => "%si",
+                4 => "%esi",
+                8 => "%rsi",
+                _ => panic!("invalid register size for SI: '{}'", size),
+            }
+            .to_string(),
+            mir::Reg::R8 => match size {
+                1 => "%r8b",
+                2 => "%r8w",
+                4 => "%r8d",
+                8 => "%r8",
+                _ => panic!("invalid register size for R8: '{}'", size),
+            }
+            .to_string(),
+            mir::Reg::R9 => match size {
+                1 => "%r9b",
+                2 => "%r9w",
+                4 => "%r9d",
+                8 => "%r9",
+                _ => panic!("invalid register size for R9: '{}'", size),
+            }
+            .to_string(),
             mir::Reg::R10 => match size {
                 1 => "%r10b",
                 2 => "%r10w",
@@ -204,7 +261,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
             }
             .to_string(),
         },
-        mir::Operand::Stack(s) => format!("-{s}(%rbp)"),
-        mir::Operand::Pseudo(_) => panic!("pseudoregisters should not be encountered here"),
+        mir::Operand::Stack(s) => format!("{s}(%rbp)"),
+        mir::Operand::Pseudo(_) => panic!("pseudoregisters should not be emitted"),
     }
 }
