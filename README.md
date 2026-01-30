@@ -14,6 +14,10 @@ Tiny C Compiler (subset of _C17_).
 
 - [x] `int`
 
+### Functions
+
+- [x] Function definitions and declarations (supports types listed above, including `void` parameters)
+
 ### Declarations
 
 - [x] Local variables
@@ -45,10 +49,11 @@ Tiny C Compiler (subset of _C17_).
 - [x] Comparison operators: `<`, `<=`, `>`, `>=`, `==`, `!=`
 - [x] Assignment operators: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 - [x] Conditional (ternary) operator: `? :`
+- [x] Function calls
 
-### Functions
+## Testing
 
-- [x] `int main(void)`
+Using the test suite from [`nlsandler/writing-a-c-compiler-tests/`](https://github.com/nlsandler/writing-a-c-compiler-tests/).
 
 ## Quick Start
 

@@ -73,9 +73,9 @@ impl Default for Scope {
 #[derive(Debug, PartialEq)]
 enum DeclStatus {
     /// Invalid re-declaration with different binding types.
-    Type,
+    TypeConflict,
     /// Invalid variable re-declaration.
-    Var,
+    VarConflict,
     /// No re-declaration (e.g., first declaration, multiple function
     /// declarations).
     None,
@@ -151,45 +151,36 @@ impl IdentResolver {
             .unwrap_or(false)
     }
 
-    /// Checks if an identifier has already been declared in the current scope
-    /// (or file scope for external/internal linkage), returning the declaration
-    /// status.
+    /// Checks if an identifier has already been declared in the current scope,
+    /// returning its declaration status.
     #[inline]
-    fn is_redeclaration(
-        &self,
-        ident: &str,
-        linkage: Option<Linkage>,
-        ty: BindingType,
-    ) -> DeclStatus {
-        match linkage {
-            // Identifiers with external linkage may appear multiple times.
-            Some(Linkage::External) => DeclStatus::None,
-            Some(Linkage::Internal) => todo!(),
-            // Identifiers with no linkage cannot be redeclared in the current
-            // scope.
-            None => {
-                if let Some(bind_info) = self.bindings.get(&NameBinding {
-                    ident: ident.to_string(),
-                    scope: self.scope.current_scope(),
-                    linkage,
-                }) {
-                    if bind_info.ty != ty {
-                        return DeclStatus::Type;
-                    }
+    fn is_redeclaration(&self, ident: &str, ty: BindingType) -> DeclStatus {
+        // Check if there is a function declaration with external linkage
+        // already in scope with the same identifier as a variable.
+        let mut binding = NameBinding {
+            ident: ident.to_string(),
+            scope: self.scope.current_scope(),
+            linkage: Some(Linkage::External),
+        };
 
-                    if bind_info.ty == BindingType::Var {
-                        return DeclStatus::Var;
-                    }
-
-                    // Multiple function declarations within the same scope are
-                    // allowed.
-                    DeclStatus::None
-                } else {
-                    // First declaration of the identifier.
-                    DeclStatus::None
-                }
-            }
+        if self.bindings.contains_key(&binding)
+            && let BindingType::Var = ty
+        {
+            return DeclStatus::TypeConflict;
         }
+
+        // Check for local variable declarations.
+        binding.linkage = None;
+
+        if let Some(bind_info) = self.bindings.get(&binding) {
+            if bind_info.ty != ty {
+                return DeclStatus::TypeConflict;
+            }
+
+            return DeclStatus::VarConflict;
+        }
+
+        DeclStatus::None
     }
 
     /// Returns the binding information for the given identifier, recording the
@@ -202,7 +193,17 @@ impl IdentResolver {
         is_definition: bool,
     ) -> BindingInfo {
         let (resolved_ident, scope) = match linkage {
-            Some(Linkage::External) => (ident.to_string(), Scope::FILE_SCOPE),
+            Some(Linkage::External) => {
+                let scope = if is_definition {
+                    Scope::FILE_SCOPE
+                } else {
+                    // Function declarations declared within their current
+                    // scope.
+                    self.scope.current_scope()
+                };
+
+                (ident.to_string(), scope)
+            }
             Some(Linkage::Internal) => todo!(),
             None => (self.new_tmp(ident), self.scope.current_scope()),
         };
@@ -226,34 +227,35 @@ impl IdentResolver {
     }
 
     /// Returns the binding information for a given identifier, searching the
-    /// appropriate scopes based on its linkage, or `None` if not found.
-    fn resolve_ident(&self, ident: &str, linkage: Option<Linkage>) -> Option<BindingInfo> {
-        match linkage {
-            Some(Linkage::Internal) | Some(Linkage::External) => {
-                let key = NameBinding {
-                    ident: ident.to_string(),
-                    scope: Scope::FILE_SCOPE,
-                    linkage,
-                };
+    /// appropriate scopes, or `None` if not found.
+    fn resolve_ident(&self, ident: &str, ty: BindingType) -> Option<BindingInfo> {
+        let mut key = NameBinding {
+            ident: ident.to_string(),
+            scope: 0,
+            linkage: None,
+        };
 
-                self.bindings.get(&key).cloned()
+        for scope in self.scope.scopes.iter().rev() {
+            key.scope = *scope;
+
+            if let Some(bind_info) = self.bindings.get(&key) {
+                return Some(bind_info.clone());
             }
-            None => {
-                for scope in self.scope.scopes.iter().rev() {
-                    let key = NameBinding {
-                        ident: ident.to_string(),
-                        scope: *scope,
-                        linkage: None,
-                    };
 
-                    if let Some(bind_info) = self.bindings.get(&key) {
-                        return Some(bind_info.clone());
-                    }
+            // Try to resolve with any external linkage binding for function
+            // calls.
+            if let BindingType::Func = ty {
+                key.linkage = Some(Linkage::External);
+
+                if let Some(bind_info) = self.bindings.get(&key) {
+                    return Some(bind_info.clone());
                 }
-
-                None
             }
+
+            key.linkage = None;
         }
+
+        None
     }
 }
 
@@ -295,19 +297,19 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
             BindingType::Func,
             is_definition,
         );
-
         *ident = bind_info.canonical;
 
+        resolver.scope.enter_scope();
+
+        for (param, token) in params {
+            resolve_variable((param, &mut None, token), ctx, resolver)?;
+        }
+
         if let Some(body) = body {
-            resolver.scope.enter_scope();
-
-            for (param, token) in params {
-                resolve_variable((param, &mut None, token), ctx, resolver)?;
-            }
-
             resolve_block(body, ctx, resolver)?;
-
             resolver.scope.reset_active();
+        } else {
+            resolver.scope.exit_scope();
         }
 
         Ok(())
@@ -320,7 +322,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
     ) -> Result<()> {
         let (ident, init, token) = var;
 
-        match resolver.is_redeclaration(ident, None, BindingType::Var) {
+        match resolver.is_redeclaration(ident, BindingType::Var) {
             DeclStatus::None => {
                 // Has no linkage, meaning it is considered a definition.
                 let bind_info = resolver.declare_ident(ident, None, BindingType::Var, true);
@@ -334,7 +336,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                 let tok_str = format!("{token:?}");
                 let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-                let msg = if let DeclStatus::Type = status {
+                let msg = if let DeclStatus::TypeConflict = status {
                     format!("'{tok_str}' redeclared as different kind of symbol")
                 } else {
                     format!("redeclaration of '{tok_str}'")
@@ -500,7 +502,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
 
                 // Check if the function declaration is in conflict with a
                 // different identifier within the current scope (no-linkage).
-                match resolver.is_redeclaration(&func.ident, None, BindingType::Func) {
+                match resolver.is_redeclaration(&func.ident, BindingType::Func) {
                     DeclStatus::None => {
                         resolver.declare_ident(
                             &func.ident,
@@ -508,9 +510,17 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                             BindingType::Func,
                             false,
                         );
+
+                        resolver.scope.enter_scope();
+
+                        for (param, token) in &mut func.params {
+                            resolve_variable((param, &mut None, token), ctx, resolver)?;
+                        }
+
+                        resolver.scope.exit_scope();
                     }
                     status => {
-                        debug_assert!(status != DeclStatus::Var);
+                        debug_assert!(status != DeclStatus::VarConflict);
 
                         let token = &func.token;
 
@@ -565,7 +575,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                 }
             },
             Expression::Var((v, token)) => {
-                if let Some(bind_info) = resolver.resolve_ident(v, None) {
+                if let Some(bind_info) = resolver.resolve_ident(v, BindingType::Var) {
                     // Use the canonical identifier mapped from the original
                     // identifier.
                     *v = bind_info.canonical;
@@ -597,7 +607,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                 resolve_expression(rhs, ctx, resolver)
             }
             Expression::FuncCall { ident, args, token } => {
-                if let Some(bind_info) = resolver.resolve_ident(ident, Some(Linkage::External)) {
+                if let Some(bind_info) = resolver.resolve_ident(ident, BindingType::Func) {
                     *ident = bind_info.canonical;
 
                     for expr in args {
