@@ -16,7 +16,8 @@ Tiny C Compiler (subset of _C17_).
 
 ### Functions
 
-- [x] Function definitions and declarations (supports types listed above, including `void` parameters)
+- [x] Function definitions and declarations (supports types listed above)
+- [x] `int main(void) { ... }`
 
 ### Declarations
 
@@ -76,6 +77,36 @@ Optionally, install globally:
 ```bash
 cargo install --path .
 cc2 --help
+```
+
+### Example: `hello_world.c`
+
+```bash
+# 1. Preprocess separately using `GCC` or `cpp`:
+gcc -E hello_world.c -o hello_world.i
+# or
+cpp hello_world.c -o hello_world.i
+
+# 2. Compile the preprocessed file to assembly:
+./target/release/cc2 hello_world.i
+
+# 3a. Use `GCC` to assemble and link to an executable:
+gcc hello_world.s -o hello_world
+
+# 3b. Or manually invoke assembler and linker:
+as hello_world.s -o hello_world.o   # assemble to object file
+ld hello_world.s -o hello_world     # link to produce executable
+
+# -----------------------------
+# Shortcut: Use the -p flag
+# -----------------------------
+#
+# The `-p` flag preprocesses and compiles in a single step.
+# This is just a convenience; no separate preprocessed file is needed.
+./target/release/cc2 -p hello_world.c
+
+# Link as usual:
+gcc hello_world.s -o hello_world
 ```
 
 ## License

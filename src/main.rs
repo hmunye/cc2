@@ -18,7 +18,7 @@ pub struct Context<'a> {
     pub program: &'a str,
     /// Path of the input file.
     pub in_path: &'static Path,
-    /// Slice of input file bytes.
+    /// Input file bytes.
     pub src: &'a [u8],
 }
 
