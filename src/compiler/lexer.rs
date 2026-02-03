@@ -4,16 +4,85 @@
 //! tokens.
 
 use std::fmt;
+use std::ops::Range;
 use std::path::Path;
 
 use crate::compiler::Result;
 use crate::{Context, fmt_token_err};
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
-const KEYWORDS: [&str; 14] = [
-    "int", "void", "return", "if", "else", "goto", "do", "while", "for", "break", "continue",
-    "switch", "case", "default",
-];
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Reserved {
+    Int,
+    Void,
+    Return,
+    If,
+    Else,
+    Goto,
+    Do,
+    While,
+    For,
+    Break,
+    Continue,
+    Switch,
+    Case,
+    Default,
+}
+
+impl Reserved {
+    #[inline]
+    const fn as_str(self) -> &'static str {
+        match self {
+            Reserved::Int => "int",
+            Reserved::Void => "void",
+            Reserved::Return => "return",
+            Reserved::If => "if",
+            Reserved::Else => "else",
+            Reserved::Goto => "goto",
+            Reserved::Do => "do",
+            Reserved::While => "while",
+            Reserved::For => "for",
+            Reserved::Break => "break",
+            Reserved::Continue => "continue",
+            Reserved::Switch => "switch",
+            Reserved::Case => "case",
+            Reserved::Default => "default",
+        }
+    }
+
+    #[inline]
+    fn contains(s: &str) -> Option<Self> {
+        match s {
+            "int" => Some(Reserved::Int),
+            "void" => Some(Reserved::Void),
+            "return" => Some(Reserved::Return),
+            "if" => Some(Reserved::If),
+            "else" => Some(Reserved::Else),
+            "goto" => Some(Reserved::Goto),
+            "do" => Some(Reserved::Do),
+            "while" => Some(Reserved::While),
+            "for" => Some(Reserved::For),
+            "break" => Some(Reserved::Break),
+            "continue" => Some(Reserved::Continue),
+            "switch" => Some(Reserved::Switch),
+            "case" => Some(Reserved::Case),
+            "default" => Some(Reserved::Default),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for Reserved {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "keyword({:?})", self.as_str())
+    }
+}
+
+impl fmt::Debug for Reserved {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Operator symbols that can be emitted.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -170,7 +239,7 @@ impl fmt::Debug for OperatorKind {
 #[derive(Clone, PartialEq, Eq)]
 pub enum TokenType {
     /// Reserved word (e.g., `if`, `return`).
-    Keyword(String),
+    Keyword(Reserved),
     /// User-defined identifier.
     Ident(String),
     /// Integer constant (32-bit signed).
@@ -198,7 +267,7 @@ pub enum TokenType {
 impl fmt::Display for TokenType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenType::Keyword(s) => write!(f, "keyword({s:?})"),
+            TokenType::Keyword(kw) => fmt::Display::fmt(kw, f),
             TokenType::Ident(i) => write!(f, "ident({i:?})"),
             TokenType::IntConstant(v) => write!(f, "constant(\"{v}\")"),
             TokenType::Operator(op) => fmt::Display::fmt(op, f),
@@ -217,7 +286,7 @@ impl fmt::Display for TokenType {
 impl fmt::Debug for TokenType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenType::Keyword(s) => write!(f, "{s}"),
+            TokenType::Keyword(kw) => fmt::Debug::fmt(kw, f),
             TokenType::Ident(i) => write!(f, "{i}"),
             TokenType::IntConstant(v) => write!(f, "{v}"),
             TokenType::Operator(op) => fmt::Debug::fmt(op, f),
@@ -238,7 +307,7 @@ impl fmt::Debug for TokenType {
 pub struct Location {
     pub file_path: &'static Path,
     // Range of line from source code bytes this token appears in.
-    pub line_span: std::ops::Range<usize>,
+    pub line_span: Range<usize>,
     pub line: usize,
     pub col: usize,
 }
@@ -258,7 +327,7 @@ pub struct Token {
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}\t    {}", self.loc, self.ty)
+        write!(f, "{}\t\t{}", self.loc, self.ty)
     }
 }
 
@@ -273,9 +342,9 @@ impl fmt::Debug for Token {
 pub struct Lexer<'a> {
     ctx: &'a Context<'a>,
     cur: usize,
-    // Index of the next `\n` for current line.
+    /// Index of the next `\n` for current line.
     line_end: usize,
-    // Index of byte after last seen `\n`.
+    /// Index of byte after last seen `\n`.
     bol: usize,
     line: usize,
 }
@@ -284,6 +353,7 @@ impl<'a> Lexer<'a> {
     /// Returns a new `Lexer`.
     ///
     /// Does **not** support universal character names (only _ASCII_).
+    #[inline]
     pub const fn new(ctx: &'a Context<'_>) -> Self {
         Self {
             ctx,
@@ -306,9 +376,9 @@ impl<'a> Lexer<'a> {
 
         let token = self.ctx.src_slice(token_start..self.cur);
 
-        if KEYWORDS.contains(&token) {
+        if let Some(kw) = Reserved::contains(token) {
             Token {
-                ty: TokenType::Keyword(token.into()),
+                ty: TokenType::Keyword(kw),
                 loc: self.token_loc(col),
             }
         } else {
@@ -324,7 +394,7 @@ impl<'a> Lexer<'a> {
     /// # Errors
     ///
     /// Will return `Err` if the constant contains an illegal suffix or cannot
-    /// be parsed as an `i32`.
+    /// be parsed.
     fn consume_constant(&mut self) -> Result<Token> {
         let col = self.col();
         let token_start = self.cur;
@@ -381,22 +451,19 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    /// Skips over a line directive from `GCC` preprocessor (`gcc -E`) of the
-    /// form:
+    /// Skips over a line directive from `GCC` preprocessor of the form:
     ///
     /// ```text
-    ///     # <decimal-line> [ "<filename>" ] [ <decimal-flag>... ]
+    ///     # <decimal-line> SP* [ "<filename>" ] SP* [ <decimal-flag>... ]
     /// ```
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the `<decimal-line>` cannot be parsed.
+    /// Will return `Err` if the decimal line cannot be parsed.
     fn consume_line_directive(&mut self) -> Result<()> {
         self.cur += 1;
-
         self.consume_whitespace();
 
-        // Parse <decimal-line>.
         let line_token = self.consume_constant()?;
         let line = match line_token.ty {
             TokenType::IntConstant(i) => i,
@@ -416,17 +483,12 @@ impl<'a> Lexer<'a> {
             return Ok(());
         }
 
-        // Accounts for the newline consumed later.
+        // Accounts for the newline (`\n`) consumed later.
         self.line = (line - 1) as usize;
 
-        // NOTE: Once string literals are supported, use that function for
-        // parsing [ "<filename>" ].
+        // NOTE: Currently don't parse [ "<filename>" ].
         //
-        // self.consume_whitespace();
-
         // NOTE: Currently don't parse [ <decimal-flag>... ].
-        //
-        // self.consume_whitespace();
 
         while self.has_next() && self.first() != b'\n' {
             self.cur += 1;
@@ -437,14 +499,15 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// Skips over all consecutive _ASCII_ whitespace characters.
+    /// Skips over all consecutive _ASCII_ whitespace characters (not including
+    /// newline).
     const fn consume_whitespace(&mut self) {
         while self.has_next() && matches!(self.first(), b'\t' | b'\x0C' | b'\r' | b' ') {
             self.cur += 1;
         }
     }
 
-    /// Skips over a newline, advancing to the start of the next line.
+    /// Skips over a newline (`\n`), advancing to the start of the next line.
     const fn consume_newline(&mut self) {
         self.cur += 1;
         self.bol = self.cur;

@@ -366,14 +366,22 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
                     builder.instructions.push(Instruction::Label(e_lbl));
                 }
             }
-            ast::Statement::Goto((target, _)) => {
+            ast::Statement::Goto { target, .. } => {
                 builder.instructions.push(Instruction::Jump(target.clone()));
             }
             ast::Statement::LabeledStatement(labeled) => {
                 match labeled {
                     ast::Labeled::Label { label, stmt, .. }
-                    | ast::Labeled::Case { label, stmt, .. }
-                    | ast::Labeled::Default { label, stmt, .. } => {
+                    | ast::Labeled::Case {
+                        jmp_label: label,
+                        stmt,
+                        ..
+                    }
+                    | ast::Labeled::Default {
+                        jmp_label: label,
+                        stmt,
+                        ..
+                    } => {
                         builder.instructions.push(Instruction::Label(label.clone()));
 
                         // Handle appending instructions for statements
@@ -383,17 +391,21 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
                 }
             }
             ast::Statement::Compound(block) => process_ast_block(block, builder),
-            ast::Statement::Break((label, _)) => {
+            ast::Statement::Break { jmp_label, .. } => {
                 builder
                     .instructions
-                    .push(Instruction::Jump(format!("break_{label}")));
+                    .push(Instruction::Jump(format!("break_{jmp_label}")));
             }
-            ast::Statement::Continue((label, _)) => {
+            ast::Statement::Continue { jmp_label, .. } => {
                 builder
                     .instructions
-                    .push(Instruction::Jump(format!("cont_{label}")));
+                    .push(Instruction::Jump(format!("cont_{jmp_label}")));
             }
-            ast::Statement::Do { stmt, cond, label } => {
+            ast::Statement::Do {
+                stmt,
+                cond,
+                loop_label: label,
+            } => {
                 let start_label = builder.new_label("do.start");
                 let cont_label = format!("cont_{label}");
                 let break_label = format!("break_{label}");
@@ -418,7 +430,11 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
                 // Always emitting labels for `break` statements.
                 builder.instructions.push(Instruction::Label(break_label));
             }
-            ast::Statement::While { cond, stmt, label } => {
+            ast::Statement::While {
+                cond,
+                stmt,
+                loop_label: label,
+            } => {
                 let cont_label = format!("cont_{label}");
                 let break_label = format!("break_{label}");
 
@@ -447,7 +463,7 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
                 opt_cond,
                 opt_post,
                 stmt,
-                label,
+                loop_label: label,
             } => {
                 match &**init {
                     ast::ForInit::Decl(decl) => process_ast_declaration(decl, builder),
@@ -506,7 +522,7 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
                 stmt,
                 cases,
                 default,
-                label,
+                switch_label: label,
             } => {
                 let lhs = generate_ir_value(cond, builder);
 
@@ -515,10 +531,12 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
                 if !cases.is_empty() || default.is_some() {
                     let break_label = format!("break_{label}");
 
-                    for (label, expr) in cases {
+                    // for (label, expr) in cases {
+
+                    for case in cases {
                         let dst = Value::Var(builder.new_tmp());
 
-                        let rhs = generate_ir_value(expr, builder);
+                        let rhs = generate_ir_value(&case.expr, builder);
 
                         builder.instructions.push(Instruction::Binary {
                             op: BinaryOperator::Eq,
@@ -531,7 +549,7 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
 
                         builder.instructions.push(Instruction::JumpIfNotZero {
                             cond: dst,
-                            target: label.clone(),
+                            target: case.jmp_label.clone(),
                         });
                     }
 
@@ -560,7 +578,7 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
     let params = func
         .params
         .iter()
-        .map(|pair| pair.0.clone())
+        .map(|param| param.ident.clone())
         .collect::<Vec<_>>();
 
     let body = &func
@@ -599,7 +617,7 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
 fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Value {
     match expr {
         ast::Expression::IntConstant(v) => Value::IntConstant(*v),
-        ast::Expression::Var((v, _)) => Value::Var(v.clone()),
+        ast::Expression::Var { ident, .. } => Value::Var(ident.clone()),
         ast::Expression::Unary {
             op, expr, prefix, ..
         } => {
@@ -785,7 +803,7 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
         }
         ast::Expression::Assignment { lvalue, rvalue, .. } => {
             let dst = match &**lvalue {
-                ast::Expression::Var((v, _)) => Value::Var(v.clone()),
+                ast::Expression::Var { ident, .. } => Value::Var(ident.clone()),
                 _ => unreachable!("lvalue of an expression should be an `Expression::Var`"),
             };
 
@@ -798,30 +816,34 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
 
             dst
         }
-        ast::Expression::Conditional(lhs, mid, rhs) => {
+        ast::Expression::Conditional {
+            cond,
+            second,
+            third,
+        } => {
             let dst = Value::Var(builder.new_tmp());
             let e_lbl = builder.new_label("cond.end");
             let rhs_lbl = builder.new_label("cond.false");
 
-            let cond = generate_ir_value(lhs, builder);
+            let cond = generate_ir_value(cond, builder);
 
             builder.instructions.push(Instruction::JumpIfZero {
                 cond,
                 target: rhs_lbl.clone(),
             });
 
-            let e1 = generate_ir_value(mid, builder);
+            let second = generate_ir_value(second, builder);
             builder.instructions.push(Instruction::Copy {
-                src: e1,
+                src: second,
                 dst: dst.clone(),
             });
 
             builder.instructions.push(Instruction::Jump(e_lbl.clone()));
             builder.instructions.push(Instruction::Label(rhs_lbl));
 
-            let e2 = generate_ir_value(rhs, builder);
+            let third = generate_ir_value(third, builder);
             builder.instructions.push(Instruction::Copy {
-                src: e2,
+                src: third,
                 dst: dst.clone(),
             });
 

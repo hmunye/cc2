@@ -301,8 +301,12 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
 
         resolver.scope.enter_scope();
 
-        for (param, token) in params {
-            resolve_variable((param, &mut None, token), ctx, resolver)?;
+        for param in params {
+            resolve_variable(
+                (&mut param.ident, &mut None, &mut param.token),
+                ctx,
+                resolver,
+            )?;
         }
 
         if let Some(body) = body {
@@ -466,9 +470,9 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                 resolve_expression(cond, ctx, resolver)?;
                 resolve_statement(stmt, ctx, resolver)
             }
-            Statement::Goto(_) => Ok(()),
-            Statement::Break(_) => Ok(()),
-            Statement::Continue(_) => Ok(()),
+            Statement::Goto { .. } => Ok(()),
+            Statement::Break { .. } => Ok(()),
+            Statement::Continue { .. } => Ok(()),
             Statement::Empty => Ok(()),
         }
     }
@@ -513,8 +517,12 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
 
                         resolver.scope.enter_scope();
 
-                        for (param, token) in &mut func.params {
-                            resolve_variable((param, &mut None, token), ctx, resolver)?;
+                        for param in &mut func.params {
+                            resolve_variable(
+                                (&mut param.ident, &mut None, &mut param.token),
+                                ctx,
+                                resolver,
+                            )?;
                         }
 
                         resolver.scope.exit_scope();
@@ -555,7 +563,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                 rvalue,
                 token,
             } => match **lvalue {
-                Expression::Var(_) => {
+                Expression::Var { .. } => {
                     resolve_expression(lvalue, ctx, resolver)?;
                     resolve_expression(rvalue, ctx, resolver)
                 }
@@ -574,11 +582,11 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                     ))
                 }
             },
-            Expression::Var((v, token)) => {
-                if let Some(bind_info) = resolver.resolve_ident(v, BindingType::Var) {
+            Expression::Var { ident, token } => {
+                if let Some(bind_info) = resolver.resolve_ident(ident, BindingType::Var) {
                     // Use the canonical identifier mapped from the original
                     // identifier.
-                    *v = bind_info.canonical;
+                    *ident = bind_info.canonical;
                 } else {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -601,10 +609,14 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                 resolve_expression(lhs, ctx, resolver)?;
                 resolve_expression(rhs, ctx, resolver)
             }
-            Expression::Conditional(lhs, mid, rhs) => {
-                resolve_expression(lhs, ctx, resolver)?;
-                resolve_expression(mid, ctx, resolver)?;
-                resolve_expression(rhs, ctx, resolver)
+            Expression::Conditional {
+                cond,
+                second,
+                third,
+            } => {
+                resolve_expression(cond, ctx, resolver)?;
+                resolve_expression(second, ctx, resolver)?;
+                resolve_expression(third, ctx, resolver)
             }
             Expression::FuncCall { ident, args, token } => {
                 if let Some(bind_info) = resolver.resolve_ident(ident, BindingType::Func) {

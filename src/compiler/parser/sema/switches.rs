@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::compiler::Result;
 use crate::compiler::parser::ast::{
-    AST, Analyzed, Block, BlockItem, CtrlFlowPhase, Expression, Labeled, Statement,
+    AST, Analyzed, Block, BlockItem, CtrlFlowPhase, Expression, Labeled, Statement, SwitchCase,
 };
 use crate::{Context, fmt_token_err};
 
@@ -15,7 +15,7 @@ enum LabelKind {
 /// `key` = switch statement label
 ///
 /// `value` = (case values, default label, case label/expression list)
-type ScopedSwitches = HashMap<String, (HashSet<i32>, Option<String>, Vec<(String, Expression)>)>;
+type ScopedSwitches = HashMap<String, (HashSet<i32>, Option<String>, Vec<SwitchCase>)>;
 
 /// Helper for _AST_ to perform semantic analysis on `switch` statement cases.
 #[derive(Default)]
@@ -57,7 +57,10 @@ impl<'a> SwitchResolver<'a> {
             .entry(label)
             .or_insert((HashSet::new(), None, Vec::new()));
 
-        entry.2.push((case_label.clone(), expr.clone()));
+        entry.2.push(SwitchCase {
+            jmp_label: case_label.clone(),
+            expr: expr.clone(),
+        });
 
         // NOTE: Update when constant-expression eval is available to the
         // compiler.
@@ -99,7 +102,7 @@ impl<'a> SwitchResolver<'a> {
 
     /// Ends the most recent `switch` context, appending the collected cases to
     /// the provided container.
-    fn exit_switch(&mut self, cases: &mut Vec<(String, Expression)>) {
+    fn exit_switch(&mut self, cases: &mut Vec<SwitchCase>) {
         let label = self
             .current_switch()
             .expect("exit_switch should always be called in the context of a switch")
@@ -166,7 +169,7 @@ pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Resul
                 stmt,
                 cases,
                 default,
-                label,
+                switch_label: label,
                 ..
             } => {
                 resolver.enter_switch(label);
@@ -185,7 +188,7 @@ pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Resul
                     expr,
                     token,
                     stmt,
-                    label,
+                    jmp_label: label,
                     ..
                 } => {
                     if let Some(ctx_label) = resolver.current_switch() {
@@ -222,7 +225,11 @@ pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Resul
 
                     resolve_statement(stmt, ctx, resolver)?;
                 }
-                Labeled::Default { token, stmt, label } => {
+                Labeled::Default {
+                    token,
+                    stmt,
+                    jmp_label: label,
+                } => {
                     if let Some(ctx_label) = resolver.current_switch() {
                         if let Some(default_label) = resolver.mark_default(ctx_label.to_string()) {
                             *label = default_label;
@@ -274,9 +281,9 @@ pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Resul
             }
             Statement::Return(_)
             | Statement::Expression(_)
-            | Statement::Break(_)
-            | Statement::Continue(_)
-            | Statement::Goto(_)
+            | Statement::Break { .. }
+            | Statement::Continue { .. }
+            | Statement::Goto { .. }
             | Statement::Empty => {}
         }
 

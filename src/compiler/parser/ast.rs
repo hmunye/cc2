@@ -8,7 +8,7 @@ use std::{fmt, process};
 use super::sema;
 
 use crate::compiler::Result;
-use crate::compiler::lexer::{OperatorKind, Token, TokenType};
+use crate::compiler::lexer::{OperatorKind, Reserved, Token, TokenType};
 use crate::{Context, fmt_err, fmt_token_err};
 
 /// Zero-sized marker indicating a parsed _AST_ (no semantic analysis).
@@ -42,7 +42,6 @@ pub struct Analyzed;
 /// Abstract Syntax Tree (_AST_).
 #[derive(Debug)]
 pub struct AST<P> {
-    /// Functions that represent the structure of the program.
     pub program: Vec<Function>,
     pub _phase: std::marker::PhantomData<P>,
 }
@@ -58,15 +57,53 @@ impl<P> fmt::Display for AST<P> {
     }
 }
 
+/// _AST_ type specifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Type {
+    Int,
+    Func { params: usize },
+}
+
+/// _AST_ declaration.
+#[derive(Debug)]
+pub enum Declaration {
+    Var {
+        ident: String,
+        init: Option<Expression>,
+        /// Identifier token.
+        token: Token,
+    },
+    Func(Function),
+}
+
+impl fmt::Display for Declaration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Declaration::Var { ident, init, .. } => match init {
+                Some(expr) => write!(f, "{:?} = {}", ident, expr),
+                None => write!(f, "{:?} = uninit", ident),
+            },
+            Declaration::Func(func) => func.fmt_with_indent(f, 0),
+        }
+    }
+}
+
+/// _AST_ function parameter.
+#[derive(Debug)]
+pub struct Param {
+    pub ty: Type,
+    pub ident: String,
+    /// Identifier token.
+    pub token: Token,
+}
+
 /// _AST_ function declaration/definition.
 #[derive(Debug)]
 pub struct Function {
-    /// Function identifier.
     pub ident: String,
-    pub params: Vec<(String, Token)>,
-    /// Optional body, `None` indicates it is a function _declaration_.
+    pub params: Vec<Param>,
     pub body: Option<Block>,
-    /// Function identifier token.
+    /// Identifier token.
     pub token: Token,
 }
 
@@ -76,7 +113,7 @@ impl Function {
         let params = self
             .params
             .iter()
-            .map(|pair| pair.0.as_str())
+            .map(|param| param.ident.as_str())
             .collect::<Vec<_>>()
             .join(", ");
 
@@ -131,7 +168,6 @@ impl BlockItem {
 /// _AST_ `for` statement initial clause.
 #[derive(Debug)]
 pub enum ForInit {
-    // NOTE: Must be `Declaration::Var`.
     Decl(Declaration),
     Expr(Option<Expression>),
 }
@@ -146,19 +182,25 @@ pub enum Labeled {
         token: Token,
     },
     Case {
-        // NOTE: Must be a constant-expression.
         expr: Expression,
-        /// `case` keyword token.
         stmt: Box<Statement>,
+        /// `case` keyword token.
         token: Token,
-        label: String,
+        jmp_label: String,
     },
     Default {
         stmt: Box<Statement>,
         /// `default` keyword token.
         token: Token,
-        label: String,
+        jmp_label: String,
     },
+}
+
+/// _AST_ case label/expression.
+#[derive(Debug)]
+pub struct SwitchCase {
+    pub jmp_label: String,
+    pub expr: Expression,
 }
 
 /// _AST_ statement.
@@ -174,47 +216,51 @@ pub enum Statement {
         /// Optional statement to execute when result of `cond` is zero.
         opt_else: Option<Box<Statement>>,
     },
-    /// (target label, `goto` keyword token).
-    Goto((String, Token)),
-    // Labeled statement.
+    Goto {
+        target: String,
+        /// `goto` keyword token.
+        token: Token,
+    },
     LabeledStatement(Labeled),
-    // Compound statement.
     Compound(Block),
-    /// (label to jump, `break` keyword token).
-    Break((String, Token)),
-    /// (label to jump, `continue` keyword token).
-    Continue((String, Token)),
+    Break {
+        jmp_label: String,
+        /// `break` keyword token.
+        token: Token,
+    },
+    Continue {
+        jmp_label: String,
+        /// `continue` keyword token.
+        token: Token,
+    },
     While {
         cond: Expression,
         stmt: Box<Statement>,
-        label: String,
+        loop_label: String,
     },
     Do {
         stmt: Box<Statement>,
         cond: Expression,
-        label: String,
+        loop_label: String,
     },
     For {
-        // NOTE: Heap-allocated to reduce total size on call-stack.
         init: Box<ForInit>,
         opt_cond: Option<Expression>,
         opt_post: Option<Expression>,
         stmt: Box<Statement>,
-        label: String,
+        loop_label: String,
     },
     Switch {
         /// Controlling expression.
         cond: Expression,
         stmt: Box<Statement>,
-        /// (`Labeled::Case` label, case expression).
-        ///
-        /// Result of `cond` used to determine which case label to execute at.
-        cases: Vec<(String, Expression)>,
-        /// `Labeled::Default` label.
+        /// Result of `cond` used to determine which switch case to execute at.
+        cases: Vec<SwitchCase>,
+        /// `default` jmp label.
         default: Option<String>,
-        label: String,
+        switch_label: String,
     },
-    // Expression statement without an expression (';').
+    /// Expression statement without an expression (`;`).
     Empty,
 }
 
@@ -245,8 +291,8 @@ impl Statement {
 
                 Ok(())
             }
-            Statement::Goto((ident, _)) => {
-                writeln!(f, "{}Goto {:?}", pad, ident)
+            Statement::Goto { target, .. } => {
+                writeln!(f, "{}Goto {:?}", pad, target)
             }
             Statement::LabeledStatement(labeled) => match labeled {
                 Labeled::Label { label, stmt, .. } => {
@@ -254,28 +300,43 @@ impl Statement {
                     stmt.fmt_with_indent(f, indent + 2)
                 }
                 Labeled::Case {
-                    expr, stmt, label, ..
+                    expr,
+                    stmt,
+                    jmp_label: label,
+                    ..
                 } => {
                     writeln!(f, "{}Case <label {label:?}> {}:", pad, expr)?;
                     stmt.fmt_with_indent(f, indent + 2)
                 }
-                Labeled::Default { stmt, label, .. } => {
+                Labeled::Default {
+                    stmt,
+                    jmp_label: label,
+                    ..
+                } => {
                     writeln!(f, "{}Default <label {label:?}>:", pad)?;
                     stmt.fmt_with_indent(f, indent + 2)
                 }
             },
             Statement::Compound(block) => block.fmt_with_indent(f, indent),
-            Statement::Break((label, _)) => {
-                writeln!(f, "{}Break <label {label:?}>", pad)
+            Statement::Break { jmp_label, .. } => {
+                writeln!(f, "{}Break <label {jmp_label:?}>", pad)
             }
-            Statement::Continue((label, _)) => {
-                writeln!(f, "{}Continue <label {label:?}>", pad)
+            Statement::Continue { jmp_label, .. } => {
+                writeln!(f, "{}Continue <label {jmp_label:?}>", pad)
             }
-            Statement::While { cond, stmt, label } => {
+            Statement::While {
+                cond,
+                stmt,
+                loop_label: label,
+            } => {
                 writeln!(f, "{}While <label {label:?}> ({})", pad, cond)?;
                 stmt.fmt_with_indent(f, indent + 2)
             }
-            Statement::Do { stmt, cond, label } => {
+            Statement::Do {
+                stmt,
+                cond,
+                loop_label: label,
+            } => {
                 writeln!(f, "{}Do <label {label:?}>", pad)?;
                 stmt.fmt_with_indent(f, indent + 2)?;
                 writeln!(f, "{}/* while */ ({})", "  ".repeat(indent + 2), cond)
@@ -285,7 +346,7 @@ impl Statement {
                 opt_cond,
                 opt_post,
                 stmt,
-                label,
+                loop_label: label,
             } => {
                 let init_fmt = match &**init {
                     ForInit::Decl(decl) => format!("Decl: {decl}"),
@@ -319,7 +380,10 @@ impl Statement {
                 stmt.fmt_with_indent(f, indent + 2)
             }
             Statement::Switch {
-                cond, stmt, label, ..
+                cond,
+                stmt,
+                switch_label: label,
+                ..
             } => {
                 writeln!(f, "{}Switch <label {label:?}> ({})", pad, cond)?;
                 stmt.fmt_with_indent(f, indent + 2)
@@ -331,53 +395,21 @@ impl Statement {
     }
 }
 
-/// _AST_ declaration.
-#[derive(Debug)]
-pub enum Declaration {
-    Var {
-        /// Identifier of the variable.
-        ident: String,
-        /// Optional initializer.
-        init: Option<Expression>,
-        /// Declared identifier token.
-        token: Token,
-    },
-    Func(Function),
-}
-
-impl fmt::Display for Declaration {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Declaration::Var { ident, init, .. } => match init {
-                Some(expr) => write!(f, "{:?} = {}", ident, expr),
-                None => write!(f, "{:?} = uninit", ident),
-            },
-            Declaration::Func(func) => {
-                let params = func
-                    .params
-                    .iter()
-                    .map(|pair| pair.0.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                write!(f, "Fn {:?}({})", func.ident, params)
-            }
-        }
-    }
-}
-
 /// _AST_ expression.
 #[derive(Debug, Clone)]
 pub enum Expression {
     /// Integer constant (32-bit signed).
     IntConstant(i32),
-    /// (Variable identifier, identifier token).
-    Var((String, Token)),
+    Var {
+        ident: String,
+        /// Identifier token.
+        token: Token,
+    },
     /// Unary operator applied to an expression.
     Unary {
         op: UnaryOperator,
         expr: Box<Expression>,
-        /// NOTE: Temporary hack for arithmetic right shift.
+        // NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
         prefix: bool,
     },
@@ -386,7 +418,7 @@ pub enum Expression {
         op: BinaryOperator,
         lhs: Box<Expression>,
         rhs: Box<Expression>,
-        /// NOTE: Temporary hack for arithmetic right shift.
+        // NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
     },
     /// Assigns an `rvalue` to an `lvalue`.
@@ -396,13 +428,17 @@ pub enum Expression {
         /// Assignment operator token.
         token: Token,
     },
-    /// Ternary expression which evaluates the first expression and returns the
-    /// result of the second if true, otherwise the third.
-    Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
+    /// Ternary expression which evaluates the condition and returns the result
+    /// of the `second` if true, otherwise `third`.
+    Conditional {
+        cond: Box<Expression>,
+        second: Box<Expression>,
+        third: Box<Expression>,
+    },
     FuncCall {
         ident: String,
         args: Vec<Expression>,
-        /// Function identifier token.
+        /// Identifier token.
         token: Token,
     },
 }
@@ -411,7 +447,7 @@ impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expression::IntConstant(i) => write!(f, "Int({})", i),
-            Expression::Var((ident, _)) => write!(f, "Var({:?})", ident),
+            Expression::Var { ident, .. } => write!(f, "Var({:?})", ident),
             Expression::Unary {
                 op, expr, prefix, ..
             } => {
@@ -427,8 +463,12 @@ impl fmt::Display for Expression {
             Expression::Assignment { lvalue, rvalue, .. } => {
                 write!(f, "{} = {}", lvalue, rvalue)
             }
-            Expression::Conditional(lhs, mid, rhs) => {
-                write!(f, "{} ? {} : {}", lhs, mid, rhs)
+            Expression::Conditional {
+                cond,
+                second,
+                third,
+            } => {
+                write!(f, "{} ? {} : {}", cond, second, third)
             }
             Expression::FuncCall { ident, args, .. } => {
                 let args_str = args
@@ -467,6 +507,7 @@ impl fmt::Display for UnaryOperator {
             UnaryOperator::Increment => "++",
             UnaryOperator::Decrement => "--",
         };
+
         write!(f, "{op}")
     }
 }
@@ -617,6 +658,7 @@ impl fmt::Display for BinaryOperator {
             BinaryOperator::AssignShiftRight => ">>=",
             BinaryOperator::Conditional => "?",
         };
+
         write!(f, "{op}")
     }
 }
@@ -698,7 +740,7 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
         debug_assert!(parsed_header.0 == "int");
         (parsed_header.1, parsed_header.2)
     } else {
-        expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
+        expect_token(ctx, iter, TokenType::Keyword(Reserved::Int))?;
         parse_ident(ctx, iter)?
     };
 
@@ -738,23 +780,26 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
 fn parse_params<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Vec<(String, Token)>> {
+) -> Result<Vec<Param>> {
     let mut params = vec![];
 
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
-            TokenType::Keyword(ref s) if s == "void" => {
+            TokenType::Keyword(Reserved::Void) => {
                 // Consume the "void" token.
                 let _ = iter.next();
-
                 Ok(params)
             }
-            TokenType::Keyword(ref s) if s == "int" => {
+            TokenType::Keyword(Reserved::Int) => {
                 // Consume the "int" token.
                 let _ = iter.next();
 
                 let (ident, token) = parse_ident(ctx, iter)?;
-                params.push((ident, token));
+                params.push(Param {
+                    ty: Type::Int,
+                    ident,
+                    token,
+                });
 
                 while let Some(token) = iter.peek().map(Result::as_ref).transpose()?
                     && let TokenType::Comma = token.ty
@@ -762,10 +807,14 @@ fn parse_params<I: Iterator<Item = Result<Token>>>(
                     // Consume the "," token.
                     let _ = iter.next();
 
-                    expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
+                    expect_token(ctx, iter, TokenType::Keyword(Reserved::Int))?;
 
                     let (ident, token) = parse_ident(ctx, iter)?;
-                    params.push((ident, token));
+                    params.push(Param {
+                        ty: Type::Int,
+                        ident,
+                        token,
+                    });
                 }
 
                 Ok(params)
@@ -802,7 +851,7 @@ fn parse_declaration<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
 ) -> Result<Declaration> {
-    expect_token(ctx, iter, TokenType::Keyword("int".into()))?;
+    expect_token(ctx, iter, TokenType::Keyword(Reserved::Int))?;
 
     let (ident, token) = parse_ident(ctx, iter)?;
 
@@ -870,9 +919,7 @@ fn parse_block_item<I: Iterator<Item = Result<Token>>>(
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
             // Parse this as a declaration (starts with a type).
-            TokenType::Keyword(ref s) if s == "int" => {
-                Ok(BlockItem::Decl(parse_declaration(ctx, iter)?))
-            }
+            TokenType::Keyword(Reserved::Int) => Ok(BlockItem::Decl(parse_declaration(ctx, iter)?)),
             // Parse this as a statement.
             _ => Ok(BlockItem::Stmt(parse_statement(ctx, iter)?)),
         }
@@ -896,7 +943,7 @@ fn parse_for_init<I: Iterator<Item = Result<Token>>>(
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
             // Parse this as a declaration (starts with a type).
-            TokenType::Keyword(ref s) if s == "int" => match parse_declaration(ctx, iter)? {
+            TokenType::Keyword(Reserved::Int) => match parse_declaration(ctx, iter)? {
                 Declaration::Func(func) => {
                     let token = &func.token;
 
@@ -942,7 +989,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 ) -> Result<Statement> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
-            TokenType::Keyword(ref s) if s == "return" => {
+            TokenType::Keyword(Reserved::Return) => {
                 // Consume the "return" token.
                 let _ = iter.next();
 
@@ -951,7 +998,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 Ok(Statement::Return(expr))
             }
-            TokenType::Keyword(ref s) if s == "if" => {
+            TokenType::Keyword(Reserved::If) => {
                 // Consume the "if" token.
                 let _ = iter.next();
 
@@ -964,8 +1011,8 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 let mut opt_else = None;
 
                 if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
-                    && let TokenType::Keyword(ref s) = token.ty
-                    && s == "else"
+                    && let TokenType::Keyword(kw) = token.ty
+                    && matches!(kw, Reserved::Else)
                 {
                     // Consume the "else" token.
                     let _ = iter.next();
@@ -978,7 +1025,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     opt_else,
                 })
             }
-            TokenType::Keyword(ref s) if s == "goto" => {
+            TokenType::Keyword(Reserved::Goto) => {
                 // Consume the "goto" token.
                 let token = iter
                     .next()
@@ -989,9 +1036,9 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 expect_token(ctx, iter, TokenType::Semicolon)?;
 
-                Ok(Statement::Goto((target, token)))
+                Ok(Statement::Goto { target, token })
             }
-            TokenType::Keyword(ref s) if s == "break" => {
+            TokenType::Keyword(Reserved::Break) => {
                 // Consume the "break" token.
                 let token = iter
                     .next()
@@ -1000,11 +1047,14 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 expect_token(ctx, iter, TokenType::Semicolon)?;
 
-                // Placeholder label allocated during parsing, backpatched
-                // in control-flow labeling pass.
-                Ok(Statement::Break(("".into(), token)))
+                Ok(Statement::Break {
+                    // Placeholder label allocated during parsing, backpatched
+                    // in control-flow labeling pass.
+                    jmp_label: "".into(),
+                    token,
+                })
             }
-            TokenType::Keyword(ref s) if s == "continue" => {
+            TokenType::Keyword(Reserved::Continue) => {
                 // Consume the "continue" token.
                 let token = iter
                     .next()
@@ -1013,11 +1063,14 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 
                 expect_token(ctx, iter, TokenType::Semicolon)?;
 
-                // Placeholder label allocated during parsing, backpatched
-                // in control-flow labeling pass.
-                Ok(Statement::Continue(("".into(), token)))
+                Ok(Statement::Continue {
+                    // Placeholder label allocated during parsing, backpatched
+                    // in control-flow labeling pass.
+                    jmp_label: "".into(),
+                    token,
+                })
             }
-            TokenType::Keyword(ref s) if s == "while" => {
+            TokenType::Keyword(Reserved::While) => {
                 // Consume the "while" token.
                 let _ = iter.next();
 
@@ -1034,16 +1087,16 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     stmt: Box::new(stmt),
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    label: "".into(),
+                    loop_label: "".into(),
                 })
             }
-            TokenType::Keyword(ref s) if s == "do" => {
+            TokenType::Keyword(Reserved::Do) => {
                 // Consume the "do" token.
                 let _ = iter.next();
 
                 let stmt = parse_statement(ctx, iter)?;
 
-                expect_token(ctx, iter, TokenType::Keyword("while".into()))?;
+                expect_token(ctx, iter, TokenType::Keyword(Reserved::While))?;
 
                 expect_token(ctx, iter, TokenType::LParen)?;
 
@@ -1057,10 +1110,10 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     cond,
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    label: "".into(),
+                    loop_label: "".into(),
                 })
             }
-            TokenType::Keyword(ref s) if s == "for" => {
+            TokenType::Keyword(Reserved::For) => {
                 // Consume the "for" token.
                 let _ = iter.next();
 
@@ -1083,10 +1136,10 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     stmt: Box::new(stmt),
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    label: "".into(),
+                    loop_label: "".into(),
                 })
             }
-            TokenType::Keyword(ref s) if s == "switch" => {
+            TokenType::Keyword(Reserved::Switch) => {
                 // Consume the "switch" token.
                 let _ = iter.next();
 
@@ -1105,10 +1158,10 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     default: None,
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    label: "".into(),
+                    switch_label: "".into(),
                 })
             }
-            TokenType::Keyword(ref s) if s == "case" => {
+            TokenType::Keyword(Reserved::Case) => {
                 // Consume the "case" token.
                 let token = iter
                     .next()
@@ -1130,7 +1183,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                         stmt: Box::new(stmt),
                         // Placeholder label allocated during parsing,
                         // backpatched in semantic analysis.
-                        label: "".into(),
+                        jmp_label: "".into(),
                     }))
                 } else {
                     let tok_str = format!("{token:?}");
@@ -1147,7 +1200,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     ))
                 }
             }
-            TokenType::Keyword(ref s) if s == "default" => {
+            TokenType::Keyword(Reserved::Default) => {
                 // Consume the "default" token.
                 let token = iter
                     .next()
@@ -1163,7 +1216,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     stmt: Box::new(stmt),
                     // Placeholder label allocated during parsing, backpatched
                     // in semantic analysis.
-                    label: "".into(),
+                    jmp_label: "".into(),
                 }))
             }
             TokenType::Semicolon => {
@@ -1182,7 +1235,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
                     && let TokenType::Colon = token.ty
                 {
-                    if let Expression::Var((ident, token)) = expr {
+                    if let Expression::Var { ident, token } = expr {
                         // Consume the ":" token.
                         let _ = iter.next();
 
@@ -1343,7 +1396,7 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
                 };
             }
             BinaryOperator::Conditional => {
-                let mid = parse_expression(ctx, iter, 0)?;
+                let second = parse_expression(ctx, iter, 0)?;
 
                 expect_token(ctx, iter, TokenType::Colon)?;
 
@@ -1352,7 +1405,11 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
                 // together.
                 let rhs = parse_expression(ctx, iter, binop.precedence())?;
 
-                lhs = Expression::Conditional(Box::new(lhs), Box::new(mid), Box::new(rhs));
+                lhs = Expression::Conditional {
+                    cond: Box::new(lhs),
+                    second: Box::new(second),
+                    third: Box::new(rhs),
+                };
             }
             binop => {
                 // Handle other binary operators as left-associative by allowing
@@ -1455,7 +1512,10 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
 
                             return Ok(Expression::Unary {
                                 op: unop,
-                                expr: Box::new(Expression::Var((s.clone(), token))),
+                                expr: Box::new(Expression::Var {
+                                    ident: s.clone(),
+                                    token,
+                                }),
                                 // NOTE: Temporary hack for arithmetic right shift.
                                 sign: Signedness::Unsigned,
                                 // Postfix unary operator.
@@ -1479,7 +1539,10 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                     }
                 }
 
-                Ok(Expression::Var((s.clone(), token)))
+                Ok(Expression::Var {
+                    ident: s.clone(),
+                    token,
+                })
             }
             TokenType::Operator(
                 OperatorKind::BitNot
@@ -1503,7 +1566,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                 let inner_fct = parse_factor(ctx, iter)?;
 
                 if let UnaryOperator::Increment | UnaryOperator::Decrement = unop
-                    && !matches!(inner_fct, Expression::Var(_))
+                    && !matches!(inner_fct, Expression::Var { .. })
                 {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span);
@@ -1552,7 +1615,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                         .expect("next token should be present")
                         .expect("next token should be ok");
 
-                    if let Expression::Var(_) = inner_expr {
+                    if let Expression::Var { .. } = inner_expr {
                         Ok(Expression::Unary {
                             op: unop,
                             expr: Box::new(inner_expr),

@@ -1,4 +1,5 @@
 /target
-*example*
 /tmp
+*example*
 *.s
+a.out

@@ -15,9 +15,9 @@ pub struct Args {
     /// Indicates whether the input file should be preprocessed before compiling
     /// (optional).
     pub preprocess: bool,
-    /// Path to input file (required).
+    /// Input file path (required).
     pub in_path: &'static Path,
-    /// Output path for assembly code emission (optional).
+    /// Output file path (optional).
     pub out_path: PathBuf,
 }
 
@@ -90,9 +90,6 @@ impl Args {
             }
         }
 
-        // NOTE: Leaking `in_path` to ensure the input path is available for
-        // error reporting during runtime. Could use `PathBuf` instead but the
-        // path will not be mutated. One less heap allocation I guess.
         let path = Path::new(in_path.leak());
         if !path.exists() {
             report_err!(&program, "'{}': no such file or directory", path.display());

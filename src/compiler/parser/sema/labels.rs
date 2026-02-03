@@ -111,7 +111,7 @@ pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<
                     resolve_statement_labels(else_stmt, ctx, resolver)?;
                 }
             }
-            Statement::Goto((label, token)) => resolver.mark_goto((label, token)),
+            Statement::Goto { target, token } => resolver.mark_goto((target, token)),
             Statement::LabeledStatement(labeled) => match labeled {
                 Labeled::Label { label, token, stmt } => {
                     if !resolver.mark_label(label) {
@@ -146,8 +146,8 @@ pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<
             }
             Statement::Return(_)
             | Statement::Expression(_)
-            | Statement::Break(_)
-            | Statement::Continue(_)
+            | Statement::Break { .. }
+            | Statement::Continue { .. }
             | Statement::Empty => {}
         }
 
@@ -213,11 +213,11 @@ fn update_labels(body: &mut Block, resolver: &LabelResolver) {
                     resolve_statement_labels(else_stmt, resolver);
                 }
             }
-            Statement::Goto((label, _)) => {
-                label.clone_from(
+            Statement::Goto { target, .. } => {
+                target.clone_from(
                     resolver
                         .labels
-                        .get(label.as_str())
+                        .get(target.as_str())
                         .expect("goto target should have been encountered during label resolution"),
                 );
             }
@@ -247,8 +247,8 @@ fn update_labels(body: &mut Block, resolver: &LabelResolver) {
             }
             Statement::Return(_)
             | Statement::Expression(_)
-            | Statement::Break(_)
-            | Statement::Continue(_)
+            | Statement::Break { .. }
+            | Statement::Continue { .. }
             | Statement::Empty => {}
         }
     }

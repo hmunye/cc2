@@ -105,9 +105,9 @@ pub fn resolve_escapable_ctrl(
         resolver: &mut CtrlResolver<'a>,
     ) -> Result<()> {
         match stmt {
-            Statement::Break((label, token)) => {
+            Statement::Break { jmp_label, token } => {
                 if let Some(ctrl) = resolver.current_ctrl() {
-                    *label = ctrl.label.to_string();
+                    *jmp_label = ctrl.label.to_string();
                 } else {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -123,11 +123,11 @@ pub fn resolve_escapable_ctrl(
                     ));
                 }
             }
-            Statement::Continue((label, token)) => {
+            Statement::Continue { jmp_label, token } => {
                 // Ensures a `continue` inside a `switch` context doesn’t
                 // immediately trigger a error.
                 if let Some(ctrl) = resolver.current_loop() {
-                    *label = ctrl.label.to_string();
+                    *jmp_label = ctrl.label.to_string();
                 } else {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -143,21 +143,29 @@ pub fn resolve_escapable_ctrl(
                     ));
                 }
             }
-            Statement::While { stmt, label, .. }
-            | Statement::Do { stmt, label, .. }
-            | Statement::For { stmt, label, .. } => {
-                *label = resolver.new_label(CtrlKind::Loop);
+            Statement::While {
+                stmt, loop_label, ..
+            }
+            | Statement::Do {
+                stmt, loop_label, ..
+            }
+            | Statement::For {
+                stmt, loop_label, ..
+            } => {
+                *loop_label = resolver.new_label(CtrlKind::Loop);
 
-                resolver.enter_ctx(label, CtrlKind::Loop);
+                resolver.enter_ctx(loop_label, CtrlKind::Loop);
 
                 resolve_loop_statement(stmt, ctx, resolver)?;
 
                 resolver.exit_ctx();
             }
-            Statement::Switch { stmt, label, .. } => {
-                *label = resolver.new_label(CtrlKind::Switch);
+            Statement::Switch {
+                stmt, switch_label, ..
+            } => {
+                *switch_label = resolver.new_label(CtrlKind::Switch);
 
-                resolver.enter_ctx(label, CtrlKind::Switch);
+                resolver.enter_ctx(switch_label, CtrlKind::Switch);
 
                 resolve_loop_statement(stmt, ctx, resolver)?;
 
@@ -183,7 +191,7 @@ pub fn resolve_escapable_ctrl(
             }
             Statement::Return(_)
             | Statement::Expression(_)
-            | Statement::Goto(_)
+            | Statement::Goto { .. }
             | Statement::Empty => {}
         }
 

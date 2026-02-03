@@ -4,16 +4,9 @@ use std::collections::hash_map::Entry;
 use crate::compiler::Result;
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled,
-    Statement, TypePhase,
+    Statement, Type, TypePhase,
 };
 use crate::{Context, fmt_token_err};
-
-/// Types for identifiers in the type system.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Type {
-    Int,
-    Func { params: usize },
-}
 
 /// Mapping of canonical identifier to `Type` information.
 pub type TypeMap<'a> = HashMap<&'a str, Type>;
@@ -62,8 +55,8 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
         }
 
         if let Some(body) = body {
-            for (param, _) in params {
-                type_map.insert(param.as_str(), Type::Int);
+            for param in params {
+                type_map.insert(param.ident.as_str(), param.ty);
             }
 
             type_check_block(body, ctx, type_map)?;
@@ -162,9 +155,9 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
                 type_check_expression(cond, ctx, type_map)?;
                 type_check_statement(stmt, ctx, type_map)
             }
-            Statement::Goto(_) => Ok(()),
-            Statement::Break(_) => Ok(()),
-            Statement::Continue(_) => Ok(()),
+            Statement::Goto { .. } => Ok(()),
+            Statement::Break { .. } => Ok(()),
+            Statement::Continue { .. } => Ok(()),
             Statement::Empty => Ok(()),
         }
     }
@@ -211,12 +204,16 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
                 type_check_expression(lhs, ctx, type_map)?;
                 type_check_expression(rhs, ctx, type_map)
             }
-            Expression::Conditional(lhs, mid, rhs) => {
-                type_check_expression(lhs, ctx, type_map)?;
-                type_check_expression(mid, ctx, type_map)?;
-                type_check_expression(rhs, ctx, type_map)
+            Expression::Conditional {
+                cond,
+                second,
+                third,
+            } => {
+                type_check_expression(cond, ctx, type_map)?;
+                type_check_expression(second, ctx, type_map)?;
+                type_check_expression(third, ctx, type_map)
             }
-            Expression::Var((ident, token)) => {
+            Expression::Var { ident, token } => {
                 if *type_map
                     .get(ident.as_str())
                     .expect("variable type should be available after symbol resolution")

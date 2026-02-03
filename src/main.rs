@@ -8,6 +8,7 @@ pub mod compiler;
 pub mod error;
 
 use std::io::{self, Read, Write};
+use std::ops::Range;
 use std::path::Path;
 use std::{env, fs, process};
 
@@ -16,7 +17,7 @@ use std::{env, fs, process};
 pub struct Context<'a> {
     /// Name of the program.
     pub program: &'a str,
-    /// Path of the input file.
+    /// Path of the input _C_ file.
     pub in_path: &'static Path,
     /// Input file bytes.
     pub src: &'a [u8],
@@ -25,7 +26,7 @@ pub struct Context<'a> {
 impl<'a> Context<'a> {
     /// Returns the UTF-8 representation for the given byte range from `src`.
     #[inline]
-    pub fn src_slice(&self, range: std::ops::Range<usize>) -> &str {
+    pub fn src_slice(&self, range: Range<usize>) -> &str {
         std::str::from_utf8(&self.src[range])
             .expect("any range of ASCII bytes should be valid UTF-8")
     }
@@ -111,14 +112,14 @@ fn main() {
     }
 }
 
-/// Perform preprocessing on the input _C_ translation unit (expanding macros,
-/// handling include directives, removing comments, etc.), returning a file
-/// handle. [Exits] on error with non-zero status.
+/// Perform preprocessing on a _C_ source file (e.g., expanding macros, handling
+/// include directives, removing comments), returning a file handle. [Exits] on
+/// error with non-zero status.
 ///
 /// [Exits]: std::process::exit
 fn preprocess_input(args: &args::Args) -> fs::File {
     let tmp_dir = env::temp_dir();
-    let tmp_path = tmp_dir.join("input.i");
+    let tmp_path = tmp_dir.join(args.in_path.with_extension("i"));
 
     let tmp_file = fs::File::options()
         .read(true)

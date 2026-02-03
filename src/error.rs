@@ -1,4 +1,4 @@
-//! Macros for reporting compiler errors.
+//! Macros for formatting and reporting compiler errors.
 
 /// Report a generic error message, printing to `stderr`.
 #[macro_export]
@@ -28,7 +28,7 @@ macro_rules! report_token_err {
     }};
 }
 
-/// Format a generic error message into a string.
+/// Format a generic error message.
 #[macro_export]
 macro_rules! fmt_err {
     ($program:expr, $($arg:tt)+) => {{
@@ -36,8 +36,7 @@ macro_rules! fmt_err {
     }};
 }
 
-/// Format an error related to a token (with token position and line content),
-/// into a string.
+/// Format an error related to a token (with token position and line content).
 #[macro_export]
 macro_rules! fmt_token_err {
     ($file:expr, $line:expr, $col:expr, $token:expr, $marker_len:expr, $line_content:expr, $($arg:tt)+) => {{
