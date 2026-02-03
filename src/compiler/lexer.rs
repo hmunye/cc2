@@ -354,6 +354,7 @@ impl<'a> Lexer<'a> {
     ///
     /// Does **not** support universal character names (only _ASCII_).
     #[inline]
+    #[must_use]
     pub const fn new(ctx: &'a Context<'_>) -> Self {
         Self {
             ctx,
@@ -393,8 +394,8 @@ impl<'a> Lexer<'a> {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the constant contains an illegal suffix or cannot
-    /// be parsed.
+    /// This function will return an error if the constant contains an illegal
+    /// suffix or cannot be parsed.
     fn consume_constant(&mut self) -> Result<Token> {
         let col = self.col();
         let token_start = self.cur;
@@ -459,15 +460,14 @@ impl<'a> Lexer<'a> {
     ///
     /// # Errors
     ///
-    /// Will return `Err` if the decimal line cannot be parsed.
+    /// This function will return an error if the decimal line cannot be parsed.
     fn consume_line_directive(&mut self) -> Result<()> {
         self.cur += 1;
         self.consume_whitespace();
 
         let line_token = self.consume_constant()?;
-        let line = match line_token.ty {
-            TokenType::IntConstant(i) => i,
-            _ => unreachable!("line is parsed as an integer constant"),
+        let TokenType::IntConstant(line) = line_token.ty else {
+            unreachable!("line should be  parsed as an integer constant");
         };
 
         debug_assert!(line >= 0);
@@ -541,7 +541,7 @@ impl<'a> Lexer<'a> {
     /// Returns the byte from `src` at the current cursor position. Does **not**
     /// update the cursor position.
     ///
-    /// # Panic
+    /// # Panics
     ///
     /// Will _panic_ if the cursor position is out of bounds.
     #[inline]

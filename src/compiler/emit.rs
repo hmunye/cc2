@@ -162,7 +162,11 @@ fn emit_asm_instruction(instruction: &mir::Instruction, locales: &HashSet<String
         mir::Instruction::Call(label) => {
             format!(
                 "call\t{label}{}",
-                if locales.contains(label) { "" } else { "@PLT" }
+                if locales.contains(label.as_str()) {
+                    ""
+                } else {
+                    "@PLT"
+                }
             )
         }
         // Include the function epilogue before returning to the caller:
@@ -193,7 +197,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 2 => "%ax",
                 4 => "%eax",
                 8 => "%rax",
-                _ => panic!("invalid register size for AX: '{}'", size),
+                _ => panic!("invalid register size for AX: '{size}'"),
             }
             .to_string(),
             mir::Reg::CX => match size {
@@ -201,7 +205,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 2 => "%cx",
                 4 => "%ecx",
                 8 => "%rcx",
-                _ => panic!("invalid register size for CX: '{}'", size),
+                _ => panic!("invalid register size for CX: '{size}'"),
             }
             .to_string(),
             mir::Reg::DX => match size {
@@ -209,7 +213,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 2 => "%dx",
                 4 => "%edx",
                 8 => "%rdx",
-                _ => panic!("invalid register size for DX: '{}'", size),
+                _ => panic!("invalid register size for DX: '{size}'"),
             }
             .to_string(),
             mir::Reg::DI => match size {
@@ -217,7 +221,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 2 => "%di",
                 4 => "%edi",
                 8 => "%rdi",
-                _ => panic!("invalid register size for DI: '{}'", size),
+                _ => panic!("invalid register size for DI: '{size}'"),
             }
             .to_string(),
             mir::Reg::SI => match size {
@@ -225,7 +229,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 2 => "%si",
                 4 => "%esi",
                 8 => "%rsi",
-                _ => panic!("invalid register size for SI: '{}'", size),
+                _ => panic!("invalid register size for SI: '{size}'"),
             }
             .to_string(),
             mir::Reg::R8 => match size {
@@ -233,7 +237,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 2 => "%r8w",
                 4 => "%r8d",
                 8 => "%r8",
-                _ => panic!("invalid register size for R8: '{}'", size),
+                _ => panic!("invalid register size for R8: '{size}'"),
             }
             .to_string(),
             mir::Reg::R9 => match size {
@@ -241,7 +245,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 2 => "%r9w",
                 4 => "%r9d",
                 8 => "%r9",
-                _ => panic!("invalid register size for R9: '{}'", size),
+                _ => panic!("invalid register size for R9: '{size}'"),
             }
             .to_string(),
             mir::Reg::R10 => match size {
@@ -249,7 +253,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 2 => "%r10w",
                 4 => "%r10d",
                 8 => "%r10",
-                _ => panic!("invalid register size for R10: '{}'", size),
+                _ => panic!("invalid register size for R10: '{size}'"),
             }
             .to_string(),
             mir::Reg::R11 => match size {
@@ -257,7 +261,7 @@ fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
                 2 => "%r11w",
                 4 => "%r11d",
                 8 => "%r11",
-                _ => panic!("invalid register size for R11: '{}'", size),
+                _ => panic!("invalid register size for R11: '{size}'"),
             }
             .to_string(),
         },

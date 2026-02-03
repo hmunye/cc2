@@ -268,6 +268,7 @@ impl<'a> TACBuilder<'a> {
 /// (_AST_). [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
+#[must_use]
 pub fn generate_ir(ast: &ast::AST<Analyzed>) -> IR {
     let mut ir_funcs = vec![];
 
@@ -281,7 +282,7 @@ pub fn generate_ir(ast: &ast::AST<Analyzed>) -> IR {
     for func in &ast.program {
         if func.body.is_some() {
             builder.reset(&func.ident);
-            ir_funcs.push(generate_ir_function(func, &mut builder))
+            ir_funcs.push(generate_ir_function(func, &mut builder));
         }
     }
 
@@ -627,8 +628,7 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
             //
             // NOTE: Temporary hack for arithmetic right shift.
             let sign = match **expr {
-                ast::Expression::Unary { sign, .. } => sign,
-                ast::Expression::Binary { sign, .. } => sign,
+                ast::Expression::Unary { sign, .. } | ast::Expression::Binary { sign, .. } => sign,
                 _ => Signedness::Unsigned,
             };
 
@@ -704,8 +704,7 @@ fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Va
             //
             // NOTE: Temporary hack for arithmetic right shift.
             let sign = match **lhs {
-                ast::Expression::Unary { sign, .. } => sign,
-                ast::Expression::Binary { sign, .. } => sign,
+                ast::Expression::Unary { sign, .. } | ast::Expression::Binary { sign, .. } => sign,
                 _ => Signedness::Unsigned,
             };
 

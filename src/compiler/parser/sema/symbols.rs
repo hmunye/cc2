@@ -137,7 +137,7 @@ impl IdentResolver {
     #[inline]
     fn is_redefinition(&self, ident: &str, linkage: Option<Linkage>) -> bool {
         let scope = match linkage {
-            Some(Linkage::External) | Some(Linkage::Internal) => Scope::FILE_SCOPE,
+            Some(Linkage::External | Linkage::Internal) => Scope::FILE_SCOPE,
             None => self.scope.current_scope(),
         };
 
@@ -147,8 +147,7 @@ impl IdentResolver {
                 scope,
                 linkage,
             })
-            .map(|bind_info| bind_info.is_definition)
-            .unwrap_or(false)
+            .is_some_and(|bind_info| bind_info.is_definition)
     }
 
     /// Checks if an identifier has already been declared in the current scope,
@@ -261,6 +260,12 @@ impl IdentResolver {
 
 /// Assigns a canonical identifier to each identifier encountered, performing
 /// semantic checks (e.g., duplicate definitions, undeclared references).
+///
+/// # Errors
+///
+/// Returns an error if a variable or function is redeclared, used without being
+/// declared, assigned incorrectly, or implicitly declared without a prior
+/// definition.
 pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<IdentPhase>> {
     fn resolve_function(
         func: &mut Function,
@@ -384,8 +389,9 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
         resolver: &mut IdentResolver,
     ) -> Result<()> {
         match stmt {
-            Statement::Return(expr) => resolve_expression(expr, ctx, resolver),
-            Statement::Expression(expr) => resolve_expression(expr, ctx, resolver),
+            Statement::Return(expr) | Statement::Expression(expr) => {
+                resolve_expression(expr, ctx, resolver)
+            }
             Statement::If {
                 cond,
                 then,
@@ -402,12 +408,11 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
             }
             Statement::LabeledStatement(labeled) => {
                 let stmt = match labeled {
-                    Labeled::Label { stmt, .. } => stmt,
+                    Labeled::Label { stmt, .. } | Labeled::Default { stmt, .. } => stmt,
                     Labeled::Case { expr, stmt, .. } => {
                         resolve_expression(expr, ctx, resolver)?;
                         stmt
                     }
-                    Labeled::Default { stmt, .. } => stmt,
                 };
 
                 resolve_statement(stmt, ctx, resolver)
@@ -416,13 +421,11 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                 resolver.scope.enter_scope();
                 resolve_block(block, ctx, resolver)
             }
-            Statement::While { cond, stmt, .. } => {
+            Statement::While { cond, stmt, .. }
+            | Statement::Do { stmt, cond, .. }
+            | Statement::Switch { cond, stmt, .. } => {
                 resolve_expression(cond, ctx, resolver)?;
                 resolve_statement(stmt, ctx, resolver)
-            }
-            Statement::Do { stmt, cond, .. } => {
-                resolve_statement(stmt, ctx, resolver)?;
-                resolve_expression(cond, ctx, resolver)
             }
             Statement::For {
                 init,
@@ -466,14 +469,10 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
 
                 Ok(())
             }
-            Statement::Switch { cond, stmt, .. } => {
-                resolve_expression(cond, ctx, resolver)?;
-                resolve_statement(stmt, ctx, resolver)
-            }
-            Statement::Goto { .. } => Ok(()),
-            Statement::Break { .. } => Ok(()),
-            Statement::Continue { .. } => Ok(()),
-            Statement::Empty => Ok(()),
+            Statement::Goto { .. }
+            | Statement::Break { .. }
+            | Statement::Continue { .. }
+            | Statement::Empty => Ok(()),
         }
     }
 
@@ -484,7 +483,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
     ) -> Result<()> {
         match decl {
             Declaration::Var { ident, init, token } => {
-                resolve_variable((ident, init, token), ctx, resolver)?
+                resolve_variable((ident, init, token), ctx, resolver)?;
             }
             Declaration::Func(func) => {
                 if func.body.is_some() {
@@ -562,12 +561,11 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                 lvalue,
                 rvalue,
                 token,
-            } => match **lvalue {
-                Expression::Var { .. } => {
+            } => {
+                if let Expression::Var { .. } = **lvalue {
                     resolve_expression(lvalue, ctx, resolver)?;
                     resolve_expression(rvalue, ctx, resolver)
-                }
-                _ => {
+                } else {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
 
@@ -581,7 +579,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
                         "lvalue required as left operand of assignment",
                     ))
                 }
-            },
+            }
             Expression::Var { ident, token } => {
                 if let Some(bind_info) = resolver.resolve_ident(ident, BindingType::Var) {
                     // Use the canonical identifier mapped from the original
@@ -646,7 +644,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
         }
     }
 
-    let mut ident_resolver: IdentResolver = Default::default();
+    let mut ident_resolver = IdentResolver::default();
 
     for func in &mut ast.program {
         resolve_function(func, ctx, &mut ident_resolver)?;

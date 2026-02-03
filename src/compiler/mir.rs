@@ -164,7 +164,7 @@ pub enum Operand {
     Register(Reg),
     /// Pseudoregister to represent temporary variable.
     Pseudo(String),
-    /// Stack address with the specified offset from the `RBP` register.
+    /// Stack address with the specified offset from the `rbp` register.
     Stack(isize),
 }
 
@@ -290,6 +290,7 @@ impl TryFrom<&ast::BinaryOperator> for BinaryOperator {
 /// intermediate representation (_IR_). [Exits] on error with non-zero status.
 ///
 /// [Exits]: std::process::exit
+#[must_use]
 pub fn generate_x86_64_mir(ir: &IR) -> MIRX86 {
     let mut mir_funcs = vec![];
     let mut locales = HashSet::new();
@@ -408,10 +409,9 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                                 // instead of logical.
                                 BinaryOperator::Sar
                             } else {
-                                op.try_into().unwrap_or_else(|_| panic!(
-                                "ast::BinaryOperator '{:?}' is an invalid mir::BinaryOperator",
-                                op
-                            ))
+                                op.try_into().unwrap_or_else(|()| panic!(
+                                    "ast::BinaryOperator '{op:?}' is an invalid mir::BinaryOperator"
+                                ))
                             };
 
                         instructions.push(Instruction::Mov(generate_mir_operand(lhs), dst.clone()));
@@ -610,7 +610,7 @@ fn lower_ir_function_params(out: &mut Vec<Instruction>, params: &[String]) {
 /// Replaces each _pseudoregister_ encountered with a stack offset, returning
 /// the stack offset of the final temporary variable.
 fn replace_pseudo_registers(func: &mut Function) -> isize {
-    let mut map: HashMap<String, isize> = Default::default();
+    let mut map: HashMap<String, isize> = HashMap::default();
 
     // Currently allocating in 4-byte offsets.
     let mut stack_offset = 0;
@@ -630,7 +630,7 @@ fn replace_pseudo_registers(func: &mut Function) -> isize {
 
     for inst in &mut func.instructions {
         match inst {
-            Instruction::Mov(src, dst) => {
+            Instruction::Mov(src, dst) | Instruction::Cmp(src, dst) => {
                 if let Operand::Pseudo(ident) = src {
                     *src = Operand::Stack(get_offset(ident));
                 }
@@ -638,9 +638,9 @@ fn replace_pseudo_registers(func: &mut Function) -> isize {
                     *dst = Operand::Stack(get_offset(ident));
                 }
             }
-            Instruction::Unary(_, operand) => {
-                if let Operand::Pseudo(ident) = operand {
-                    *operand = Operand::Stack(get_offset(ident));
+            Instruction::Unary(_, dst) | Instruction::SetC(_, dst) => {
+                if let Operand::Pseudo(ident) = dst {
+                    *dst = Operand::Stack(get_offset(ident));
                 }
             }
             Instruction::Binary(_, lhs, rhs) => {
@@ -654,19 +654,6 @@ fn replace_pseudo_registers(func: &mut Function) -> isize {
             Instruction::Idiv(div) => {
                 if let Operand::Pseudo(ident) = div {
                     *div = Operand::Stack(get_offset(ident));
-                }
-            }
-            Instruction::Cmp(src, dst) => {
-                if let Operand::Pseudo(ident) = src {
-                    *src = Operand::Stack(get_offset(ident));
-                }
-                if let Operand::Pseudo(ident) = dst {
-                    *dst = Operand::Stack(get_offset(ident));
-                }
-            }
-            Instruction::SetC(_, dst) => {
-                if let Operand::Pseudo(ident) = dst {
-                    *dst = Operand::Stack(get_offset(ident));
                 }
             }
             Instruction::Push(op) => {

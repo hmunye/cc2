@@ -81,6 +81,11 @@ impl<'a> CtrlResolver<'a> {
 
 /// Resolves labels for escapable control-flow statements (loops/switches) and
 /// validates `break`/`continue` usage within each function scope.
+///
+/// # Errors
+///
+/// This function will return an error if a `continue` statement is not found
+/// within a loop or a `break` statement is not found within a loop or `switch`.
 pub fn resolve_escapable_ctrl(
     mut ast: AST<LabelPhase>,
     ctx: &Context<'_>,
@@ -119,7 +124,7 @@ pub fn resolve_escapable_ctrl(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "{tok_str} statement not within a loop or switch"
+                        "break statement not within a loop or switch"
                     ));
                 }
             }
@@ -179,9 +184,9 @@ pub fn resolve_escapable_ctrl(
             }
             Statement::LabeledStatement(labeled) => {
                 let stmt = match labeled {
-                    Labeled::Label { stmt, .. } => stmt,
-                    Labeled::Case { stmt, .. } => stmt,
-                    Labeled::Default { stmt, .. } => stmt,
+                    Labeled::Label { stmt, .. }
+                    | Labeled::Case { stmt, .. }
+                    | Labeled::Default { stmt, .. } => stmt,
                 };
 
                 resolve_loop_statement(stmt, ctx, resolver)?;
@@ -198,7 +203,7 @@ pub fn resolve_escapable_ctrl(
         Ok(())
     }
 
-    let mut ctrl_resolver: CtrlResolver<'_> = Default::default();
+    let mut ctrl_resolver = CtrlResolver::default();
 
     for func in &mut ast.program {
         if let Some(body) = &mut func.body {

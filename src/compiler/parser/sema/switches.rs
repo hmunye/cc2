@@ -144,6 +144,12 @@ impl<'a> SwitchResolver<'a> {
 }
 
 /// Resolves `switch` statements and their `case`/`default` labels.
+///
+/// # Errors
+///
+/// This function will return an error if a `switch` contains duplicate cases,
+/// multiple `default` labels, or if a `case`/`default` label appears outside of
+/// a `switch`.
 pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Result<AST<Analyzed>> {
     fn resolve_block<'a>(
         block: &'a mut Block,
@@ -290,7 +296,7 @@ pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Resul
         Ok(())
     }
 
-    let mut switch_resolver: SwitchResolver<'_> = Default::default();
+    let mut switch_resolver = SwitchResolver::default();
 
     for func in &mut ast.program {
         if let Some(body) = &mut func.body {

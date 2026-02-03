@@ -1,7 +1,8 @@
 //! Tiny C Compiler (subset of _C17_).
 
-#![warn(missing_debug_implementations)]
+#![deny(clippy::unwrap_used)]
 #![warn(rust_2018_idioms)]
+#![warn(missing_debug_implementations)]
 
 pub mod args;
 pub mod compiler;
@@ -23,9 +24,14 @@ pub struct Context<'a> {
     pub src: &'a [u8],
 }
 
-impl<'a> Context<'a> {
+impl Context<'_> {
     /// Returns the UTF-8 representation for the given byte range from `src`.
+    ///
+    /// # Panics
+    ///
+    /// Will _panic_ if provided range is not valid UTF-8.
     #[inline]
+    #[must_use]
     pub fn src_slice(&self, range: Range<usize>) -> &str {
         std::str::from_utf8(&self.src[range])
             .expect("any range of ASCII bytes should be valid UTF-8")

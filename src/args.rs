@@ -26,6 +26,11 @@ impl Args {
     /// error with non-zero status.
     ///
     /// [Exits]: std::process::exit
+    ///
+    /// # Panics
+    ///
+    /// Will _panic_ if peeked arguments could not be consumed.
+    #[must_use]
     pub fn parse() -> Self {
         let mut args = std::env::args().peekable();
         let program = args.next().unwrap_or("cc2".into());
@@ -36,7 +41,7 @@ impl Args {
         let mut out_path = PathBuf::new();
 
         while let Some(arg) = args.peek() {
-            if arg.starts_with("-") {
+            if arg.starts_with('-') {
                 let flag_name = args
                     .next()
                     .expect("already peeked the next argument, should be present");
@@ -47,8 +52,7 @@ impl Args {
                 {
                     match flag.names {
                         ["-s", "--stage"] => match args.peek().map(|s| &**s) {
-                            Some("lex") | Some("parse") | Some("ir") | Some("mir")
-                            | Some("asm") => {
+                            Some("lex" | "parse" | "ir" | "mir" | "asm") => {
                                 stage = args
                                     .next()
                                     .expect("already peeked the next argument, should be present");
@@ -63,13 +67,14 @@ impl Args {
                             }
                         },
                         ["-p", "--preprocess"] => preprocess = true,
-                        ["-o", "--output"] => match args.next() {
-                            Some(path) => out_path = PathBuf::from(&path),
-                            None => {
+                        ["-o", "--output"] => {
+                            if let Some(path) = args.next() {
+                                out_path = PathBuf::from(&path);
+                            } else {
                                 report_err!(&program, "missing file path after '-o'|'--output'");
                                 print_usage(&program);
                             }
-                        },
+                        }
                         _ => {
                             if let Some(run) = flag.run {
                                 run(&program);

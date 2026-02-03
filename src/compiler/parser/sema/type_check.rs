@@ -13,6 +13,11 @@ pub type TypeMap<'a> = HashMap<&'a str, Type>;
 
 /// Performs type checking and enforces semantic constraints on expressions and
 /// declarations.
+///
+/// # Errors
+///
+/// This function returns an error if an identifier is undeclared, used with the
+/// wrong type, or called as a function incorrectly.
 pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<TypePhase>> {
     fn type_check_function<'a>(
         func: &'a Function,
@@ -86,8 +91,9 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
         type_map: &mut TypeMap<'a>,
     ) -> Result<()> {
         match stmt {
-            Statement::Return(expr) => type_check_expression(expr, ctx, type_map),
-            Statement::Expression(expr) => type_check_expression(expr, ctx, type_map),
+            Statement::Return(expr) | Statement::Expression(expr) => {
+                type_check_expression(expr, ctx, type_map)
+            }
             Statement::If {
                 cond,
                 then,
@@ -104,24 +110,21 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
             }
             Statement::LabeledStatement(labeled) => {
                 let stmt = match labeled {
-                    Labeled::Label { stmt, .. } => stmt,
+                    Labeled::Label { stmt, .. } | Labeled::Default { stmt, .. } => stmt,
                     Labeled::Case { expr, stmt, .. } => {
                         type_check_expression(expr, ctx, type_map)?;
                         stmt
                     }
-                    Labeled::Default { stmt, .. } => stmt,
                 };
 
                 type_check_statement(stmt, ctx, type_map)
             }
             Statement::Compound(block) => type_check_block(block, ctx, type_map),
-            Statement::While { cond, stmt, .. } => {
+            Statement::While { cond, stmt, .. }
+            | Statement::Do { stmt, cond, .. }
+            | Statement::Switch { cond, stmt, .. } => {
                 type_check_expression(cond, ctx, type_map)?;
                 type_check_statement(stmt, ctx, type_map)
-            }
-            Statement::Do { stmt, cond, .. } => {
-                type_check_statement(stmt, ctx, type_map)?;
-                type_check_expression(cond, ctx, type_map)
             }
             Statement::For {
                 init,
@@ -151,14 +154,10 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
 
                 type_check_statement(stmt, ctx, type_map)
             }
-            Statement::Switch { cond, stmt, .. } => {
-                type_check_expression(cond, ctx, type_map)?;
-                type_check_statement(stmt, ctx, type_map)
-            }
-            Statement::Goto { .. } => Ok(()),
-            Statement::Break { .. } => Ok(()),
-            Statement::Continue { .. } => Ok(()),
-            Statement::Empty => Ok(()),
+            Statement::Goto { .. }
+            | Statement::Break { .. }
+            | Statement::Continue { .. }
+            | Statement::Empty => Ok(()),
         }
     }
 
@@ -240,45 +239,42 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
                     .get(ident.as_str())
                     .expect("function type should be available after symbol resolution");
 
-                match f_type {
-                    Type::Func { params } => {
-                        let args_len = args.len();
+                if let Type::Func { params } = f_type {
+                    let args_len = args.len();
 
-                        if *params != args_len {
-                            let tok_str = format!("{token:?}");
-                            let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                            return Err(fmt_token_err!(
-                                token.loc.file_path.display(),
-                                token.loc.line,
-                                token.loc.col,
-                                tok_str,
-                                tok_str.len() - 1,
-                                line_content,
-                                "too few arguments to function '{tok_str}'; expected {params}, have {args_len}",
-                            ));
-                        }
-
-                        for expr in args {
-                            type_check_expression(expr, ctx, type_map)?;
-                        }
-
-                        Ok(())
-                    }
-                    _ => {
+                    if *params != args_len {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-                        Err(fmt_token_err!(
+                        return Err(fmt_token_err!(
                             token.loc.file_path.display(),
                             token.loc.line,
                             token.loc.col,
                             tok_str,
                             tok_str.len() - 1,
                             line_content,
-                            "called object '{tok_str}' is not a function",
-                        ))
+                            "too few arguments to function '{tok_str}'; expected {params}, have {args_len}",
+                        ));
                     }
+
+                    for expr in args {
+                        type_check_expression(expr, ctx, type_map)?;
+                    }
+
+                    Ok(())
+                } else {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "called object '{tok_str}' is not a function",
+                    ))
                 }
             }
             Expression::IntConstant(_) => Ok(()),

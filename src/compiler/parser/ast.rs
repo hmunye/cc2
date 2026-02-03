@@ -80,8 +80,8 @@ impl fmt::Display for Declaration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Declaration::Var { ident, init, .. } => match init {
-                Some(expr) => write!(f, "{:?} = {}", ident, expr),
-                None => write!(f, "{:?} = uninit", ident),
+                Some(expr) => write!(f, "{ident:?} = {expr}"),
+                None => write!(f, "{ident:?} = uninit"),
             },
             Declaration::Func(func) => func.fmt_with_indent(f, 0),
         }
@@ -135,13 +135,13 @@ impl Block {
     fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let pad = "  ".repeat(indent);
 
-        writeln!(f, "{}Block: {{", pad)?;
+        writeln!(f, "{pad}Block: {{")?;
 
         for item in &self.0 {
             item.fmt_with_indent(f, indent + 2)?;
         }
 
-        writeln!(f, "{}}}", pad)
+        writeln!(f, "{pad}}}")
     }
 }
 
@@ -159,7 +159,7 @@ impl BlockItem {
         match self {
             BlockItem::Stmt(stmt) => stmt.fmt_with_indent(f, indent),
             BlockItem::Decl(decl) => {
-                writeln!(f, "{}Decl: {}", pad, decl)
+                writeln!(f, "{pad}Decl: {decl}")
             }
         }
     }
@@ -270,33 +270,33 @@ impl Statement {
 
         match self {
             Statement::Return(expr) => {
-                writeln!(f, "{}Return {}", pad, expr)
+                writeln!(f, "{pad}Return {expr}")
             }
             Statement::Expression(expr) => {
-                writeln!(f, "{}Expr: {}", pad, expr)
+                writeln!(f, "{pad}Expr: {expr}")
             }
             Statement::If {
                 cond,
                 then,
                 opt_else,
             } => {
-                writeln!(f, "{}If ({})", pad, cond)?;
-                writeln!(f, "{}Then:", pad)?;
+                writeln!(f, "{pad}If ({cond})")?;
+                writeln!(f, "{pad}Then:")?;
                 then.fmt_with_indent(f, indent + 2)?;
 
                 if let Some(else_stmt) = opt_else {
-                    writeln!(f, "{}Else:", pad)?;
+                    writeln!(f, "{pad}Else:")?;
                     else_stmt.fmt_with_indent(f, indent + 2)?;
                 }
 
                 Ok(())
             }
             Statement::Goto { target, .. } => {
-                writeln!(f, "{}Goto {:?}", pad, target)
+                writeln!(f, "{pad}Goto {target:?}")
             }
             Statement::LabeledStatement(labeled) => match labeled {
                 Labeled::Label { label, stmt, .. } => {
-                    writeln!(f, "{}Label {:?}:", pad, label)?;
+                    writeln!(f, "{pad}Label {label:?}:")?;
                     stmt.fmt_with_indent(f, indent + 2)
                 }
                 Labeled::Case {
@@ -305,7 +305,7 @@ impl Statement {
                     jmp_label: label,
                     ..
                 } => {
-                    writeln!(f, "{}Case <label {label:?}> {}:", pad, expr)?;
+                    writeln!(f, "{pad}Case <label {label:?}> {expr}:")?;
                     stmt.fmt_with_indent(f, indent + 2)
                 }
                 Labeled::Default {
@@ -313,23 +313,23 @@ impl Statement {
                     jmp_label: label,
                     ..
                 } => {
-                    writeln!(f, "{}Default <label {label:?}>:", pad)?;
+                    writeln!(f, "{pad}Default <label {label:?}>:")?;
                     stmt.fmt_with_indent(f, indent + 2)
                 }
             },
             Statement::Compound(block) => block.fmt_with_indent(f, indent),
             Statement::Break { jmp_label, .. } => {
-                writeln!(f, "{}Break <label {jmp_label:?}>", pad)
+                writeln!(f, "{pad}Break <label {jmp_label:?}>")
             }
             Statement::Continue { jmp_label, .. } => {
-                writeln!(f, "{}Continue <label {jmp_label:?}>", pad)
+                writeln!(f, "{pad}Continue <label {jmp_label:?}>")
             }
             Statement::While {
                 cond,
                 stmt,
                 loop_label: label,
             } => {
-                writeln!(f, "{}While <label {label:?}> ({})", pad, cond)?;
+                writeln!(f, "{pad}While <label {label:?}> ({cond})")?;
                 stmt.fmt_with_indent(f, indent + 2)
             }
             Statement::Do {
@@ -337,9 +337,9 @@ impl Statement {
                 cond,
                 loop_label: label,
             } => {
-                writeln!(f, "{}Do <label {label:?}>", pad)?;
+                writeln!(f, "{pad}Do <label {label:?}>")?;
                 stmt.fmt_with_indent(f, indent + 2)?;
-                writeln!(f, "{}/* while */ ({})", "  ".repeat(indent + 2), cond)
+                writeln!(f, "{}/* while */ ({cond})", "  ".repeat(indent + 2))
             }
             Statement::For {
                 init,
@@ -350,31 +350,25 @@ impl Statement {
             } => {
                 let init_fmt = match &**init {
                     ForInit::Decl(decl) => format!("Decl: {decl}"),
-                    ForInit::Expr(opt_expr) => {
-                        if let Some(expr) = opt_expr {
-                            format!("{expr}")
-                        } else {
-                            "".into()
-                        }
-                    }
+                    ForInit::Expr(opt_expr) => opt_expr
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_default(),
                 };
 
-                let cond_fmt = if let Some(cond) = opt_cond {
-                    format!("{cond}")
-                } else {
-                    "".into()
-                };
+                let cond_fmt = opt_cond
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default();
 
-                let post_fmt = if let Some(post) = opt_post {
-                    format!("{post}")
-                } else {
-                    "".into()
-                };
+                let post_fmt = opt_post
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default();
 
                 writeln!(
                     f,
-                    "{}For <label {label:?}> ({}; {}; {})",
-                    pad, init_fmt, cond_fmt, post_fmt
+                    "{pad}For <label {label:?}> ({init_fmt}; {cond_fmt}; {post_fmt})",
                 )?;
 
                 stmt.fmt_with_indent(f, indent + 2)
@@ -385,11 +379,11 @@ impl Statement {
                 switch_label: label,
                 ..
             } => {
-                writeln!(f, "{}Switch <label {label:?}> ({})", pad, cond)?;
+                writeln!(f, "{pad}Switch <label {label:?}> ({cond})")?;
                 stmt.fmt_with_indent(f, indent + 2)
             }
             Statement::Empty => {
-                writeln!(f, "{}Empty \";\"", pad)
+                writeln!(f, "{pad}Empty \";\"")
             }
         }
     }
@@ -446,38 +440,38 @@ pub enum Expression {
 impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expression::IntConstant(i) => write!(f, "Int({})", i),
-            Expression::Var { ident, .. } => write!(f, "Var({:?})", ident),
+            Expression::IntConstant(i) => write!(f, "Int({i})"),
+            Expression::Var { ident, .. } => write!(f, "Var({ident:?})"),
             Expression::Unary {
                 op, expr, prefix, ..
             } => {
                 if *prefix {
-                    write!(f, "{}{}", op, expr)
+                    write!(f, "{op}{expr}")
                 } else {
-                    write!(f, "{}{}", expr, op)
+                    write!(f, "{expr}{op}")
                 }
             }
             Expression::Binary { op, lhs, rhs, .. } => {
-                write!(f, "{} {} {}", lhs, op, rhs)
+                write!(f, "{lhs} {op} {rhs}")
             }
             Expression::Assignment { lvalue, rvalue, .. } => {
-                write!(f, "{} = {}", lvalue, rvalue)
+                write!(f, "{lvalue} = {rvalue}")
             }
             Expression::Conditional {
                 cond,
                 second,
                 third,
             } => {
-                write!(f, "{} ? {} : {}", cond, second, third)
+                write!(f, "{cond} ? {second} : {third}")
             }
             Expression::FuncCall { ident, args, .. } => {
                 let args_str = args
                     .iter()
-                    .map(|a| format!("{}", a))
+                    .map(|a| format!("{a}"))
                     .collect::<Vec<_>>()
                     .join(", ");
 
-                write!(f, "{ident:?}({})", args_str)
+                write!(f, "{ident:?}({args_str})")
             }
         }
     }
@@ -581,6 +575,7 @@ pub enum BinaryOperator {
 impl BinaryOperator {
     /// Returns the precedence level of the binary operator (higher number
     /// indicates tighter binding).
+    #[must_use]
     pub fn precedence(&self) -> u8 {
         match self {
             // _C17_ 6.5.16 (assignment-expression)
@@ -707,7 +702,7 @@ pub fn parse_ast<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if a program could not be parsed.
+/// This function will return an error if a program could not be parsed.
 pub fn parse_program<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -729,7 +724,7 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if a function could not be parsed.
+/// This function will return an error if a function could not be parsed.
 fn parse_function<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -776,7 +771,7 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if a parameter list could not be parsed.
+/// This function will return an error if a parameter list could not be parsed.
 fn parse_params<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -846,7 +841,7 @@ fn parse_params<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if a declaration could not be parsed.
+/// This function will return an error if a declaration could not be parsed.
 fn parse_declaration<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -884,7 +879,7 @@ fn parse_declaration<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if a block could not be parsed.
+/// This function will return an error if a block could not be parsed.
 fn parse_block<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -911,7 +906,7 @@ fn parse_block<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if a block item could not be parsed.
+/// This function will return an error if a block item could not be parsed.
 fn parse_block_item<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -935,15 +930,16 @@ fn parse_block_item<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if a `for` statement initial clause could not be parsed.
+/// This function will return an error if a `for` statement initial clause could
+/// not be parsed.
 fn parse_for_init<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
 ) -> Result<ForInit> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
-        match token.ty {
-            // Parse this as a declaration (starts with a type).
-            TokenType::Keyword(Reserved::Int) => match parse_declaration(ctx, iter)? {
+        // Parse this as a declaration (starts with a type).
+        if let TokenType::Keyword(Reserved::Int) = token.ty {
+            match parse_declaration(ctx, iter)? {
                 Declaration::Func(func) => {
                     let token = &func.token;
 
@@ -960,15 +956,14 @@ fn parse_for_init<I: Iterator<Item = Result<Token>>>(
                         "declaration of non-variable '{tok_str}' in 'for' loop initial declaration",
                     ))
                 }
-                decl => Ok(ForInit::Decl(decl)),
-            },
-            // Parse this as an optional expression.
-            _ => {
-                let opt_expr = parse_opt_expression(ctx, iter, TokenType::Semicolon)?;
-                expect_token(ctx, iter, TokenType::Semicolon)?;
-
-                Ok(ForInit::Expr(opt_expr))
+                decl @ Declaration::Var { .. } => Ok(ForInit::Decl(decl)),
             }
+        } else {
+            // Parse this as an optional expression.
+            let opt_expr = parse_opt_expression(ctx, iter, TokenType::Semicolon)?;
+            expect_token(ctx, iter, TokenType::Semicolon)?;
+
+            Ok(ForInit::Expr(opt_expr))
         }
     } else {
         Err(fmt_err!(
@@ -982,7 +977,7 @@ fn parse_for_init<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if a statement could not be parsed.
+/// This function will return an error if a statement could not be parsed.
 fn parse_statement<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1050,7 +1045,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 Ok(Statement::Break {
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    jmp_label: "".into(),
+                    jmp_label: String::new(),
                     token,
                 })
             }
@@ -1066,7 +1061,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                 Ok(Statement::Continue {
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    jmp_label: "".into(),
+                    jmp_label: String::new(),
                     token,
                 })
             }
@@ -1087,7 +1082,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     stmt: Box::new(stmt),
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    loop_label: "".into(),
+                    loop_label: String::new(),
                 })
             }
             TokenType::Keyword(Reserved::Do) => {
@@ -1110,7 +1105,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     cond,
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    loop_label: "".into(),
+                    loop_label: String::new(),
                 })
             }
             TokenType::Keyword(Reserved::For) => {
@@ -1136,7 +1131,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     stmt: Box::new(stmt),
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    loop_label: "".into(),
+                    loop_label: String::new(),
                 })
             }
             TokenType::Keyword(Reserved::Switch) => {
@@ -1158,7 +1153,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     default: None,
                     // Placeholder label allocated during parsing, backpatched
                     // in control-flow labeling pass.
-                    switch_label: "".into(),
+                    switch_label: String::new(),
                 })
             }
             TokenType::Keyword(Reserved::Case) => {
@@ -1183,7 +1178,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                         stmt: Box::new(stmt),
                         // Placeholder label allocated during parsing,
                         // backpatched in semantic analysis.
-                        jmp_label: "".into(),
+                        jmp_label: String::new(),
                     }))
                 } else {
                     let tok_str = format!("{token:?}");
@@ -1216,7 +1211,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
                     stmt: Box::new(stmt),
                     // Placeholder label allocated during parsing, backpatched
                     // in semantic analysis.
-                    jmp_label: "".into(),
+                    jmp_label: String::new(),
                 }))
             }
             TokenType::Semicolon => {
@@ -1278,7 +1273,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if an identifier could not be parsed.
+/// This function will return an error if an identifier could not be parsed.
 fn parse_ident<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1316,7 +1311,7 @@ fn parse_ident<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if an expression could not be parsed.
+/// This function will return an error if an expression could not be parsed.
 fn parse_expression<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1437,7 +1432,8 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if an optional expression could not be parsed.
+/// This function will return an error if an optional expression could not be
+/// parsed.
 fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1463,7 +1459,7 @@ fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if a factor could not be parsed.
+/// This function will return an error if a factor could not be parsed.
 fn parse_factor<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1681,7 +1677,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if an argument list could not be parsed.
+/// This function will return an error if an argument list could not be parsed.
 fn parse_args<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1720,8 +1716,8 @@ fn parse_args<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// Will return `Err` if the next token does not match the expected token type
-/// provided.
+/// This function will return an error if the next token does not match the
+/// expected token type provided.
 fn expect_token<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,

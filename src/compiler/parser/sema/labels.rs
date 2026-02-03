@@ -64,8 +64,8 @@ impl LabelResolver {
     ///
     /// # Errors
     ///
-    /// Will return `Err` with (label, token) pair of the missing target if it
-    /// was not found in the current function scope.
+    /// This function will return an error if a `goto` target was not found in
+    /// the current function scope.
     fn check_gotos(&mut self) -> core::result::Result<(), (String, Token)> {
         for (label, token) in self.pending_gotos.drain(..) {
             if !self.labels.contains_key(&label) {
@@ -87,6 +87,11 @@ impl LabelResolver {
 
 /// Verifies labels and `goto` targets within each function scope, ensuring
 /// uniqueness across different function scopes.
+///
+/// # Errors
+///
+/// This function will return an error if a duplicate label is found or an
+/// undefined label is used within a function scope.
 pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<LabelPhase>> {
     fn resolve_block(block: &Block, ctx: &Context<'_>, resolver: &mut LabelResolver) -> Result<()> {
         for block_item in &block.0 {
@@ -137,13 +142,11 @@ pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<
             },
             Statement::While { stmt, .. }
             | Statement::Do { stmt, .. }
-            | Statement::For { stmt, .. } => {
+            | Statement::For { stmt, .. }
+            | Statement::Switch { stmt, .. } => {
                 resolve_statement_labels(stmt, ctx, resolver)?;
             }
             Statement::Compound(block) => resolve_block(block, ctx, resolver)?,
-            Statement::Switch { stmt, .. } => {
-                resolve_statement_labels(stmt, ctx, resolver)?;
-            }
             Statement::Return(_)
             | Statement::Expression(_)
             | Statement::Break { .. }
@@ -154,7 +157,7 @@ pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<
         Ok(())
     }
 
-    let mut lbl_resolver: LabelResolver = Default::default();
+    let mut lbl_resolver = LabelResolver::default();
 
     for func in &mut ast.program {
         if let Some(body) = &mut func.body {
@@ -238,13 +241,11 @@ fn update_labels(body: &mut Block, resolver: &LabelResolver) {
             },
             Statement::While { stmt, .. }
             | Statement::Do { stmt, .. }
-            | Statement::For { stmt, .. } => {
+            | Statement::For { stmt, .. }
+            | Statement::Switch { stmt, .. } => {
                 resolve_statement_labels(stmt, resolver);
             }
             Statement::Compound(block) => resolve_block(block, resolver),
-            Statement::Switch { stmt, .. } => {
-                resolve_statement_labels(stmt, resolver);
-            }
             Statement::Return(_)
             | Statement::Expression(_)
             | Statement::Break { .. }
