@@ -7,8 +7,7 @@ use std::fmt;
 use std::ops::Range;
 use std::path::Path;
 
-use crate::compiler::Result;
-use crate::{Context, fmt_token_err};
+use crate::{Context, Result, fmt_token_err};
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -394,8 +393,8 @@ impl<'a> Lexer<'a> {
     ///
     /// # Errors
     ///
-    /// This function will return an error if the constant contains an illegal
-    /// suffix or cannot be parsed.
+    /// Returns an error if the constant contains an illegal suffix or cannot be
+    /// parsed.
     fn consume_constant(&mut self) -> Result<Token> {
         let col = self.col();
         let token_start = self.cur;
@@ -460,7 +459,7 @@ impl<'a> Lexer<'a> {
     ///
     /// # Errors
     ///
-    /// This function will return an error if the decimal line cannot be parsed.
+    /// Returns an error if the decimal line cannot be parsed.
     fn consume_line_directive(&mut self) -> Result<()> {
         self.cur += 1;
         self.consume_whitespace();
@@ -543,7 +542,7 @@ impl<'a> Lexer<'a> {
     ///
     /// # Panics
     ///
-    /// Will _panic_ if the cursor position is out of bounds.
+    /// Panics if the cursor position is out of bounds.
     #[inline]
     const fn first(&self) -> u8 {
         self.ctx.src[self.cur]
@@ -950,10 +949,7 @@ impl fmt::Display for Lexer<'_> {
         for token in lexer {
             match token {
                 Ok(token) => writeln!(f, "{token}")?,
-                Err(err) => {
-                    writeln!(f, "{err}")?;
-                    std::process::exit(1);
-                }
+                Err(err) => writeln!(f, "{err}")?,
             }
         }
 

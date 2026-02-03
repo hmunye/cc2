@@ -1,8 +1,7 @@
-use crate::compiler::Result;
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, CtrlFlowPhase, LabelPhase, Labeled, Statement,
 };
-use crate::{Context, fmt_token_err};
+use crate::{Context, Result, fmt_token_err};
 
 /// Kind of a escapable control-flow statement.
 enum CtrlKind {
@@ -84,7 +83,7 @@ impl<'a> CtrlResolver<'a> {
 ///
 /// # Errors
 ///
-/// This function will return an error if a `continue` statement is not found
+/// Returns an error if a `continue` statement is not found
 /// within a loop or a `break` statement is not found within a loop or `switch`.
 pub fn resolve_escapable_ctrl(
     mut ast: AST<LabelPhase>,

@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
-use crate::compiler::Result;
 use crate::compiler::lexer::Token;
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled, Parsed,
     Statement,
 };
-use crate::{Context, fmt_token_err};
+use crate::{Context, Result, fmt_token_err};
 
 /// Helper to track scopes in _AST_ traversal.
 #[derive(Debug)]

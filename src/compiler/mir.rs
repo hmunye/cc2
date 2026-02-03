@@ -287,9 +287,7 @@ impl TryFrom<&ast::BinaryOperator> for BinaryOperator {
 }
 
 /// Generate _x86-64_ machine intermediate representation (_MIR_), given an
-/// intermediate representation (_IR_). [Exits] on error with non-zero status.
-///
-/// [Exits]: std::process::exit
+/// intermediate representation (_IR_).
 #[must_use]
 pub fn generate_x86_64_mir(ir: &IR) -> MIRX86 {
     let mut mir_funcs = vec![];

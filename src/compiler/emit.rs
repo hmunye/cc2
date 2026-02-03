@@ -4,70 +4,61 @@
 //! compiler's _MIR_.
 
 use std::collections::HashSet;
-use std::process;
-use std::{fmt::Write, io::Write as IoWrite};
+use std::fmt::Write;
+use std::io::{self, Write as IoWrite};
 
+use crate::Context;
 use crate::compiler::mir::{self, MIRX86};
 use crate::compiler::mir::{BinaryOperator, UnaryOperator};
-use crate::{Context, report_err};
 
-/// Emits _gas-x86-64-linux_ assembly, given a _x86-64_ machine intermediate
-/// representation (_MIR_), to the provided output `f`. [Exits] on error with
-/// non-zero status.
+/// Emits _gas-x86-64-linux_ assembly from a _x86-64_ machine intermediate
+/// representation (_MIR_) to the provided `writer`.
 ///
-/// [Exits]: std::process::exit
-pub fn emit_gas_x86_64_linux(ctx: &Context<'_>, mir: &MIRX86, mut f: Box<dyn IoWrite>) {
+/// # Errors
+///
+/// Returns an error if writing textual assembly fails.
+pub fn emit_gas_x86_64_linux(
+    ctx: &Context<'_>,
+    mir: &MIRX86,
+    mut writer: Box<dyn IoWrite>,
+) -> io::Result<()> {
     // Write the file prologue in GNU `as` (assembler) format.
-    writeln!(&mut f, "\t.file\t\"{}\"\n\t.text", ctx.in_path.display()).unwrap_or_else(|err| {
-        report_err!(ctx.program, "failed to emit assembly: {err}");
-        process::exit(1);
-    });
+    writeln!(
+        &mut writer,
+        "\t.file\t\"{}\"\n\t.text",
+        ctx.in_path.display()
+    )?;
 
     for (i, func) in mir.program.iter().enumerate() {
         // `.L` is the local label prefix for Linux.
         writeln!(
-            &mut f,
+            &mut writer,
             "\t.globl\t{label}\n\t.type\t{label}, @function\n{label}:\n.LFB{i}:",
             label = &func.label
-        )
-        .unwrap_or_else(|err| {
-            report_err!(ctx.program, "failed to emit assembly: {err}");
-            process::exit(1);
-        });
+        )?;
 
-        write!(&mut f, "{}", emit_asm_function(ctx, func, &mir.locales)).unwrap_or_else(|err| {
-            report_err!(ctx.program, "failed to emit assembly: {err}");
-            process::exit(1);
-        });
+        write!(&mut writer, "{}", emit_asm_function(func, &mir.locales)?)?;
 
         // Records the byte size of the function in the _ELF_ symbol table.
         //
         // `.L` is the local label prefix for Linux.
         writeln!(
-            &mut f,
+            &mut writer,
             ".LFE{i}:\n\t.size\t{label}, .-{label}",
             label = &func.label
-        )
-        .unwrap_or_else(|err| {
-            report_err!(ctx.program, "failed to emit assembly: {err}");
-            process::exit(1);
-        });
+        )?;
     }
 
     // Indicates the program does not need an executable stack on Linux.
     writeln!(
-        &mut f,
+        &mut writer,
         "\t.ident\t\"cc2: {}\"\n\t.section\t.note.GNU-stack,\"\",@progbits",
         env!("CARGO_PKG_VERSION")
     )
-    .unwrap_or_else(|err| {
-        report_err!(ctx.program, "failed to emit assembly: {err}");
-        process::exit(1);
-    });
 }
 
 /// Return a string assembly representation of the given _MIR_ function.
-fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function, locales: &HashSet<String>) -> String {
+fn emit_asm_function(func: &mir::Function, locales: &HashSet<String>) -> io::Result<String> {
     let mut asm = String::new();
 
     // Generate the function prologue:
@@ -78,28 +69,19 @@ fn emit_asm_function(ctx: &Context<'_>, func: &mir::Function, locales: &HashSet<
     // 2. Move the current stack pointer (`rsp`) into the base pointer
     // (`rbp`) to establish the start of the current function's stack
     // frame.
-    writeln!(&mut asm, "\tpushq\t%rbp\n\tmovq\t%rsp, %rbp").unwrap_or_else(|err| {
-        report_err!(ctx.program, "failed to emit assembly: {err}");
-        process::exit(1);
-    });
+    writeln!(&mut asm, "\tpushq\t%rbp\n\tmovq\t%rsp, %rbp").map_err(io::Error::other)?;
 
     for inst in &func.instructions {
         if let mir::Instruction::Label(label) = inst {
-            writeln!(&mut asm, ".L{label}:").unwrap_or_else(|err| {
-                report_err!(ctx.program, "failed to emit assembly: {err}");
-                process::exit(1);
-            });
-
+            writeln!(&mut asm, ".L{label}:").map_err(io::Error::other)?;
             continue;
         }
 
-        writeln!(&mut asm, "\t{}", emit_asm_instruction(inst, locales)).unwrap_or_else(|err| {
-            report_err!(ctx.program, "failed to emit assembly: {err}");
-            process::exit(1);
-        });
+        writeln!(&mut asm, "\t{}", emit_asm_instruction(inst, locales))
+            .map_err(io::Error::other)?;
     }
 
-    asm
+    Ok(asm)
 }
 
 /// Return a string assembly representation of the given _MIR_ instruction.

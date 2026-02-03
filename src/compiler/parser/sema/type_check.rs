@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
-use crate::compiler::Result;
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled,
     Statement, Type, TypePhase,
 };
-use crate::{Context, fmt_token_err};
+use crate::{Context, Result, fmt_token_err};
 
 /// Mapping of canonical identifier to `Type` information.
 pub type TypeMap<'a> = HashMap<&'a str, Type>;

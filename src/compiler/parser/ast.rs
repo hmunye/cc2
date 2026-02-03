@@ -3,13 +3,12 @@
 //! Compiler pass that parses a stream of tokens into an abstract syntax tree
 //! (_AST_).
 
-use std::{fmt, process};
+use std::fmt;
 
 use super::sema;
 
-use crate::compiler::Result;
 use crate::compiler::lexer::{OperatorKind, Reserved, Token, TokenType};
-use crate::{Context, fmt_err, fmt_token_err};
+use crate::{Context, Result, fmt_err, fmt_token_err};
 
 /// Zero-sized marker indicating a parsed _AST_ (no semantic analysis).
 #[derive(Debug)]
@@ -666,43 +665,38 @@ pub enum Signedness {
 }
 
 /// Parses an abstract syntax tree (_AST_) from the provided `Token` iterator.
-/// [Exits] on error with non-zero status.
 ///
-/// [Exits]: std::process::exit
+/// # Errors
+///
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid _AST_.
 pub fn parse_ast<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     mut iter: std::iter::Peekable<I>,
-) -> AST<Analyzed> {
-    // Run all semantic analysis passes in order after parsing _AST_.
-    (|| {
-        let ast = parse_program(ctx, &mut iter)?;
+) -> Result<AST<Analyzed>> {
+    let ast = parse_program(ctx, &mut iter)?;
 
-        // Pass 1 - Identifier resolution.
-        let ast = sema::resolve_idents(ast, ctx)?;
+    // Pass 1 - Identifier resolution.
+    let ast = sema::resolve_idents(ast, ctx)?;
 
-        // Pass 2 - Type checking.
-        let ast = sema::resolve_types(ast, ctx)?;
+    // Pass 2 - Type checking.
+    let ast = sema::resolve_types(ast, ctx)?;
 
-        // Pass 3 - Label/`goto` resolution.
-        let ast = sema::resolve_labels(ast, ctx)?;
+    // Pass 3 - Label/`goto` resolution.
+    let ast = sema::resolve_labels(ast, ctx)?;
 
-        // Pass 4 - Control-flow labeling.
-        let ast = sema::resolve_escapable_ctrl(ast, ctx)?;
+    // Pass 4 - Control-flow labeling.
+    let ast = sema::resolve_escapable_ctrl(ast, ctx)?;
 
-        // Pass 5 - Switch statement resolution.
-        sema::resolve_switches(ast, ctx)
-    })()
-    .unwrap_or_else(|err| {
-        eprintln!("{err}");
-        process::exit(1);
-    })
+    // Pass 5 - Switch statement resolution.
+    sema::resolve_switches(ast, ctx)
 }
 
 /// Parses an _AST_ program from the provided `Token` iterator.
 ///
 /// # Errors
 ///
-/// This function will return an error if a program could not be parsed.
+/// Returns an error if a program could not be parsed.
 pub fn parse_program<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -724,7 +718,7 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if a function could not be parsed.
+/// Returns an error if a function could not be parsed.
 fn parse_function<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -771,7 +765,7 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if a parameter list could not be parsed.
+/// Returns an error if a parameter list could not be parsed.
 fn parse_params<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -830,10 +824,7 @@ fn parse_params<I: Iterator<Item = Result<Token>>>(
             }
         }
     } else {
-        Err(fmt_err!(
-            ctx.in_path.display(),
-            "expected '<params>' at end of input",
-        ))
+        Err(fmt_err!(ctx.program, "expected '<params>' at end of input",))
     }
 }
 
@@ -841,7 +832,7 @@ fn parse_params<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if a declaration could not be parsed.
+/// Returns an error if a declaration could not be parsed.
 fn parse_declaration<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -879,7 +870,7 @@ fn parse_declaration<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if a block could not be parsed.
+/// Returns an error if a block could not be parsed.
 fn parse_block<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -906,7 +897,7 @@ fn parse_block<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if a block item could not be parsed.
+/// Returns an error if a block item could not be parsed.
 fn parse_block_item<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -919,10 +910,7 @@ fn parse_block_item<I: Iterator<Item = Result<Token>>>(
             _ => Ok(BlockItem::Stmt(parse_statement(ctx, iter)?)),
         }
     } else {
-        Err(fmt_err!(
-            ctx.in_path.display(),
-            "expected '<block>' at end of input",
-        ))
+        Err(fmt_err!(ctx.program, "expected '<block>' at end of input",))
     }
 }
 
@@ -930,7 +918,7 @@ fn parse_block_item<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if a `for` statement initial clause could
+/// Returns an error if a `for` statement initial clause could
 /// not be parsed.
 fn parse_for_init<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
@@ -967,7 +955,7 @@ fn parse_for_init<I: Iterator<Item = Result<Token>>>(
         }
     } else {
         Err(fmt_err!(
-            ctx.in_path.display(),
+            ctx.program,
             "expected '<for_init>' at end of input",
         ))
     }
@@ -977,7 +965,7 @@ fn parse_for_init<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if a statement could not be parsed.
+/// Returns an error if a statement could not be parsed.
 fn parse_statement<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1263,7 +1251,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
         }
     } else {
         Err(fmt_err!(
-            ctx.in_path.display(),
+            ctx.program,
             "expected '<statement>' at end of input",
         ))
     }
@@ -1273,7 +1261,7 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if an identifier could not be parsed.
+/// Returns an error if an identifier could not be parsed.
 fn parse_ident<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1299,10 +1287,7 @@ fn parse_ident<I: Iterator<Item = Result<Token>>>(
             }
         }
     } else {
-        Err(fmt_err!(
-            ctx.in_path.display(),
-            "expected '<ident>' at end of input",
-        ))
+        Err(fmt_err!(ctx.program, "expected '<ident>' at end of input",))
     }
 }
 
@@ -1311,7 +1296,7 @@ fn parse_ident<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if an expression could not be parsed.
+/// Returns an error if an expression could not be parsed.
 fn parse_expression<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1432,7 +1417,7 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if an optional expression could not be
+/// Returns an error if an optional expression could not be
 /// parsed.
 fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
@@ -1448,7 +1433,7 @@ fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
         }
     } else {
         Err(fmt_err!(
-            ctx.in_path.display(),
+            ctx.program,
             "expected '{end_token}' or '<expr>' at end of input",
         ))
     }
@@ -1459,7 +1444,7 @@ fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if a factor could not be parsed.
+/// Returns an error if a factor could not be parsed.
 fn parse_factor<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1666,10 +1651,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
             }
         }
     } else {
-        Err(fmt_err!(
-            ctx.in_path.display(),
-            "expected '<factor>' at end of input",
-        ))
+        Err(fmt_err!(ctx.program, "expected '<factor>' at end of input",))
     }
 }
 
@@ -1677,7 +1659,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if an argument list could not be parsed.
+/// Returns an error if an argument list could not be parsed.
 fn parse_args<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1706,7 +1688,7 @@ fn parse_args<I: Iterator<Item = Result<Token>>>(
         }
     } else {
         Err(fmt_err!(
-            ctx.in_path.display(),
+            ctx.program,
             "expected ')' or '<expr>' at end of input",
         ))
     }
@@ -1716,8 +1698,8 @@ fn parse_args<I: Iterator<Item = Result<Token>>>(
 ///
 /// # Errors
 ///
-/// This function will return an error if the next token does not match the
-/// expected token type provided.
+/// Returns an error if the next token does not match the expected token type
+/// provided.
 fn expect_token<I: Iterator<Item = Result<Token>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1744,7 +1726,7 @@ fn expect_token<I: Iterator<Item = Result<Token>>>(
         }
     } else {
         Err(fmt_err!(
-            ctx.in_path.display(),
+            ctx.program,
             "expected '{:?}' at end of input",
             expected
         ))

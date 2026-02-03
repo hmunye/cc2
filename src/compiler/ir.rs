@@ -265,9 +265,7 @@ impl<'a> TACBuilder<'a> {
 }
 
 /// Generate intermediate representation (_IR_), given an abstract syntax tree
-/// (_AST_). [Exits] on error with non-zero status.
-///
-/// [Exits]: std::process::exit
+/// (_AST_).
 #[must_use]
 pub fn generate_ir(ast: &ast::AST<Analyzed>) -> IR {
     let mut ir_funcs = vec![];

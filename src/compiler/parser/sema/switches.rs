@@ -1,10 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::compiler::Result;
 use crate::compiler::parser::ast::{
     AST, Analyzed, Block, BlockItem, CtrlFlowPhase, Expression, Labeled, Statement, SwitchCase,
 };
-use crate::{Context, fmt_token_err};
+use crate::{Context, Result, fmt_token_err};
 
 /// Kind of labeled statement within `switch`.
 enum LabelKind {
@@ -147,7 +146,7 @@ impl<'a> SwitchResolver<'a> {
 ///
 /// # Errors
 ///
-/// This function will return an error if a `switch` contains duplicate cases,
+/// Returns an error if a `switch` contains duplicate cases,
 /// multiple `default` labels, or if a `case`/`default` label appears outside of
 /// a `switch`.
 pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Result<AST<Analyzed>> {

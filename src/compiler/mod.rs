@@ -6,5 +6,3 @@ pub mod ir;
 pub mod lexer;
 pub mod mir;
 pub mod parser;
-
-pub type Result<T> = std::result::Result<T, String>;

@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
-use crate::compiler::Result;
 use crate::compiler::lexer::Token;
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, LabelPhase, Labeled, Statement, TypePhase,
 };
-use crate::{Context, fmt_token_err};
+use crate::{Context, Result, fmt_token_err};
 
 /// Helper to perform semantic analysis on label/`goto` statements within an
 /// _AST_.
@@ -64,7 +63,7 @@ impl LabelResolver {
     ///
     /// # Errors
     ///
-    /// This function will return an error if a `goto` target was not found in
+    /// Returns an error if a `goto` target was not found in
     /// the current function scope.
     fn check_gotos(&mut self) -> core::result::Result<(), (String, Token)> {
         for (label, token) in self.pending_gotos.drain(..) {
@@ -90,7 +89,7 @@ impl LabelResolver {
 ///
 /// # Errors
 ///
-/// This function will return an error if a duplicate label is found or an
+/// Returns an error if a duplicate label is found or an
 /// undefined label is used within a function scope.
 pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<LabelPhase>> {
     fn resolve_block(block: &Block, ctx: &Context<'_>, resolver: &mut LabelResolver) -> Result<()> {

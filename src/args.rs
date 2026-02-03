@@ -22,14 +22,14 @@ pub struct Args {
 }
 
 impl Args {
-    /// Parses command-line arguments from [`std::env::args()`]. [Exits] on
-    /// error with non-zero status.
+    /// Parses command-line arguments from `std::env::args()`. [Exits] on error
+    /// with non-zero status.
     ///
     /// [Exits]: std::process::exit
     ///
     /// # Panics
     ///
-    /// Will _panic_ if peeked arguments could not be consumed.
+    /// Panics if a peeked argument could not be consumed.
     #[must_use]
     pub fn parse() -> Self {
         let mut args = std::env::args().peekable();
