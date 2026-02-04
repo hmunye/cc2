@@ -34,7 +34,7 @@ pub struct CtrlFlowPhase;
 #[derive(Debug)]
 pub struct SwitchPhase;
 
-/// Zero-sized marker indicating all semantic analysis completed on _AST_.
+/// Zero-sized marker indicating _AST_ after all semantic analysis.
 #[derive(Debug)]
 pub struct Analyzed;
 
@@ -195,7 +195,7 @@ pub enum Labeled<'a> {
     },
 }
 
-/// _AST_ case label/expression.
+/// _AST_ `case` jmp label/expression.
 #[derive(Debug)]
 pub struct SwitchCase<'a> {
     pub jmp_label: String,
@@ -212,7 +212,7 @@ pub enum Statement<'a> {
         cond: Expression<'a>,
         /// Executes when the result of `cond` is non-zero.
         then: Box<Statement<'a>>,
-        /// Optional statement to execute when result of `cond` is zero.
+        /// Optional statement executes when result of `cond` is zero.
         opt_else: Option<Box<Statement<'a>>>,
     },
     Goto {
@@ -253,7 +253,7 @@ pub enum Statement<'a> {
         /// Controlling expression.
         cond: Expression<'a>,
         stmt: Box<Statement<'a>>,
-        /// Result of `cond` used to determine which switch case to execute at.
+        /// Result of `cond` used to determine which switch case to execute.
         cases: Vec<SwitchCase<'a>>,
         /// `default` jmp label.
         default: Option<String>,
@@ -676,19 +676,14 @@ pub fn parse_ast<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ) -> Result<AST<'a, Analyzed>> {
     let ast = parse_program(ctx, &mut iter)?;
 
-    // Pass 1 - Identifier resolution.
     let ast = sema::resolve_idents(ast, ctx)?;
 
-    // Pass 2 - Type checking.
     let ast = sema::resolve_types(ast, ctx)?;
 
-    // Pass 3 - Label/`goto` resolution.
     let ast = sema::resolve_labels(ast, ctx)?;
 
-    // Pass 4 - Control-flow labeling.
     let ast = sema::resolve_escapable_ctrl(ast, ctx)?;
 
-    // Pass 5 - Switch statement resolution.
     sema::resolve_switches(ast, ctx)
 }
 
@@ -696,7 +691,8 @@ pub fn parse_ast<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if a program could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid program.
 pub fn parse_program<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -714,20 +710,20 @@ pub fn parse_program<'a, I: Iterator<Item = Result<Token<'a>>>>(
 }
 
 /// Parses an _AST_ function declaration/definition from the provided `Token`
-/// iterator. Optionally accepts a partially parsed function header.
+/// iterator. Optionally accepts a partially parsed function signature.
 ///
 /// # Errors
 ///
-/// Returns an error if a function could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid function.
 fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-    parsed_header: Option<(&'static str, String, Token<'a>)>,
+    opt_sig: Option<(Type, String, Token<'a>)>,
 ) -> Result<Function<'a>> {
-    let (ident, token) = if let Some(parsed_header) = parsed_header {
-        // NOTE: Only allow `int` return type for now.
-        debug_assert!(parsed_header.0 == "int");
-        (parsed_header.1, parsed_header.2)
+    let (ident, token) = if let Some(sig) = opt_sig {
+        debug_assert!(sig.0 == Type::Int);
+        (sig.1, sig.2)
     } else {
         expect_token(ctx, iter, TokenType::Keyword(Reserved::Int))?;
         parse_ident(ctx, iter)?
@@ -743,6 +739,7 @@ fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
         // Consume the ";" token.
         let _ = iter.next();
 
+        // Function declaration.
         return Ok(Function {
             ident,
             params,
@@ -753,6 +750,7 @@ fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
     let body = parse_block(ctx, iter)?;
 
+    // Function definition.
     Ok(Function {
         ident,
         params,
@@ -765,7 +763,8 @@ fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if a parameter list could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid parameter list.
 fn parse_params<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -819,12 +818,12 @@ fn parse_params<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     tok_str,
                     tok_str.len() - 1,
                     line_content,
-                    "unknown type name '{tok_str}'",
+                    "unknown type name '{tok_str}'"
                 ))
             }
         }
     } else {
-        Err(fmt_err!(ctx.program, "expected '<params>' at end of input",))
+        Err(fmt_err!(ctx.program, "expected '<params>' at end of input"))
     }
 }
 
@@ -832,7 +831,8 @@ fn parse_params<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if a declaration could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid declaration.
 fn parse_declaration<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -847,7 +847,7 @@ fn parse_declaration<'a, I: Iterator<Item = Result<Token<'a>>>>(
         match &tok.ty {
             // Function declaration/definition.
             TokenType::LParen => {
-                let func = parse_function(ctx, iter, Some(("int", ident, token)))?;
+                let func = parse_function(ctx, iter, Some((Type::Int, ident, token)))?;
                 return Ok(Declaration::Func(func));
             }
             // Variable declaration with initializer.
@@ -870,7 +870,8 @@ fn parse_declaration<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if a block could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid block.
 fn parse_block<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -884,8 +885,7 @@ fn parse_block<'a, I: Iterator<Item = Result<Token<'a>>>>(
             break;
         }
 
-        let block_item = parse_block_item(ctx, iter)?;
-        block.push(block_item);
+        block.push(parse_block_item(ctx, iter)?);
     }
 
     expect_token(ctx, iter, TokenType::RBrace)?;
@@ -897,7 +897,8 @@ fn parse_block<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if a block item could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid block item.
 fn parse_block_item<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -910,7 +911,7 @@ fn parse_block_item<'a, I: Iterator<Item = Result<Token<'a>>>>(
             _ => Ok(BlockItem::Stmt(parse_statement(ctx, iter)?)),
         }
     } else {
-        Err(fmt_err!(ctx.program, "expected '<block>' at end of input",))
+        Err(fmt_err!(ctx.program, "expected '<block>' at end of input"))
     }
 }
 
@@ -918,8 +919,8 @@ fn parse_block_item<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if a `for` statement initial clause could
-/// not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid `for` initial clause.
 fn parse_for_init<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -941,7 +942,7 @@ fn parse_for_init<'a, I: Iterator<Item = Result<Token<'a>>>>(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "declaration of non-variable '{tok_str}' in 'for' loop initial declaration",
+                        "declaration of non-variable '{tok_str}' in 'for' loop initial declaration"
                     ))
                 }
                 decl @ Declaration::Var { .. } => Ok(ForInit::Decl(decl)),
@@ -956,7 +957,7 @@ fn parse_for_init<'a, I: Iterator<Item = Result<Token<'a>>>>(
     } else {
         Err(fmt_err!(
             ctx.program,
-            "expected '<for_init>' at end of input",
+            "expected '<for_init>' at end of input"
         ))
     }
 }
@@ -965,7 +966,8 @@ fn parse_for_init<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if a statement could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid statement.
 fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1179,7 +1181,7 @@ fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "case label does not reduce to an integer constant (currently only support integer literals)",
+                        "case label does not evaluate to a constant (currently only support integer literals)"
                     ))
                 }
             }
@@ -1240,7 +1242,7 @@ fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
                             tok_str,
                             tok_str.len() - 1,
                             line_content,
-                            "expected ';' before '{tok_str}' token",
+                            "expected ';' before '{tok_str}' token"
                         ))
                     }
                 } else {
@@ -1252,7 +1254,7 @@ fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
     } else {
         Err(fmt_err!(
             ctx.program,
-            "expected '<statement>' at end of input",
+            "expected '<statement>' at end of input"
         ))
     }
 }
@@ -1261,7 +1263,8 @@ fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if an identifier could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid identifier.
 fn parse_ident<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1282,12 +1285,12 @@ fn parse_ident<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     tok_str,
                     tok_str.len() - 1,
                     line_content,
-                    "expected identifier",
+                    "expected identifier"
                 ))
             }
         }
     } else {
-        Err(fmt_err!(ctx.program, "expected '<ident>' at end of input",))
+        Err(fmt_err!(ctx.program, "expected '<ident>' at end of input"))
     }
 }
 
@@ -1296,7 +1299,8 @@ fn parse_ident<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if an expression could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid expression.
 fn parse_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1417,8 +1421,8 @@ fn parse_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if an optional expression could not be
-/// parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form an optional expression.
 fn parse_opt_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1434,7 +1438,7 @@ fn parse_opt_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
     } else {
         Err(fmt_err!(
             ctx.program,
-            "expected '{end_token}' or '<expr>' at end of input",
+            "expected '{end_token}' or '<expr>' at end of input"
         ))
     }
 }
@@ -1444,7 +1448,8 @@ fn parse_opt_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if a factor could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid factor.
 fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1474,7 +1479,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "{err_msg}",
+                        "{err_msg}"
                     ))
                 } else {
                     Ok(Expression::IntConstant(v))
@@ -1565,7 +1570,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "{err_msg}",
+                        "{err_msg}"
                     ));
                 }
 
@@ -1622,7 +1627,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                             tok_str,
                             tok_str.len() - 1,
                             line_content,
-                            "{err_msg}",
+                            "{err_msg}"
                         ))
                     }
                 } else {
@@ -1646,12 +1651,12 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     tok_str,
                     tok_str.len() - 1,
                     line_content,
-                    "{err_msg}",
+                    "{err_msg}"
                 ))
             }
         }
     } else {
-        Err(fmt_err!(ctx.program, "expected '<factor>' at end of input",))
+        Err(fmt_err!(ctx.program, "expected '<factor>' at end of input"))
     }
 }
 
@@ -1659,7 +1664,8 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if an argument list could not be parsed.
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid argument list.
 fn parse_args<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1668,7 +1674,7 @@ fn parse_args<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         if token.ty == TokenType::RParen {
-            // Not consuming the ")".
+            // Not consuming the ")" token.
             Ok(args)
         } else {
             let expr = parse_expression(ctx, iter, 0)?;
@@ -1689,7 +1695,7 @@ fn parse_args<'a, I: Iterator<Item = Result<Token<'a>>>>(
     } else {
         Err(fmt_err!(
             ctx.program,
-            "expected ')' or '<expr>' at end of input",
+            "expected ')' or '<expr>' at end of input"
         ))
     }
 }
@@ -1698,8 +1704,8 @@ fn parse_args<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ///
 /// # Errors
 ///
-/// Returns an error if the next token does not match the expected token type
-/// provided.
+/// Returns an error if an invalid token is encountered or if the next token
+/// does not match the expected token type provided.
 fn expect_token<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
@@ -1721,7 +1727,7 @@ fn expect_token<'a, I: Iterator<Item = Result<Token<'a>>>>(
                 tok_str,
                 tok_str.len() - 1,
                 line_content,
-                "expected '{expected:?}', but found '{tok_str}'",
+                "expected '{expected:?}', but found '{tok_str}'"
             ))
         }
     } else {

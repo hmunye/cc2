@@ -1,6 +1,6 @@
 //! Lexical Analysis
 //!
-//! Compiler pass that tokenizes _C_ translation unit, producing a sequence of
+//! Compiler pass that tokenizes a _C_ translation unit, producing a sequence of
 //! tokens.
 
 use std::fmt;
@@ -301,7 +301,7 @@ impl fmt::Debug for TokenType<'_> {
     }
 }
 
-/// Location of an emitted lexical `Token`.
+/// Location of an emitted token.
 #[derive(Debug, Clone)]
 pub struct Location {
     pub file_path: &'static Path,
@@ -343,7 +343,7 @@ pub struct Lexer<'a> {
     cur: usize,
     /// Index of the next `\n` for current line.
     line_end: usize,
-    /// Index of byte after last seen `\n`.
+    /// Index of byte after last encountered `\n`.
     bol: usize,
     line: usize,
 }
@@ -365,7 +365,7 @@ impl<'a> Lexer<'a> {
     }
 
     /// Skips over an identifier or keyword (_ASCII_ uppercase/lowercase letter
-    /// or `_`), returning a `Token`.
+    /// or `_`), returning a token.
     fn consume_ident(&mut self) -> Token<'a> {
         let col = self.col();
         let token_start = self.cur;
@@ -389,7 +389,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Skips over an integer constant (32-bit signed), returning a `Token`.
+    /// Skips over an integer constant (32-bit signed), returning a token.
     ///
     /// # Errors
     ///
@@ -403,9 +403,9 @@ impl<'a> Lexer<'a> {
             self.cur += 1;
         }
 
-        // Identifier are not allowed to begin with digits.
+        // Identifiers are not allowed to begin with digits.
         //
-        // NOTE: Currently don't allow `'` as a separator or any suffixes.
+        // NOTE: Currently don't allow `'` as a digit separator or any suffixes.
         if self.first().is_ascii_alphabetic() || self.first() == b'\'' {
             let const_len = self.cur - token_start;
             let const_end = self.cur;
@@ -449,7 +449,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    /// Skips over a line directive from `GCC` preprocessor of the form:
+    /// Skips over a line directive from the preprocessor of the form:
     ///
     /// ```text
     ///     # <decimal-line> SP* [ "<filename>" ] SP* [ <decimal-flag>... ]
@@ -457,7 +457,7 @@ impl<'a> Lexer<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the decimal line cannot be parsed.
+    /// Returns an error if the `decimal-line` cannot be parsed.
     fn consume_line_directive(&mut self) -> Result<()> {
         self.cur += 1;
         self.consume_whitespace();
@@ -480,7 +480,7 @@ impl<'a> Lexer<'a> {
             return Ok(());
         }
 
-        // Accounts for the newline (`\n`) consumed later.
+        // Accounts for the `\n` that is consumed later.
         self.line = (line - 1) as usize;
 
         // NOTE: Currently don't parse [ "<filename>" ].
@@ -497,14 +497,14 @@ impl<'a> Lexer<'a> {
     }
 
     /// Skips over all consecutive _ASCII_ whitespace characters (not including
-    /// newline).
+    /// `\n`).
     const fn consume_whitespace(&mut self) {
         while self.has_next() && matches!(self.first(), b'\t' | b'\x0C' | b'\r' | b' ') {
             self.cur += 1;
         }
     }
 
-    /// Skips over a newline (`\n`), advancing to the start of the next line.
+    /// Skips over `\n`, advancing to the start of the next line.
     const fn consume_newline(&mut self) {
         self.cur += 1;
         self.bol = self.cur;
@@ -518,7 +518,7 @@ impl<'a> Lexer<'a> {
         self.line_end = i;
     }
 
-    /// Returns the location for a `Token` beginning at `col` within the source.
+    /// Returns the location of a token beginning at `col` within the source.
     #[inline]
     const fn token_loc(&self, col: usize) -> Location {
         Location {
@@ -535,8 +535,8 @@ impl<'a> Lexer<'a> {
         self.cur - self.bol + 1
     }
 
-    /// Returns the byte from `src` at the current cursor position. Does **not**
-    /// update the cursor position.
+    /// Returns the byte from source at the current cursor position. Does
+    /// **not** update the cursor position.
     ///
     /// # Panics
     ///
@@ -546,7 +546,7 @@ impl<'a> Lexer<'a> {
         self.ctx.src[self.cur]
     }
 
-    /// Returns `true` if the cursor position is within bounds of `src`.
+    /// Returns `true` if the cursor position is within bounds of source.
     #[inline]
     const fn has_next(&self) -> bool {
         self.cur < self.ctx.src.len()
@@ -559,7 +559,7 @@ impl<'a> Iterator for Lexer<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         while self.has_next() {
             // Determine the span of the first line (special case since no `\n`
-            // byte has been seen yet).
+            // has been encountered yet).
             if self.line_end == 0 {
                 let mut i = 0;
                 while i < self.ctx.src.len() && self.ctx.src[i] != b'\n' {

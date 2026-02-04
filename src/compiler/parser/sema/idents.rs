@@ -207,7 +207,7 @@ impl IdentResolver {
         };
 
         let bind_info = BindingInfo {
-            canonical: resolved_ident.clone(),
+            canonical: resolved_ident,
             is_definition,
             ty,
         };
@@ -292,7 +292,7 @@ pub fn resolve_idents<'a>(
                 tok_str,
                 tok_str.len() - 1,
                 line_content,
-                "redefinition of '{tok_str}'",
+                "redefinition of '{tok_str}'"
             ));
         }
 
@@ -501,7 +501,7 @@ pub fn resolve_idents<'a>(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "ISO C forbids nested functions",
+                        "ISO C forbids nested functions"
                     ));
                 }
 
@@ -543,7 +543,7 @@ pub fn resolve_idents<'a>(
                             tok_str,
                             tok_str.len() - 1,
                             line_content,
-                            "'{tok_str}' redeclared as different kind of symbol",
+                            "'{tok_str}' redeclared as different kind of symbol"
                         ));
                     }
                 }
@@ -578,7 +578,7 @@ pub fn resolve_idents<'a>(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "lvalue required as left operand of assignment",
+                        "lvalue required as left operand of assignment"
                     ))
                 }
             }
@@ -586,7 +586,8 @@ pub fn resolve_idents<'a>(
                 if let Some(bind_info) = resolver.resolve_ident(ident, BindingType::Var) {
                     // Use the canonical identifier mapped from the original
                     // identifier.
-                    *ident = bind_info.canonical;
+                    ident.clear();
+                    ident.push_str(&bind_info.canonical);
                 } else {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -598,7 +599,7 @@ pub fn resolve_idents<'a>(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "'{tok_str}' undeclared",
+                        "'{tok_str}' undeclared"
                     ));
                 }
 
@@ -620,7 +621,8 @@ pub fn resolve_idents<'a>(
             }
             Expression::FuncCall { ident, args, token } => {
                 if let Some(bind_info) = resolver.resolve_ident(ident, BindingType::Func) {
-                    *ident = bind_info.canonical;
+                    ident.clear();
+                    ident.push_str(&bind_info.canonical);
 
                     for expr in args {
                         resolve_expression(expr, ctx, resolver)?;
@@ -636,7 +638,7 @@ pub fn resolve_idents<'a>(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "implicit declaration of function '{tok_str}'",
+                        "implicit declaration of function '{tok_str}'"
                     ));
                 }
 

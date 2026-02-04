@@ -3,7 +3,7 @@ use crate::compiler::parser::ast::{
 };
 use crate::{Context, Result, fmt_token_err};
 
-/// Kind of a escapable control-flow statement.
+/// Kind of escapable control-flow statement.
 enum CtrlKind {
     /// A loop statement (`for`, `while`, `do-while`).
     Loop,

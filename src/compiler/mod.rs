@@ -1,4 +1,4 @@
-//! Multi-stage pipeline for compiling _C_ translation unit into textual
+//! Multi-stage pipeline for compiling a _C_ translation unit into textual
 //! assembly.
 
 pub mod emit;
