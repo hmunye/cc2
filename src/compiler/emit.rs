@@ -19,7 +19,7 @@ use crate::compiler::mir::{BinaryOperator, UnaryOperator};
 /// Returns an error if writing textual assembly fails.
 pub fn emit_gas_x86_64_linux(
     ctx: &Context<'_>,
-    mir: &MIRX86,
+    mir: &MIRX86<'_>,
     mut writer: Box<dyn IoWrite>,
 ) -> io::Result<()> {
     // Write the file prologue in GNU `as` (assembler) format.
@@ -58,7 +58,7 @@ pub fn emit_gas_x86_64_linux(
 }
 
 /// Return a string assembly representation of the given _MIR_ function.
-fn emit_asm_function(func: &mir::Function, locales: &HashSet<String>) -> io::Result<String> {
+fn emit_asm_function(func: &mir::Function<'_>, locales: &HashSet<&str>) -> io::Result<String> {
     let mut asm = String::new();
 
     // Generate the function prologue:
@@ -85,7 +85,7 @@ fn emit_asm_function(func: &mir::Function, locales: &HashSet<String>) -> io::Res
 }
 
 /// Return a string assembly representation of the given _MIR_ instruction.
-fn emit_asm_instruction(instruction: &mir::Instruction, locales: &HashSet<String>) -> String {
+fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&str>) -> String {
     match instruction {
         mir::Instruction::Mov(src, dst) => {
             format!(
@@ -144,11 +144,7 @@ fn emit_asm_instruction(instruction: &mir::Instruction, locales: &HashSet<String
         mir::Instruction::Call(label) => {
             format!(
                 "call\t{label}{}",
-                if locales.contains(label.as_str()) {
-                    ""
-                } else {
-                    "@PLT"
-                }
+                if locales.contains(label) { "" } else { "@PLT" }
             )
         }
         // Include the function epilogue before returning to the caller:
@@ -170,7 +166,7 @@ fn emit_asm_instruction(instruction: &mir::Instruction, locales: &HashSet<String
 /// Return a string assembly representation of the given _MIR_ operand.
 ///
 /// `size` formats register operands depending on the required bytes.
-fn emit_asm_operand(op: &mir::Operand, size: u8) -> String {
+fn emit_asm_operand(op: &mir::Operand<'_>, size: u8) -> String {
     match op {
         mir::Operand::Imm32(v) => format!("${v}"),
         mir::Operand::Register(r) => match r {

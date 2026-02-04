@@ -3,18 +3,18 @@
 //! Compiler pass that lowers an abstract syntax tree (_AST_) into intermediate
 //! representation (_IR_) using three-address code (_TAC_).
 
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
 use crate::compiler::parser::ast::{self, Analyzed, BinaryOperator, Signedness, UnaryOperator};
 
 /// Intermediate representation (_IR_).
 #[derive(Debug)]
-pub struct IR {
+pub struct IR<'a> {
     /// Function that represent the structure of the program.
-    pub program: Vec<Function>,
+    pub program: Vec<Function<'a>>,
 }
 
-impl fmt::Display for IR {
+impl fmt::Display for IR<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "IR Program")?;
         for func in &self.program {
@@ -27,13 +27,13 @@ impl fmt::Display for IR {
 
 /// _IR_ function definition.
 #[derive(Debug)]
-pub struct Function {
-    pub ident: String,
-    pub params: Vec<String>,
-    pub instructions: Vec<Instruction>,
+pub struct Function<'a> {
+    pub ident: &'a str,
+    pub params: Vec<&'a str>,
+    pub instructions: Vec<Instruction<'a>>,
 }
 
-impl fmt::Display for Function {
+impl fmt::Display for Function<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let params = self.params.join(", ");
 
@@ -49,17 +49,17 @@ impl fmt::Display for Function {
 
 /// _IR_ instruction.
 #[derive(Debug)]
-pub enum Instruction {
+pub enum Instruction<'a> {
     /// Returns a value to the caller.
-    Return(Value),
+    Return(Value<'a>),
     /// Perform a unary operation on `src`, storing the result in `dst`.
     ///
     /// The `dst` of any unary instruction must be `Value::Var`.
     Unary {
         op: UnaryOperator,
-        src: Value,
-        dst: Value,
-        /// NOTE: Temporary hack for arithmetic right shift.
+        src: Value<'a>,
+        dst: Value<'a>,
+        // NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
     },
     /// Perform a binary operation on `lhs` and `rhs`, storing the result in
@@ -68,33 +68,33 @@ pub enum Instruction {
     /// The `dst` of any binary instruction must be `Value::Var`.
     Binary {
         op: BinaryOperator,
-        lhs: Value,
-        rhs: Value,
-        dst: Value,
-        /// NOTE: Temporary hack for arithmetic right shift.
+        lhs: Value<'a>,
+        rhs: Value<'a>,
+        dst: Value<'a>,
+        // NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
     },
     /// Copies the value from `src` into `dst`.
-    Copy { src: Value, dst: Value },
+    Copy { src: Value<'a>, dst: Value<'a> },
     /// Unconditionally jumps to the point in code labeled by an "identifier".
     Jump(String),
     /// Conditionally jumps to the point in code labeled by an "identifier" if
     /// the condition evaluates to zero.
-    JumpIfZero { cond: Value, target: String },
+    JumpIfZero { cond: Value<'a>, target: String },
     /// Conditionally jumps to the point in code labeled by an "identifier" if
     /// the condition does not evaluates to zero.
-    JumpIfNotZero { cond: Value, target: String },
+    JumpIfNotZero { cond: Value<'a>, target: String },
     /// Associates an "identifier" with a location in the program.
     Label(String),
     /// Function call.
     Call {
-        ident: String,
-        args: Vec<Value>,
-        dst: Value,
+        ident: &'a str,
+        args: Vec<Value<'a>>,
+        dst: Value<'a>,
     },
 }
 
-impl fmt::Display for Instruction {
+impl fmt::Display for Instruction<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Instruction::Return(v) => write!(f, "{:<17}{}", "Return", v),
@@ -205,14 +205,14 @@ impl fmt::Display for Instruction {
 
 /// _IR_ value.
 #[derive(Debug, Clone)]
-pub enum Value {
+pub enum Value<'a> {
     /// Constant int value (32-bit).
     IntConstant(i32),
     /// Temporary variable.
-    Var(String),
+    Var(Cow<'a, str>),
 }
 
-impl fmt::Display for Value {
+impl fmt::Display for Value<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::IntConstant(v) => write!(f, "{v}"),
@@ -224,7 +224,7 @@ impl fmt::Display for Value {
 /// Helper for lowering nested _AST_ expressions into three-address code (_TAC_)
 /// instructions.
 struct TACBuilder<'a> {
-    instructions: Vec<Instruction>,
+    instructions: Vec<Instruction<'a>>,
     // For temporary variables.
     tmp_count: usize,
     // For `jmp` labels.
@@ -267,7 +267,7 @@ impl<'a> TACBuilder<'a> {
 /// Generate intermediate representation (_IR_), given an abstract syntax tree
 /// (_AST_).
 #[must_use]
-pub fn generate_ir(ast: &ast::AST<'_, Analyzed>) -> IR {
+pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>) -> IR<'a> {
     let mut ir_funcs = vec![];
 
     let mut builder = TACBuilder {
@@ -288,8 +288,11 @@ pub fn generate_ir(ast: &ast::AST<'_, Analyzed>) -> IR {
 }
 
 /// Generate an _IR_ function definition from the provided _AST_ function.
-fn generate_ir_function(func: &ast::Function<'_>, builder: &mut TACBuilder<'_>) -> Function {
-    fn process_ast_block(block: &ast::Block<'_>, builder: &mut TACBuilder<'_>) {
+fn generate_ir_function<'a>(
+    func: &'a ast::Function<'_>,
+    builder: &mut TACBuilder<'a>,
+) -> Function<'a> {
+    fn process_ast_block<'a>(block: &'a ast::Block<'_>, builder: &mut TACBuilder<'a>) {
         for block_item in &block.0 {
             match block_item {
                 ast::BlockItem::Stmt(stmt) => process_ast_statement(stmt, builder),
@@ -298,7 +301,7 @@ fn generate_ir_function(func: &ast::Function<'_>, builder: &mut TACBuilder<'_>) 
         }
     }
 
-    fn process_ast_declaration(decl: &ast::Declaration<'_>, builder: &mut TACBuilder<'_>) {
+    fn process_ast_declaration<'a>(decl: &'a ast::Declaration<'_>, builder: &mut TACBuilder<'a>) {
         if let ast::Declaration::Var { ident, init, .. } = decl
             && let Some(init) = &init
         {
@@ -310,12 +313,12 @@ fn generate_ir_function(func: &ast::Function<'_>, builder: &mut TACBuilder<'_>) 
             // destination.
             builder.instructions.push(Instruction::Copy {
                 src: ir_val,
-                dst: Value::Var(ident.clone()),
+                dst: Value::Var(Cow::Borrowed(ident.as_str())),
             });
         }
     }
 
-    fn process_ast_statement(stmt: &ast::Statement<'_>, builder: &mut TACBuilder<'_>) {
+    fn process_ast_statement<'a>(stmt: &'a ast::Statement<'_>, builder: &mut TACBuilder<'a>) {
         match stmt {
             ast::Statement::Return(expr) => {
                 let ir_val = generate_ir_value(expr, builder);
@@ -533,7 +536,7 @@ fn generate_ir_function(func: &ast::Function<'_>, builder: &mut TACBuilder<'_>) 
                     // for (label, expr) in cases {
 
                     for case in cases {
-                        let dst = Value::Var(builder.new_tmp());
+                        let dst = Value::Var(Cow::Owned(builder.new_tmp()));
 
                         let rhs = generate_ir_value(&case.expr, builder);
 
@@ -573,11 +576,11 @@ fn generate_ir_function(func: &ast::Function<'_>, builder: &mut TACBuilder<'_>) 
         }
     }
 
-    let label = func.ident.clone();
+    let label = func.ident.as_str();
     let params = func
         .params
         .iter()
-        .map(|param| param.ident.clone())
+        .map(|param| param.ident.as_str())
         .collect::<Vec<_>>();
 
     let body = &func
@@ -613,10 +616,10 @@ fn generate_ir_function(func: &ast::Function<'_>, builder: &mut TACBuilder<'_>) 
 }
 
 /// Generate an _IR_ value from the provided _AST_ expression.
-fn generate_ir_value(expr: &ast::Expression<'_>, builder: &mut TACBuilder<'_>) -> Value {
+fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder<'a>) -> Value<'a> {
     match expr {
         ast::Expression::IntConstant(v) => Value::IntConstant(*v),
-        ast::Expression::Var { ident, .. } => Value::Var(ident.clone()),
+        ast::Expression::Var { ident, .. } => Value::Var(Cow::Borrowed(ident.as_str())),
         ast::Expression::Unary {
             op, expr, prefix, ..
         } => {
@@ -634,7 +637,7 @@ fn generate_ir_value(expr: &ast::Expression<'_>, builder: &mut TACBuilder<'_>) -
             // reached. This ensures the inner expression is processed initially
             // before unwinding.
             let src = generate_ir_value(expr, builder);
-            let dst = Value::Var(builder.new_tmp());
+            let dst = Value::Var(Cow::Owned(builder.new_tmp()));
 
             match op {
                 UnaryOperator::Increment | UnaryOperator::Decrement => {
@@ -646,7 +649,7 @@ fn generate_ir_value(expr: &ast::Expression<'_>, builder: &mut TACBuilder<'_>) -
                         _ => unreachable!(),
                     };
 
-                    let tmp = Value::Var(builder.new_tmp());
+                    let tmp = Value::Var(Cow::Owned(builder.new_tmp()));
 
                     builder.instructions.push(Instruction::Binary {
                         op: binop,
@@ -712,7 +715,7 @@ fn generate_ir_value(expr: &ast::Expression<'_>, builder: &mut TACBuilder<'_>) -
                 // never executed.
                 ast::BinaryOperator::LogAnd | ast::BinaryOperator::LogOr => {
                     let lhs = generate_ir_value(lhs, builder);
-                    let dst = Value::Var(builder.new_tmp());
+                    let dst = Value::Var(Cow::Owned(builder.new_tmp()));
 
                     if let ast::BinaryOperator::LogAnd = op {
                         let f_lbl = builder.new_label("and.false");
@@ -784,7 +787,7 @@ fn generate_ir_value(expr: &ast::Expression<'_>, builder: &mut TACBuilder<'_>) -
                     // `rhs` can be processed first.
                     let lhs = generate_ir_value(lhs, builder);
                     let rhs = generate_ir_value(rhs, builder);
-                    let dst = Value::Var(builder.new_tmp());
+                    let dst = Value::Var(Cow::Owned(builder.new_tmp()));
 
                     builder.instructions.push(Instruction::Binary {
                         op: *op,
@@ -800,7 +803,7 @@ fn generate_ir_value(expr: &ast::Expression<'_>, builder: &mut TACBuilder<'_>) -
         }
         ast::Expression::Assignment { lvalue, rvalue, .. } => {
             let dst = match &**lvalue {
-                ast::Expression::Var { ident, .. } => Value::Var(ident.clone()),
+                ast::Expression::Var { ident, .. } => Value::Var(Cow::Borrowed(ident.as_str())),
                 _ => unreachable!("lvalue of an expression should be an `Expression::Var`"),
             };
 
@@ -818,7 +821,7 @@ fn generate_ir_value(expr: &ast::Expression<'_>, builder: &mut TACBuilder<'_>) -
             second,
             third,
         } => {
-            let dst = Value::Var(builder.new_tmp());
+            let dst = Value::Var(Cow::Owned(builder.new_tmp()));
             let e_lbl = builder.new_label("cond.end");
             let rhs_lbl = builder.new_label("cond.false");
 
@@ -850,14 +853,14 @@ fn generate_ir_value(expr: &ast::Expression<'_>, builder: &mut TACBuilder<'_>) -
         }
         ast::Expression::FuncCall { ident, args, .. } => {
             let mut ir_args = vec![];
-            let dst = Value::Var(builder.new_tmp());
+            let dst = Value::Var(Cow::Owned(builder.new_tmp()));
 
             for expr in args {
                 ir_args.push(generate_ir_value(expr, builder));
             }
 
             builder.instructions.push(Instruction::Call {
-                ident: ident.clone(),
+                ident: ident.as_str(),
                 args: ir_args,
                 dst: dst.clone(),
             });

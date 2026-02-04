@@ -12,14 +12,14 @@ use crate::compiler::parser::ast::{self, Signedness};
 
 /// Machine _IR_: structured _x86-64_ assembly representation.
 #[derive(Debug)]
-pub struct MIRX86 {
+pub struct MIRX86<'a> {
     /// Function that represent the structure of the assembly program.
-    pub program: Vec<Function>,
+    pub program: Vec<Function<'a>>,
     /// Tracks the set of functions defined within the translation unit.
-    pub locales: HashSet<String>,
+    pub locales: HashSet<&'a str>,
 }
 
-impl fmt::Display for MIRX86 {
+impl fmt::Display for MIRX86<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MIR (x86-64) Program")?;
         for func in &self.program {
@@ -32,12 +32,12 @@ impl fmt::Display for MIRX86 {
 
 /// _MIR_ function definition.
 #[derive(Debug)]
-pub struct Function {
-    pub label: String,
-    pub instructions: Vec<Instruction>,
+pub struct Function<'a> {
+    pub label: &'a str,
+    pub instructions: Vec<Instruction<'a>>,
 }
 
-impl fmt::Display for Function {
+impl fmt::Display for Function<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Label {:?}:", self.label)?;
 
@@ -51,47 +51,47 @@ impl fmt::Display for Function {
 
 /// _MIR_ instruction.
 #[derive(Debug)]
-pub enum Instruction {
+pub enum Instruction<'a> {
     /// Move instruction (copies `src` to `dst`).
-    Mov(Operand, Operand),
+    Mov(Operand<'a>, Operand<'a>),
     /// Apply the given unary operator to the operand.
-    Unary(UnaryOperator, Operand),
+    Unary(UnaryOperator, Operand<'a>),
     /// Apply the given binary operator to both operands.
-    Binary(BinaryOperator, Operand, Operand),
+    Binary(BinaryOperator, Operand<'a>, Operand<'a>),
     /// Compares both operands (operand.1 - operand.0), and updates the relevant
     /// `RFLAGS`.
-    Cmp(Operand, Operand),
+    Cmp(Operand<'a>, Operand<'a>),
     /// Perform a signed division operation where the dividend is in `edx:eax`
     /// and the divisor is the operand.
-    Idiv(Operand),
+    Idiv(Operand<'a>),
     /// Sign-extend the 32-bit value in `eax` to a 64-bit signed value across
     /// `edx:eax`.
     Cdq,
     /// Unconditionally jump to the point instructions after the label
     /// identifier.
-    Jmp(String),
+    Jmp(&'a str),
     /// Conditionally jump to the point instructions after the label
     /// identifier, based on the conditional code.
-    JmpC(CondCode, String),
+    JmpC(CondCode, &'a str),
     /// Move the value of the bit in `RFLAGS` based on the conditional code to
     /// the operand destination (1-byte).
-    SetC(CondCode, Operand),
+    SetC(CondCode, Operand<'a>),
     /// Associates an "identifier" with instruction(s).
-    Label(String),
+    Label(&'a str),
     /// Subtract the specified number of bytes from `rsp` register.
     StackAlloc(isize),
     /// Add the specified number of bytes to `rsp` register.
     StackDealloc(usize),
     /// Pushes the operand onto the call stack.
-    Push(Operand),
+    Push(Operand<'a>),
     /// Calls the function specified by the identifier, transferring control to
     /// it.
-    Call(String),
+    Call(&'a str),
     /// Yields control back to the caller.
     Ret,
 }
 
-impl fmt::Display for Instruction {
+impl fmt::Display for Instruction<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Instruction::Mov(src, dst) => {
@@ -157,18 +157,18 @@ impl fmt::Display for Instruction {
 
 /// _MIR_ operand.
 #[derive(Debug, Clone)]
-pub enum Operand {
+pub enum Operand<'a> {
     /// Immediate value (32-bit).
     Imm32(i32),
     /// Register name.
     Register(Reg),
     /// Pseudoregister to represent temporary variable.
-    Pseudo(String),
+    Pseudo(&'a str),
     /// Stack address with the specified offset from the `rbp` register.
     Stack(isize),
 }
 
-impl fmt::Display for Operand {
+impl fmt::Display for Operand<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Operand::Imm32(v) => write!(f, "{v}"),
@@ -289,12 +289,12 @@ impl TryFrom<&ast::BinaryOperator> for BinaryOperator {
 /// Generate _x86-64_ machine intermediate representation (_MIR_), given an
 /// intermediate representation (_IR_).
 #[must_use]
-pub fn generate_x86_64_mir(ir: &IR) -> MIRX86 {
+pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>) -> MIRX86<'a> {
     let mut mir_funcs = vec![];
     let mut locales = HashSet::new();
 
     for func in &ir.program {
-        locales.insert(func.ident.clone());
+        locales.insert(func.ident);
         mir_funcs.push(generate_mir_function(func));
     }
 
@@ -305,7 +305,7 @@ pub fn generate_x86_64_mir(ir: &IR) -> MIRX86 {
 }
 
 /// Generate a _MIR_ function definition from the provided _IR_ function.
-fn generate_mir_function(func: &ir::Function) -> Function {
+fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
     let mut instructions = vec![];
 
     // Lower any function parameters before processing the instructions.
@@ -432,21 +432,21 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 ));
             }
             ir::Instruction::Jump(label) => {
-                instructions.push(Instruction::Jmp(label.clone()));
+                instructions.push(Instruction::Jmp(label.as_str()));
             }
             ir::Instruction::JumpIfZero { cond, target } => {
                 instructions.push(Instruction::Cmp(
                     Operand::Imm32(0),
                     generate_mir_operand(cond),
                 ));
-                instructions.push(Instruction::JmpC(CondCode::E, target.clone()));
+                instructions.push(Instruction::JmpC(CondCode::E, target.as_str()));
             }
             ir::Instruction::JumpIfNotZero { cond, target } => {
                 instructions.push(Instruction::Cmp(
                     Operand::Imm32(0),
                     generate_mir_operand(cond),
                 ));
-                instructions.push(Instruction::JmpC(CondCode::NE, target.clone()));
+                instructions.push(Instruction::JmpC(CondCode::NE, target.as_str()));
             }
             ir::Instruction::Call { ident, args, dst } => {
                 // According to the System-V ABI calling convention, the first
@@ -500,7 +500,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                     }
                 }
 
-                instructions.push(Instruction::Call(ident.clone()));
+                instructions.push(Instruction::Call(ident));
 
                 // Adjust the stack pointer to deallocate the arguments and any
                 // alignment padding.
@@ -518,13 +518,13 @@ fn generate_mir_function(func: &ir::Function) -> Function {
                 ));
             }
             ir::Instruction::Label(label) => {
-                instructions.push(Instruction::Label(label.clone()));
+                instructions.push(Instruction::Label(label.as_str()));
             }
         }
     }
 
     let mut func = Function {
-        label: func.ident.clone(),
+        label: func.ident,
         instructions,
     };
 
@@ -543,7 +543,7 @@ fn generate_mir_function(func: &ir::Function) -> Function {
         0
     };
 
-    // Pass 3 - Insert instruction for allocating `stack_offset` bytes.
+    // Pass 3 - Prepend instruction for allocating `stack_offset` bytes.
     //
     // NOTE: O(n) time complexity.
     func.instructions
@@ -553,16 +553,16 @@ fn generate_mir_function(func: &ir::Function) -> Function {
 }
 
 /// Generate a _MIR_ operand from the provided _IR_ value.
-fn generate_mir_operand(val: &ir::Value) -> Operand {
+fn generate_mir_operand<'a>(val: &'a ir::Value<'_>) -> Operand<'a> {
     match val {
         ir::Value::IntConstant(v) => Operand::Imm32(*v),
-        ir::Value::Var(v) => Operand::Pseudo(v.clone()),
+        ir::Value::Var(v) => Operand::Pseudo(v),
     }
 }
 
 /// Lowers _IR_ function parameters into _MIR_ instructions, appending to
 /// `out`.
-fn lower_ir_function_params(out: &mut Vec<Instruction>, params: &[String]) {
+fn lower_ir_function_params<'a>(out: &mut Vec<Instruction<'a>>, params: &'a [&str]) {
     if params.is_empty() {
         return;
     }
@@ -579,7 +579,7 @@ fn lower_ir_function_params(out: &mut Vec<Instruction>, params: &[String]) {
     for (i, param) in params.iter().take(6).enumerate() {
         out.push(Instruction::Mov(
             Operand::Register(registers[i]),
-            Operand::Pseudo(param.clone()),
+            Operand::Pseudo(param),
         ));
     }
 
@@ -597,7 +597,7 @@ fn lower_ir_function_params(out: &mut Vec<Instruction>, params: &[String]) {
                 // Positive offsets are used for stack parameters relative to
                 // `%rbp` (e.g., `16(%rbp)`).
                 Operand::Stack(stack_offset),
-                Operand::Pseudo(param.clone()),
+                Operand::Pseudo(param),
             ));
 
             stack_offset += 8; // Each parameter is 8 bytes.
@@ -607,15 +607,15 @@ fn lower_ir_function_params(out: &mut Vec<Instruction>, params: &[String]) {
 
 /// Replaces each _pseudoregister_ encountered with a stack offset, returning
 /// the stack offset of the final temporary variable.
-fn replace_pseudo_registers(func: &mut Function) -> isize {
-    let mut map: HashMap<String, isize> = HashMap::default();
+fn replace_pseudo_registers(func: &mut Function<'_>) -> isize {
+    let mut map: HashMap<&str, isize> = HashMap::default();
 
     // Currently allocating in 4-byte offsets.
     let mut stack_offset = 0;
 
     // Either increment the current stack offset, or use the stored offset
     // if the identifier has already been seen.
-    let mut get_offset = |ident: &mut String| match map.entry(ident.clone()) {
+    let mut get_offset = |ident| match map.entry(ident) {
         Entry::Occupied(entry) => *entry.get(),
         Entry::Vacant(entry) => {
             stack_offset += 4;
@@ -668,7 +668,7 @@ fn replace_pseudo_registers(func: &mut Function) -> isize {
 
 /// Normalizes instructions with invalid operand forms into valid _x86-64_
 /// instruction representations.
-fn rewrite_invalid_instructions(func: &mut Function) {
+fn rewrite_invalid_instructions(func: &mut Function<'_>) {
     let mut i = 0;
 
     while i < func.instructions.len() {
