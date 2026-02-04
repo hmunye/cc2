@@ -575,7 +575,7 @@ impl BinaryOperator {
     /// Returns the precedence level of the binary operator (higher number
     /// indicates tighter binding).
     #[must_use]
-    pub fn precedence(&self) -> u8 {
+    pub const fn precedence(&self) -> u8 {
         match self {
             // _C17_ 6.5.16 (assignment-expression)
             BinaryOperator::Assign
@@ -734,7 +734,7 @@ fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
     expect_token(ctx, iter, TokenType::RParen)?;
 
     if let Some(tok) = iter.peek().map(Result::as_ref).transpose()?
-        && let TokenType::Semicolon = tok.ty
+        && matches!(tok.ty, TokenType::Semicolon)
     {
         // Consume the ";" token.
         let _ = iter.next();
@@ -790,7 +790,7 @@ fn parse_params<'a, I: Iterator<Item = Result<Token<'a>>>>(
                 });
 
                 while let Some(token) = iter.peek().map(Result::as_ref).transpose()?
-                    && let TokenType::Comma = token.ty
+                    && matches!(token.ty, TokenType::Comma)
                 {
                     // Consume the "," token.
                     let _ = iter.next();
@@ -881,7 +881,7 @@ fn parse_block<'a, I: Iterator<Item = Result<Token<'a>>>>(
     let mut block = vec![];
 
     while let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
-        if let TokenType::RBrace = token.ty {
+        if token.ty == TokenType::RBrace {
             break;
         }
 
@@ -927,7 +927,7 @@ fn parse_for_init<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ) -> Result<ForInit<'a>> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         // Parse this as a declaration (starts with a type).
-        if let TokenType::Keyword(Reserved::Int) = token.ty {
+        if token.ty == TokenType::Keyword(Reserved::Int) {
             match parse_declaration(ctx, iter)? {
                 Declaration::Func(func) => {
                     let token = &func.token;
@@ -993,16 +993,16 @@ fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
                 let stmt = parse_statement(ctx, iter)?;
 
-                let mut opt_else = None;
-
-                if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
+                let opt_else = if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
                     && let TokenType::Keyword(kw) = token.ty
                     && matches!(kw, Reserved::Else)
                 {
                     // Consume the "else" token.
                     let _ = iter.next();
-                    opt_else = Some(Box::new(parse_statement(ctx, iter)?));
-                }
+                    Some(Box::new(parse_statement(ctx, iter)?))
+                } else {
+                    None
+                };
 
                 Ok(Statement::If {
                     cond: expr,
@@ -1218,7 +1218,7 @@ fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
                 // Labeled statement encountered if next token is colon (`:`).
                 if let Some(token) = iter.peek().map(Result::as_ref).transpose()?
-                    && let TokenType::Colon = token.ty
+                    && token.ty == TokenType::Colon
                 {
                     if let Expression::Var { ident, token } = expr {
                         // Consume the ":" token.
@@ -1466,7 +1466,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     let tok_str = format!("{tok:?}");
                     let line_content = ctx.src_slice(tok.loc.line_span.clone());
 
-                    let err_msg = if let TokenType::Operator(OperatorKind::Increment) = tok.ty {
+                    let err_msg = if tok.ty == TokenType::Operator(OperatorKind::Increment) {
                         "lvalue required as increment operand"
                     } else {
                         "lvalue required as decrement operand"
@@ -1541,7 +1541,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     .expect("expected prefix unary operator when parsing factor");
 
                 // NOTE: Temporary hack for arithmetic right shift.
-                let sign = if let UnaryOperator::Negate = unop {
+                let sign = if matches!(unop, UnaryOperator::Negate) {
                     Signedness::Signed
                 } else {
                     Signedness::Unsigned
@@ -1557,7 +1557,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span);
 
-                    let err_msg = if let UnaryOperator::Increment = unop {
+                    let err_msg = if matches!(unop, UnaryOperator::Increment) {
                         "lvalue required as increment operand"
                     } else {
                         "lvalue required as decrement operand"
@@ -1614,7 +1614,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span);
 
-                        let err_msg = if let UnaryOperator::Increment = unop {
+                        let err_msg = if matches!(unop, UnaryOperator::Increment) {
                             "lvalue required as increment operand"
                         } else {
                             "lvalue required as decrement operand"
@@ -1638,7 +1638,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                 let tok_str = format!("{tok:?}");
                 let line_content = ctx.src_slice(token.loc.line_span);
 
-                let err_msg = if let TokenType::RParen = tok {
+                let err_msg = if tok == TokenType::RParen {
                     format!("expected expression before '{tok_str}' token")
                 } else {
                     format!("unexpected token '{tok_str}' in expression")
@@ -1673,15 +1673,12 @@ fn parse_args<'a, I: Iterator<Item = Result<Token<'a>>>>(
     let mut args = vec![];
 
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
-        if token.ty == TokenType::RParen {
-            // Not consuming the ")" token.
-            Ok(args)
-        } else {
+        if token.ty != TokenType::RParen {
             let expr = parse_expression(ctx, iter, 0)?;
             args.push(expr);
 
             while let Some(token) = iter.peek().map(Result::as_ref).transpose()?
-                && let TokenType::Comma = token.ty
+                && token.ty == TokenType::Comma
             {
                 // Consume the "," token.
                 let _ = iter.next();
@@ -1689,9 +1686,9 @@ fn parse_args<'a, I: Iterator<Item = Result<Token<'a>>>>(
                 let expr = parse_expression(ctx, iter, 0)?;
                 args.push(expr);
             }
-
-            Ok(args)
         }
+
+        Ok(args)
     } else {
         Err(fmt_err!(
             ctx.program,
@@ -1715,12 +1712,12 @@ fn expect_token<'a, I: Iterator<Item = Result<Token<'a>>>>(
         if token.ty == expected {
             // Consume the peeked token.
             let _ = iter.next();
-            Ok(())
+            return Ok(());
         } else {
             let tok_str = format!("{token:?}");
             let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-            Err(fmt_token_err!(
+            return Err(fmt_token_err!(
                 token.loc.file_path.display(),
                 token.loc.line,
                 token.loc.col,
@@ -1728,20 +1725,20 @@ fn expect_token<'a, I: Iterator<Item = Result<Token<'a>>>>(
                 tok_str.len() - 1,
                 line_content,
                 "expected '{expected:?}', but found '{tok_str}'"
-            ))
+            ));
         }
-    } else {
-        Err(fmt_err!(
-            ctx.program,
-            "expected '{:?}' at end of input",
-            expected
-        ))
     }
+
+    Err(fmt_err!(
+        ctx.program,
+        "expected '{:?}' at end of input",
+        expected
+    ))
 }
 
 /// Returns the conversion of `TokenType` to `UnaryOperator`, or `None` if the
 /// token type is not a unary operator.
-fn ty_to_unop(ty: &TokenType<'_>) -> Option<UnaryOperator> {
+const fn ty_to_unop(ty: &TokenType<'_>) -> Option<UnaryOperator> {
     match ty {
         TokenType::Operator(OperatorKind::BitNot) => Some(UnaryOperator::Complement),
         TokenType::Operator(OperatorKind::Minus) => Some(UnaryOperator::Negate),
@@ -1754,7 +1751,7 @@ fn ty_to_unop(ty: &TokenType<'_>) -> Option<UnaryOperator> {
 
 /// Returns the conversion of `TokenType` to `BinaryOperator`, or `None` if the
 /// token type is not a binary operator.
-fn ty_to_binop(ty: &TokenType<'_>) -> Option<BinaryOperator> {
+const fn ty_to_binop(ty: &TokenType<'_>) -> Option<BinaryOperator> {
     match ty {
         TokenType::Operator(OperatorKind::Plus) => Some(BinaryOperator::Add),
         TokenType::Operator(OperatorKind::Minus) => Some(BinaryOperator::Subtract),

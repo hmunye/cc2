@@ -235,7 +235,7 @@ impl fmt::Debug for OperatorKind {
 }
 
 /// Lexical elements that can be emitted.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TokenType<'a> {
     /// Reserved word (e.g., `if`, `return`).
     Keyword(Reserved),
@@ -376,17 +376,16 @@ impl<'a> Lexer<'a> {
 
         let token = self.ctx.src_slice(token_start..self.cur);
 
-        if let Some(kw) = Reserved::contains(token) {
-            Token {
-                ty: TokenType::Keyword(kw),
-                loc: self.token_loc(col),
-            }
-        } else {
-            Token {
+        Reserved::contains(token).map_or_else(
+            || Token {
                 ty: TokenType::Ident(token),
                 loc: self.token_loc(col),
-            }
-        }
+            },
+            |kw| Token {
+                ty: TokenType::Keyword(kw),
+                loc: self.token_loc(col),
+            },
+        )
     }
 
     /// Skips over an integer constant (32-bit signed), returning a token.

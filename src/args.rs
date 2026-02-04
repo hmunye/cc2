@@ -33,7 +33,7 @@ impl Args {
     #[must_use]
     pub fn parse() -> Self {
         let mut args = std::env::args().peekable();
-        let program = args.next().unwrap_or("cc2".into());
+        let program = args.next().unwrap_or_else(|| "cc2".into());
 
         let mut stage = String::new();
         let mut preprocess = false;

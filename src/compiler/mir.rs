@@ -315,7 +315,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
             ir::Instruction::Unary { op, src, dst, .. } => {
                 let dst = generate_mir_operand(dst);
 
-                if let ast::UnaryOperator::Not = op {
+                if matches!(op, ast::UnaryOperator::Not) {
                     instructions.push(Instruction::Cmp {
                         rhs: Operand::Imm32(0),
                         lhs: generate_mir_operand(src),
@@ -366,7 +366,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
                         instructions.push(Instruction::Cdq);
                         instructions.push(Instruction::Idiv(generate_mir_operand(rhs)));
 
-                        let src = if let ast::BinaryOperator::Divide = op {
+                        let src = if matches!(op, ast::BinaryOperator::Divide) {
                             // Quotient is in `%eax`.
                             Operand::Register(Reg::AX)
                         } else {
@@ -412,8 +412,8 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
                     }
                     _ => {
                         // NOTE: Temporary hack for arithmetic right shift.
-                        let binop = if let ast::BinaryOperator::ShiftRight = op
-                            && let Signedness::Signed = sign
+                        let binop = if matches!(op, ast::BinaryOperator::ShiftRight)
+                            && matches!(sign, Signedness::Signed)
                         {
                             BinaryOperator::Sar
                         } else {

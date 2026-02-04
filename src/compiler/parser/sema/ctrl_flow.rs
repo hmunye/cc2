@@ -4,6 +4,7 @@ use crate::compiler::parser::ast::{
 use crate::{Context, Result, fmt_token_err};
 
 /// Kind of escapable control-flow statement.
+#[derive(Debug, Clone, Copy)]
 enum CtrlKind {
     /// A loop statement (`for`, `while`, `do-while`).
     Loop,
@@ -12,6 +13,7 @@ enum CtrlKind {
 }
 
 /// Uniquely labeled escapable control-flow statement.
+#[derive(Debug, Clone, Copy)]
 struct CtrlLabel<'a> {
     label: &'a str,
     kind: CtrlKind,
@@ -20,7 +22,7 @@ struct CtrlLabel<'a> {
 /// Helper to uniquely label all escapable control-flow statements
 /// (loops/switches) and resolve `break` and `continue` targets during
 /// semantic analysis within an _AST_.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct CtrlResolver<'a> {
     labels: Vec<CtrlLabel<'a>>,
     loop_count: usize,

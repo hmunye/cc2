@@ -254,7 +254,7 @@ impl<'a> TACBuilder<'a> {
     }
 
     /// Resets the builder state, given the next _AST_ function label.
-    fn reset(&mut self, label: &'a str) {
+    const fn reset(&mut self, label: &'a str) {
         // Function label already ensures uniqueness for identifiers and labels
         // across the translation unit.
         self.tmp_count = 0;
@@ -354,8 +354,6 @@ fn generate_ir_function<'a>(
 
                     // Handle appending instructions for statements recursively.
                     process_ast_statement(else_stmt, builder);
-
-                    builder.instructions.push(Instruction::Label(e_lbl));
                 } else {
                     builder.instructions.push(Instruction::JumpIfZero {
                         cond,
@@ -364,9 +362,9 @@ fn generate_ir_function<'a>(
 
                     // Handle appending instructions for statements recursively.
                     process_ast_statement(then, builder);
-
-                    builder.instructions.push(Instruction::Label(e_lbl));
                 }
+
+                builder.instructions.push(Instruction::Label(e_lbl));
             }
             ast::Statement::Goto { target, .. } => {
                 builder.instructions.push(Instruction::Jump(target.clone()));
@@ -717,7 +715,7 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
                     let lhs = generate_ir_value(lhs, builder);
                     let dst = Value::Var(Cow::Owned(builder.new_tmp()));
 
-                    if let ast::BinaryOperator::LogAnd = op {
+                    if matches!(op, ast::BinaryOperator::LogAnd) {
                         let f_lbl = builder.new_label("and.false");
                         let e_lbl = builder.new_label("and.end");
 

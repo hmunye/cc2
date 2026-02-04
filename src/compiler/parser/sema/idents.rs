@@ -69,7 +69,7 @@ impl Default for Scope {
 }
 
 /// Declaration status of an identifier within a scope.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeclStatus {
     /// Invalid re-declaration with different binding types.
     TypeConflict,
@@ -116,7 +116,7 @@ struct BindingInfo {
 }
 
 /// Helper to perform semantic analysis on identifiers within an _AST_.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct IdentResolver {
     bindings: HashMap<NameBinding, BindingInfo>,
     scope: Scope,
@@ -161,9 +161,7 @@ impl IdentResolver {
             linkage: Some(Linkage::External),
         };
 
-        if self.bindings.contains_key(&binding)
-            && let BindingType::Var = ty
-        {
+        if self.bindings.contains_key(&binding) && ty == BindingType::Var {
             return DeclStatus::TypeConflict;
         }
 
@@ -242,7 +240,7 @@ impl IdentResolver {
 
             // Try to resolve with any external linkage binding for function
             // calls.
-            if let BindingType::Func = ty {
+            if ty == BindingType::Func {
                 key.linkage = Some(Linkage::External);
 
                 if let Some(bind_info) = self.bindings.get(&key) {
@@ -347,7 +345,7 @@ pub fn resolve_idents<'a>(
                 let tok_str = format!("{token:?}");
                 let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-                let msg = if let DeclStatus::TypeConflict = status {
+                let msg = if status == DeclStatus::TypeConflict {
                     format!("'{tok_str}' redeclared as different kind of symbol")
                 } else {
                     format!("redeclaration of '{tok_str}'")

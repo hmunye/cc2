@@ -6,6 +6,7 @@ use crate::compiler::parser::ast::{
 use crate::{Context, Result, fmt_token_err};
 
 /// Kind of labeled statement within `switch`.
+#[derive(Debug, Clone, Copy)]
 enum LabelKind {
     Case,
     Default,
@@ -17,7 +18,7 @@ enum LabelKind {
 type ScopedSwitches<'a> = HashMap<String, (HashSet<i32>, Option<String>, Vec<SwitchCase<'a>>)>;
 
 /// Helper for _AST_ to perform semantic analysis on `switch` statement cases.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct SwitchResolver<'a> {
     /// Stack of switch statement labels.
     labels: Vec<String>,
@@ -51,10 +52,10 @@ impl<'a> SwitchResolver<'a> {
     fn mark_case(&mut self, label: &str, expr: &Expression<'a>) -> Option<String> {
         let case_label = self.new_label(LabelKind::Case);
 
-        let entry =
-            self.scope_cases
-                .entry(label.to_string())
-                .or_insert((HashSet::new(), None, Vec::new()));
+        let entry = self
+            .scope_cases
+            .entry(label.to_string())
+            .or_insert_with(|| (HashSet::new(), None, Vec::new()));
 
         entry.2.push(SwitchCase {
             jmp_label: case_label.clone(),
@@ -80,10 +81,10 @@ impl<'a> SwitchResolver<'a> {
     fn mark_default(&mut self, label: &str) -> Option<String> {
         let default_label = self.new_label(LabelKind::Default);
 
-        let entry =
-            self.scope_cases
-                .entry(label.to_string())
-                .or_insert((HashSet::new(), None, Vec::new()));
+        let entry = self
+            .scope_cases
+            .entry(label.to_string())
+            .or_insert_with(|| (HashSet::new(), None, Vec::new()));
 
         if entry.1.is_some() {
             None
@@ -110,7 +111,7 @@ impl<'a> SwitchResolver<'a> {
         let entry = self
             .scope_cases
             .entry(label)
-            .or_insert((HashSet::new(), None, Vec::new()));
+            .or_insert_with(|| (HashSet::new(), None, Vec::new()));
 
         cases.append(&mut entry.2);
     }

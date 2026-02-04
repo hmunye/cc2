@@ -13,7 +13,7 @@ use crate::{Context, Result, fmt_token_err};
 /// Labels live in a different namespace from ordinary identifiers (variables,
 /// functions, types, etc.) within the same function scope, so they are
 /// collected separately.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct LabelResolver<'a> {
     /// `key` = label
     ///
