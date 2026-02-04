@@ -483,7 +483,7 @@ pub enum UnaryOperator {
     Complement,
     /// `-` - unary operator.
     Negate,
-    /// `!` - unary operator.
+    /// `!` - unary logical operator.
     Not,
     /// `++` - unary operator (postfix or prefix).
     Increment,

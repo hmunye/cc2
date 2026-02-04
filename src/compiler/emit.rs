@@ -87,19 +87,19 @@ fn emit_asm_function(func: &mir::Function<'_>, locales: &HashSet<&str>) -> io::R
 /// Return a string assembly representation of the given _MIR_ instruction.
 fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&str>) -> String {
     match instruction {
-        mir::Instruction::Mov(src, dst) => {
+        mir::Instruction::Mov { src, dst } => {
             format!(
                 "movl\t{}, {}",
                 emit_asm_operand(src, 4),
                 emit_asm_operand(dst, 4)
             )
         }
-        mir::Instruction::Unary(unop, operand) => match unop {
-            UnaryOperator::Not => format!("notl\t{}", emit_asm_operand(operand, 4)),
-            UnaryOperator::Neg => format!("negl\t{}", emit_asm_operand(operand, 4)),
+        mir::Instruction::Unary { unop, dst } => match unop {
+            UnaryOperator::Not => format!("notl\t{}", emit_asm_operand(dst, 4)),
+            UnaryOperator::Neg => format!("negl\t{}", emit_asm_operand(dst, 4)),
         },
-        mir::Instruction::Binary(binop, lhs, rhs) => {
-            let (instr, size) = match binop {
+        mir::Instruction::Binary { binop, rhs, dst } => {
+            let (inst, size) = match binop {
                 BinaryOperator::Add => ("addl", 4),
                 BinaryOperator::Sub => ("subl", 4),
                 BinaryOperator::Imul => ("imull", 4),
@@ -116,22 +116,22 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
 
             format!(
                 "{}\t{}, {}",
-                instr,
-                emit_asm_operand(lhs, size),
-                emit_asm_operand(rhs, size)
+                inst,
+                emit_asm_operand(rhs, size),
+                emit_asm_operand(dst, size)
             )
         }
         mir::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div, 4)),
         mir::Instruction::Cdq => "cdq".into(),
-        mir::Instruction::Cmp(src, dst) => format!(
+        mir::Instruction::Cmp { rhs, lhs } => format!(
             "cmpl\t{}, {}",
-            emit_asm_operand(src, 4),
-            emit_asm_operand(dst, 4)
+            emit_asm_operand(rhs, 4),
+            emit_asm_operand(lhs, 4)
         ),
         // `.L` is the local label prefix for Linux.
         mir::Instruction::Jmp(label) => format!("jmp\t.L{label}"),
-        mir::Instruction::JmpC(code, label) => format!("j{code}\t.L{label}"),
-        mir::Instruction::SetC(code, dst) => format!("set{code}\t{}", emit_asm_operand(dst, 1)),
+        mir::Instruction::JmpC { code, label } => format!("j{code}\t.L{label}"),
+        mir::Instruction::SetC { code, dst } => format!("set{code}\t{}", emit_asm_operand(dst, 1)),
         mir::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
         mir::Instruction::StackDealloc(v) => format!("addq\t${v}, %rsp"),
         mir::Instruction::Push(src) => format!("pushq\t{}", emit_asm_operand(src, 8)),

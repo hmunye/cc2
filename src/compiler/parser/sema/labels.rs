@@ -224,10 +224,9 @@ fn update_labels(body: &mut Block<'_>, resolver: &LabelResolver<'_>) {
             }
             Statement::Goto { target, .. } => {
                 target.clone_from(
-                    resolver
-                        .labels
-                        .get(target.as_str())
-                        .expect("goto target should have been encountered during label resolution"),
+                    resolver.labels.get(target.as_str()).expect(
+                        "`goto` target should have been encountered during label resolution",
+                    ),
                 );
             }
             Statement::LabeledStatement(labeled) => match labeled {
