@@ -54,7 +54,7 @@ Tiny C Compiler (subset of _C17_).
 
 ## Testing
 
-Using the test suite from [`nlsandler/writing-a-c-compiler-tests/`](https://github.com/nlsandler/writing-a-c-compiler-tests/).
+Compiler is tested using an external test suite: [`nlsandler/writing-a-c-compiler-tests/`](https://github.com/nlsandler/writing-a-c-compiler-tests/).
 
 ## Quick Start
 

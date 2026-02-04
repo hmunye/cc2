@@ -85,12 +85,12 @@ impl<'a> CtrlResolver<'a> {
 ///
 /// Returns an error if a `continue` statement is not found
 /// within a loop or a `break` statement is not found within a loop or `switch`.
-pub fn resolve_escapable_ctrl(
-    mut ast: AST<LabelPhase>,
+pub fn resolve_escapable_ctrl<'a>(
+    mut ast: AST<'a, LabelPhase>,
     ctx: &Context<'_>,
-) -> Result<AST<CtrlFlowPhase>> {
+) -> Result<AST<'a, CtrlFlowPhase>> {
     fn resolve_block<'a>(
-        block: &'a mut Block,
+        block: &'a mut Block<'_>,
         ctx: &Context<'_>,
         resolver: &mut CtrlResolver<'a>,
     ) -> Result<()> {
@@ -104,7 +104,7 @@ pub fn resolve_escapable_ctrl(
     }
 
     fn resolve_loop_statement<'a>(
-        stmt: &'a mut Statement,
+        stmt: &'a mut Statement<'_>,
         ctx: &Context<'_>,
         resolver: &mut CtrlResolver<'a>,
     ) -> Result<()> {

@@ -265,9 +265,12 @@ impl IdentResolver {
 /// Returns an error if a variable or function is redeclared, used without being
 /// declared, assigned incorrectly, or implicitly declared without a prior
 /// definition.
-pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<IdentPhase>> {
+pub fn resolve_idents<'a>(
+    mut ast: AST<'a, Parsed>,
+    ctx: &Context<'_>,
+) -> Result<AST<'a, IdentPhase>> {
     fn resolve_function(
-        func: &mut Function,
+        func: &mut Function<'_>,
         ctx: &Context<'_>,
         resolver: &mut IdentResolver,
     ) -> Result<()> {
@@ -324,7 +327,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
     }
 
     fn resolve_variable(
-        var: (&mut String, &mut Option<Expression>, &mut Token),
+        var: (&mut String, &mut Option<Expression<'_>>, &mut Token<'_>),
         ctx: &Context<'_>,
         resolver: &mut IdentResolver,
     ) -> Result<()> {
@@ -366,7 +369,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
     }
 
     fn resolve_block(
-        block: &mut Block,
+        block: &mut Block<'_>,
         ctx: &Context<'_>,
         resolver: &mut IdentResolver,
     ) -> Result<()> {
@@ -383,7 +386,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
     }
 
     fn resolve_statement(
-        stmt: &mut Statement,
+        stmt: &mut Statement<'_>,
         ctx: &Context<'_>,
         resolver: &mut IdentResolver,
     ) -> Result<()> {
@@ -476,7 +479,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
     }
 
     fn resolve_declaration(
-        decl: &mut Declaration,
+        decl: &mut Declaration<'_>,
         ctx: &Context<'_>,
         resolver: &mut IdentResolver,
     ) -> Result<()> {
@@ -551,7 +554,7 @@ pub fn resolve_idents(mut ast: AST<Parsed>, ctx: &Context<'_>) -> Result<AST<Ide
     }
 
     fn resolve_expression(
-        expr: &mut Expression,
+        expr: &mut Expression<'_>,
         ctx: &Context<'_>,
         resolver: &mut IdentResolver,
     ) -> Result<()> {

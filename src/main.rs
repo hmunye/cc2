@@ -120,7 +120,7 @@ fn main() {
             let ir = compiler::ir::generate_ir(&ast);
             let mir = compiler::mir::generate_x86_64_mir(&ir);
 
-            let output: Box<dyn Write> = if stage == "asm" {
+            let writer: Box<dyn Write> = if stage == "asm" {
                 Box::new(io::stdout().lock())
             } else {
                 let f = fs::File::create(&args.out_path).unwrap_or_else(|err| {
@@ -134,7 +134,7 @@ fn main() {
                 Box::new(f)
             };
 
-            compiler::emit::emit_gas_x86_64_linux(&ctx, &mir, output).unwrap_or_else(|err| {
+            compiler::emit::emit_gas_x86_64_linux(&ctx, &mir, writer).unwrap_or_else(|err| {
                 report_err!(args.program, "failed to emit assembly: {err}");
                 process::exit(1);
             });

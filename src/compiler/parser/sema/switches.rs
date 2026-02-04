@@ -14,14 +14,14 @@ enum LabelKind {
 /// `key` = switch statement label
 ///
 /// `value` = (case values, default label, case label/expression list)
-type ScopedSwitches = HashMap<String, (HashSet<i32>, Option<String>, Vec<SwitchCase>)>;
+type ScopedSwitches<'a> = HashMap<String, (HashSet<i32>, Option<String>, Vec<SwitchCase<'a>>)>;
 
 /// Helper for _AST_ to perform semantic analysis on `switch` statement cases.
 #[derive(Default)]
 struct SwitchResolver<'a> {
-    scope_cases: ScopedSwitches,
     /// Stack of switch statement labels.
-    labels: Vec<&'a str>,
+    labels: Vec<String>,
+    scope_cases: ScopedSwitches<'a>,
     case_count: usize,
     default_count: usize,
 }
@@ -48,13 +48,13 @@ impl<'a> SwitchResolver<'a> {
 
     /// Returns a unique label for the given `case` expression, or `None` if it
     /// has been encountered within the current `switch` context.
-    fn mark_case(&mut self, label: String, expr: &Expression) -> Option<String> {
+    fn mark_case(&mut self, label: &str, expr: &Expression<'a>) -> Option<String> {
         let case_label = self.new_label(LabelKind::Case);
 
-        let entry = self
-            .scope_cases
-            .entry(label)
-            .or_insert((HashSet::new(), None, Vec::new()));
+        let entry =
+            self.scope_cases
+                .entry(label.to_string())
+                .or_insert((HashSet::new(), None, Vec::new()));
 
         entry.2.push(SwitchCase {
             jmp_label: case_label.clone(),
@@ -77,13 +77,13 @@ impl<'a> SwitchResolver<'a> {
 
     /// Returns a unique label for the given `default` statement label, or
     /// `None` if one has been encountered within the current `switch` context.
-    fn mark_default(&mut self, label: String) -> Option<String> {
+    fn mark_default(&mut self, label: &str) -> Option<String> {
         let default_label = self.new_label(LabelKind::Default);
 
-        let entry = self
-            .scope_cases
-            .entry(label)
-            .or_insert((HashSet::new(), None, Vec::new()));
+        let entry =
+            self.scope_cases
+                .entry(label.to_string())
+                .or_insert((HashSet::new(), None, Vec::new()));
 
         if entry.1.is_some() {
             None
@@ -95,24 +95,22 @@ impl<'a> SwitchResolver<'a> {
 
     /// Begins a new `switch` context with the specified `label`.
     #[inline]
-    fn enter_switch(&mut self, label: &'a str) {
-        self.labels.push(label);
+    fn enter_switch(&mut self, label: &str) {
+        self.labels.push(label.to_string());
     }
 
     /// Ends the most recent `switch` context, appending the collected cases to
     /// the provided container.
-    fn exit_switch(&mut self, cases: &mut Vec<SwitchCase>) {
+    fn exit_switch(&mut self, cases: &mut Vec<SwitchCase<'a>>) {
         let label = self
-            .current_switch()
-            .expect("exit_switch should always be called in the context of a switch")
-            .to_string();
+            .labels
+            .pop()
+            .expect("exit_switch should always be called in the context of a switch");
 
         let entry = self
             .scope_cases
             .entry(label)
             .or_insert((HashSet::new(), None, Vec::new()));
-
-        self.labels.pop();
 
         cases.append(&mut entry.2);
     }
@@ -120,14 +118,14 @@ impl<'a> SwitchResolver<'a> {
     /// Returns a reference to the label of the active `switch` context, or
     /// `None` if no context is available.
     #[inline]
-    fn current_switch(&self) -> Option<&'a &str> {
-        self.labels.last()
+    fn current_switch(&self) -> Option<String> {
+        self.labels.last().cloned()
     }
 
     /// Returns the `default` statement label if one has been encountered in the
     /// current `switch` context.
     fn current_default_lbl(&mut self) -> Option<String> {
-        let label = self.current_switch()?.to_string();
+        let label = self.current_switch()?;
         let entry = self.scope_cases.get_mut(&label)?;
 
         entry.1.take()
@@ -149,9 +147,12 @@ impl<'a> SwitchResolver<'a> {
 /// Returns an error if a `switch` contains duplicate cases,
 /// multiple `default` labels, or if a `case`/`default` label appears outside of
 /// a `switch`.
-pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Result<AST<Analyzed>> {
+pub fn resolve_switches<'a>(
+    mut ast: AST<'a, CtrlFlowPhase>,
+    ctx: &Context<'_>,
+) -> Result<AST<'a, Analyzed>> {
     fn resolve_block<'a>(
-        block: &'a mut Block,
+        block: &mut Block<'a>,
         ctx: &Context<'_>,
         resolver: &mut SwitchResolver<'a>,
     ) -> Result<()> {
@@ -165,7 +166,7 @@ pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Resul
     }
 
     fn resolve_statement<'a>(
-        stmt: &'a mut Statement,
+        stmt: &mut Statement<'a>,
         ctx: &Context<'_>,
         resolver: &mut SwitchResolver<'a>,
     ) -> Result<()> {
@@ -174,10 +175,10 @@ pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Resul
                 stmt,
                 cases,
                 default,
-                switch_label: label,
+                switch_label,
                 ..
             } => {
-                resolver.enter_switch(label);
+                resolver.enter_switch(switch_label);
 
                 resolve_statement(stmt, ctx, resolver)?;
 
@@ -197,7 +198,7 @@ pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Resul
                     ..
                 } => {
                     if let Some(ctx_label) = resolver.current_switch() {
-                        if let Some(case_label) = resolver.mark_case(ctx_label.to_string(), expr) {
+                        if let Some(case_label) = resolver.mark_case(ctx_label.as_str(), expr) {
                             *label = case_label;
                         } else {
                             let tok_str = format!("{token:?}");
@@ -236,7 +237,7 @@ pub fn resolve_switches(mut ast: AST<CtrlFlowPhase>, ctx: &Context<'_>) -> Resul
                     jmp_label: label,
                 } => {
                     if let Some(ctx_label) = resolver.current_switch() {
-                        if let Some(default_label) = resolver.mark_default(ctx_label.to_string()) {
+                        if let Some(default_label) = resolver.mark_default(ctx_label.as_str()) {
                             *label = default_label;
                         } else {
                             let tok_str = format!("{token:?}");

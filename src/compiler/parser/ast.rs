@@ -40,12 +40,12 @@ pub struct Analyzed;
 
 /// Abstract Syntax Tree (_AST_).
 #[derive(Debug)]
-pub struct AST<P> {
-    pub program: Vec<Function>,
+pub struct AST<'a, P> {
+    pub program: Vec<Function<'a>>,
     pub _phase: std::marker::PhantomData<P>,
 }
 
-impl<P> fmt::Display for AST<P> {
+impl<P> fmt::Display for AST<'_, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "AST Program")?;
         for func in &self.program {
@@ -65,17 +65,17 @@ pub enum Type {
 
 /// _AST_ declaration.
 #[derive(Debug)]
-pub enum Declaration {
+pub enum Declaration<'a> {
     Var {
         ident: String,
-        init: Option<Expression>,
+        init: Option<Expression<'a>>,
         /// Identifier token.
-        token: Token,
+        token: Token<'a>,
     },
-    Func(Function),
+    Func(Function<'a>),
 }
 
-impl fmt::Display for Declaration {
+impl fmt::Display for Declaration<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Declaration::Var { ident, init, .. } => match init {
@@ -89,24 +89,24 @@ impl fmt::Display for Declaration {
 
 /// _AST_ function parameter.
 #[derive(Debug)]
-pub struct Param {
+pub struct Param<'a> {
     pub ty: Type,
     pub ident: String,
     /// Identifier token.
-    pub token: Token,
+    pub token: Token<'a>,
 }
 
 /// _AST_ function declaration/definition.
 #[derive(Debug)]
-pub struct Function {
+pub struct Function<'a> {
     pub ident: String,
-    pub params: Vec<Param>,
-    pub body: Option<Block>,
+    pub params: Vec<Param<'a>>,
+    pub body: Option<Block<'a>>,
     /// Identifier token.
-    pub token: Token,
+    pub token: Token<'a>,
 }
 
-impl Function {
+impl Function<'_> {
     fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let pad = "  ".repeat(indent);
         let params = self
@@ -128,9 +128,9 @@ impl Function {
 
 /// _AST_ block.
 #[derive(Debug)]
-pub struct Block(pub Vec<BlockItem>);
+pub struct Block<'a>(pub Vec<BlockItem<'a>>);
 
-impl Block {
+impl Block<'_> {
     fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let pad = "  ".repeat(indent);
 
@@ -146,12 +146,12 @@ impl Block {
 
 /// _AST_ block item.
 #[derive(Debug)]
-pub enum BlockItem {
-    Stmt(Statement),
-    Decl(Declaration),
+pub enum BlockItem<'a> {
+    Stmt(Statement<'a>),
+    Decl(Declaration<'a>),
 }
 
-impl BlockItem {
+impl BlockItem<'_> {
     fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let pad = "  ".repeat(indent);
 
@@ -166,95 +166,95 @@ impl BlockItem {
 
 /// _AST_ `for` statement initial clause.
 #[derive(Debug)]
-pub enum ForInit {
-    Decl(Declaration),
-    Expr(Option<Expression>),
+pub enum ForInit<'a> {
+    Decl(Declaration<'a>),
+    Expr(Option<Expression<'a>>),
 }
 
 /// _AST_ labeled statement.
 #[derive(Debug)]
-pub enum Labeled {
+pub enum Labeled<'a> {
     Label {
         label: String,
-        stmt: Box<Statement>,
+        stmt: Box<Statement<'a>>,
         /// `label` identifier token.
-        token: Token,
+        token: Token<'a>,
     },
     Case {
-        expr: Expression,
-        stmt: Box<Statement>,
+        expr: Expression<'a>,
+        stmt: Box<Statement<'a>>,
         /// `case` keyword token.
-        token: Token,
+        token: Token<'a>,
         jmp_label: String,
     },
     Default {
-        stmt: Box<Statement>,
+        stmt: Box<Statement<'a>>,
         /// `default` keyword token.
-        token: Token,
+        token: Token<'a>,
         jmp_label: String,
     },
 }
 
 /// _AST_ case label/expression.
 #[derive(Debug)]
-pub struct SwitchCase {
+pub struct SwitchCase<'a> {
     pub jmp_label: String,
-    pub expr: Expression,
+    pub expr: Expression<'a>,
 }
 
 /// _AST_ statement.
 #[derive(Debug)]
-pub enum Statement {
-    Return(Expression),
-    Expression(Expression),
+pub enum Statement<'a> {
+    Return(Expression<'a>),
+    Expression(Expression<'a>),
     If {
         /// Controlling expression.
-        cond: Expression,
+        cond: Expression<'a>,
         /// Executes when the result of `cond` is non-zero.
-        then: Box<Statement>,
+        then: Box<Statement<'a>>,
         /// Optional statement to execute when result of `cond` is zero.
-        opt_else: Option<Box<Statement>>,
+        opt_else: Option<Box<Statement<'a>>>,
     },
     Goto {
         target: String,
         /// `goto` keyword token.
-        token: Token,
+        token: Token<'a>,
     },
-    LabeledStatement(Labeled),
-    Compound(Block),
+    LabeledStatement(Labeled<'a>),
+    Compound(Block<'a>),
     Break {
         jmp_label: String,
         /// `break` keyword token.
-        token: Token,
+        token: Token<'a>,
     },
     Continue {
         jmp_label: String,
         /// `continue` keyword token.
-        token: Token,
+        token: Token<'a>,
     },
     While {
-        cond: Expression,
-        stmt: Box<Statement>,
+        cond: Expression<'a>,
+        stmt: Box<Statement<'a>>,
         loop_label: String,
     },
     Do {
-        stmt: Box<Statement>,
-        cond: Expression,
+        stmt: Box<Statement<'a>>,
+        cond: Expression<'a>,
         loop_label: String,
     },
     For {
-        init: Box<ForInit>,
-        opt_cond: Option<Expression>,
-        opt_post: Option<Expression>,
-        stmt: Box<Statement>,
+        init: Box<ForInit<'a>>,
+        opt_cond: Option<Expression<'a>>,
+        opt_post: Option<Expression<'a>>,
+        stmt: Box<Statement<'a>>,
         loop_label: String,
     },
     Switch {
         /// Controlling expression.
-        cond: Expression,
-        stmt: Box<Statement>,
+        cond: Expression<'a>,
+        stmt: Box<Statement<'a>>,
         /// Result of `cond` used to determine which switch case to execute at.
-        cases: Vec<SwitchCase>,
+        cases: Vec<SwitchCase<'a>>,
         /// `default` jmp label.
         default: Option<String>,
         switch_label: String,
@@ -263,7 +263,7 @@ pub enum Statement {
     Empty,
 }
 
-impl Statement {
+impl Statement<'_> {
     fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let pad = "  ".repeat(indent);
 
@@ -390,18 +390,18 @@ impl Statement {
 
 /// _AST_ expression.
 #[derive(Debug, Clone)]
-pub enum Expression {
+pub enum Expression<'a> {
     /// Integer constant (32-bit signed).
     IntConstant(i32),
     Var {
         ident: String,
         /// Identifier token.
-        token: Token,
+        token: Token<'a>,
     },
     /// Unary operator applied to an expression.
     Unary {
         op: UnaryOperator,
-        expr: Box<Expression>,
+        expr: Box<Expression<'a>>,
         // NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
         prefix: bool,
@@ -409,34 +409,34 @@ pub enum Expression {
     /// Binary operator applied to two expressions.
     Binary {
         op: BinaryOperator,
-        lhs: Box<Expression>,
-        rhs: Box<Expression>,
+        lhs: Box<Expression<'a>>,
+        rhs: Box<Expression<'a>>,
         // NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
     },
     /// Assigns an `rvalue` to an `lvalue`.
     Assignment {
-        lvalue: Box<Expression>,
-        rvalue: Box<Expression>,
+        lvalue: Box<Expression<'a>>,
+        rvalue: Box<Expression<'a>>,
         /// Assignment operator token.
-        token: Token,
+        token: Token<'a>,
     },
     /// Ternary expression which evaluates the condition and returns the result
     /// of the `second` if true, otherwise `third`.
     Conditional {
-        cond: Box<Expression>,
-        second: Box<Expression>,
-        third: Box<Expression>,
+        cond: Box<Expression<'a>>,
+        second: Box<Expression<'a>>,
+        third: Box<Expression<'a>>,
     },
     FuncCall {
         ident: String,
-        args: Vec<Expression>,
+        args: Vec<Expression<'a>>,
         /// Identifier token.
-        token: Token,
+        token: Token<'a>,
     },
 }
 
-impl fmt::Display for Expression {
+impl fmt::Display for Expression<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expression::IntConstant(i) => write!(f, "Int({i})"),
@@ -670,10 +670,10 @@ pub enum Signedness {
 ///
 /// Returns an error if an invalid token is encountered or if the tokens cannot
 /// form a valid _AST_.
-pub fn parse_ast<I: Iterator<Item = Result<Token>>>(
+pub fn parse_ast<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     mut iter: std::iter::Peekable<I>,
-) -> Result<AST<Analyzed>> {
+) -> Result<AST<'a, Analyzed>> {
     let ast = parse_program(ctx, &mut iter)?;
 
     // Pass 1 - Identifier resolution.
@@ -697,10 +697,10 @@ pub fn parse_ast<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if a program could not be parsed.
-pub fn parse_program<I: Iterator<Item = Result<Token>>>(
+pub fn parse_program<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<AST<Parsed>> {
+) -> Result<AST<'a, Parsed>> {
     let mut funcs = vec![];
 
     while iter.peek().is_some() {
@@ -719,11 +719,11 @@ pub fn parse_program<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if a function could not be parsed.
-fn parse_function<I: Iterator<Item = Result<Token>>>(
+fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-    parsed_header: Option<(&'static str, String, Token)>,
-) -> Result<Function> {
+    parsed_header: Option<(&'static str, String, Token<'a>)>,
+) -> Result<Function<'a>> {
     let (ident, token) = if let Some(parsed_header) = parsed_header {
         // NOTE: Only allow `int` return type for now.
         debug_assert!(parsed_header.0 == "int");
@@ -766,10 +766,10 @@ fn parse_function<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if a parameter list could not be parsed.
-fn parse_params<I: Iterator<Item = Result<Token>>>(
+fn parse_params<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Vec<Param>> {
+) -> Result<Vec<Param<'a>>> {
     let mut params = vec![];
 
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
@@ -833,10 +833,10 @@ fn parse_params<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if a declaration could not be parsed.
-fn parse_declaration<I: Iterator<Item = Result<Token>>>(
+fn parse_declaration<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Declaration> {
+) -> Result<Declaration<'a>> {
     expect_token(ctx, iter, TokenType::Keyword(Reserved::Int))?;
 
     let (ident, token) = parse_ident(ctx, iter)?;
@@ -871,10 +871,10 @@ fn parse_declaration<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if a block could not be parsed.
-fn parse_block<I: Iterator<Item = Result<Token>>>(
+fn parse_block<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Block> {
+) -> Result<Block<'a>> {
     expect_token(ctx, iter, TokenType::LBrace)?;
 
     let mut block = vec![];
@@ -898,10 +898,10 @@ fn parse_block<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if a block item could not be parsed.
-fn parse_block_item<I: Iterator<Item = Result<Token>>>(
+fn parse_block_item<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<BlockItem> {
+) -> Result<BlockItem<'a>> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
             // Parse this as a declaration (starts with a type).
@@ -920,10 +920,10 @@ fn parse_block_item<I: Iterator<Item = Result<Token>>>(
 ///
 /// Returns an error if a `for` statement initial clause could
 /// not be parsed.
-fn parse_for_init<I: Iterator<Item = Result<Token>>>(
+fn parse_for_init<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<ForInit> {
+) -> Result<ForInit<'a>> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         // Parse this as a declaration (starts with a type).
         if let TokenType::Keyword(Reserved::Int) = token.ty {
@@ -966,10 +966,10 @@ fn parse_for_init<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if a statement could not be parsed.
-fn parse_statement<I: Iterator<Item = Result<Token>>>(
+fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Statement> {
+) -> Result<Statement<'a>> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
             TokenType::Keyword(Reserved::Return) => {
@@ -1262,15 +1262,15 @@ fn parse_statement<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if an identifier could not be parsed.
-fn parse_ident<I: Iterator<Item = Result<Token>>>(
+fn parse_ident<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<(String, Token)> {
+) -> Result<(String, Token<'a>)> {
     if let Some(token) = iter.next() {
         let token = token?;
 
         match token.ty {
-            TokenType::Ident(ref s) => Ok((s.clone(), token)),
+            TokenType::Ident(s) => Ok((s.to_string(), token)),
             tok => {
                 let tok_str = format!("{tok:?}");
                 let line_content = ctx.src_slice(token.loc.line_span);
@@ -1297,11 +1297,11 @@ fn parse_ident<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if an expression could not be parsed.
-fn parse_expression<I: Iterator<Item = Result<Token>>>(
+fn parse_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
     min_precedence: u8,
-) -> Result<Expression> {
+) -> Result<Expression<'a>> {
     let mut lhs = parse_factor(ctx, iter)?;
     let mut next = iter.peek().map(Result::as_ref).transpose()?;
 
@@ -1419,11 +1419,11 @@ fn parse_expression<I: Iterator<Item = Result<Token>>>(
 ///
 /// Returns an error if an optional expression could not be
 /// parsed.
-fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
+fn parse_opt_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-    end_token: TokenType,
-) -> Result<Option<Expression>> {
+    end_token: TokenType<'_>,
+) -> Result<Option<Expression<'a>>> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         if token.ty == end_token {
             // Not consuming the `end_token`.
@@ -1445,10 +1445,10 @@ fn parse_opt_expression<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if a factor could not be parsed.
-fn parse_factor<I: Iterator<Item = Result<Token>>>(
+fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Expression> {
+) -> Result<Expression<'a>> {
     if let Some(token) = iter.next() {
         let token = token?;
 
@@ -1480,7 +1480,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                     Ok(Expression::IntConstant(v))
                 }
             }
-            TokenType::Ident(ref s) => {
+            TokenType::Ident(s) => {
                 if let Some(tok) = iter.peek().map(Result::as_ref).transpose()? {
                     match &tok.ty {
                         TokenType::Operator(OperatorKind::Increment | OperatorKind::Decrement) => {
@@ -1494,7 +1494,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                             return Ok(Expression::Unary {
                                 op: unop,
                                 expr: Box::new(Expression::Var {
-                                    ident: s.clone(),
+                                    ident: s.to_string(),
                                     token,
                                 }),
                                 // NOTE: Temporary hack for arithmetic right shift.
@@ -1511,7 +1511,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                             expect_token(ctx, iter, TokenType::RParen)?;
 
                             return Ok(Expression::FuncCall {
-                                ident: s.clone(),
+                                ident: s.to_string(),
                                 args,
                                 token,
                             });
@@ -1521,7 +1521,7 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
                 }
 
                 Ok(Expression::Var {
-                    ident: s.clone(),
+                    ident: s.to_string(),
                     token,
                 })
             }
@@ -1660,10 +1660,10 @@ fn parse_factor<I: Iterator<Item = Result<Token>>>(
 /// # Errors
 ///
 /// Returns an error if an argument list could not be parsed.
-fn parse_args<I: Iterator<Item = Result<Token>>>(
+fn parse_args<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-) -> Result<Vec<Expression>> {
+) -> Result<Vec<Expression<'a>>> {
     let mut args = vec![];
 
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
@@ -1700,10 +1700,10 @@ fn parse_args<I: Iterator<Item = Result<Token>>>(
 ///
 /// Returns an error if the next token does not match the expected token type
 /// provided.
-fn expect_token<I: Iterator<Item = Result<Token>>>(
+fn expect_token<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-    expected: TokenType,
+    expected: TokenType<'_>,
 ) -> Result<()> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         if token.ty == expected {
@@ -1735,7 +1735,7 @@ fn expect_token<I: Iterator<Item = Result<Token>>>(
 
 /// Returns the conversion of `TokenType` to `UnaryOperator`, or `None` if the
 /// token type is not a unary operator.
-fn ty_to_unop(ty: &TokenType) -> Option<UnaryOperator> {
+fn ty_to_unop(ty: &TokenType<'_>) -> Option<UnaryOperator> {
     match ty {
         TokenType::Operator(OperatorKind::BitNot) => Some(UnaryOperator::Complement),
         TokenType::Operator(OperatorKind::Minus) => Some(UnaryOperator::Negate),
@@ -1748,7 +1748,7 @@ fn ty_to_unop(ty: &TokenType) -> Option<UnaryOperator> {
 
 /// Returns the conversion of `TokenType` to `BinaryOperator`, or `None` if the
 /// token type is not a binary operator.
-fn ty_to_binop(ty: &TokenType) -> Option<BinaryOperator> {
+fn ty_to_binop(ty: &TokenType<'_>) -> Option<BinaryOperator> {
     match ty {
         TokenType::Operator(OperatorKind::Plus) => Some(BinaryOperator::Add),
         TokenType::Operator(OperatorKind::Minus) => Some(BinaryOperator::Subtract),

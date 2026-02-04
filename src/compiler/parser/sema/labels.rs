@@ -14,19 +14,19 @@ use crate::{Context, Result, fmt_token_err};
 /// functions, types, etc.) within the same function scope, so they are
 /// collected separately.
 #[derive(Default)]
-struct LabelResolver {
+struct LabelResolver<'a> {
     /// `key` = label
     ///
     /// `value` = canonical identifier
     labels: HashMap<String, String>,
     /// Collected label/token pairs for every `goto` statement within a function
     /// scope.
-    pending_gotos: Vec<(String, Token)>,
+    pending_gotos: Vec<(String, Token<'a>)>,
     /// Current function identifier for canonical identifier generation.
     fn_ident: String,
 }
 
-impl LabelResolver {
+impl<'a> LabelResolver<'a> {
     /// Returns a new label using the provided suffix.
     #[inline]
     fn new_label(&self, suffix: &str) -> String {
@@ -53,7 +53,7 @@ impl LabelResolver {
     /// Records a `goto` statement's contents so they can be validated after
     /// processing labels.
     #[inline]
-    fn mark_goto(&mut self, pair: (&str, &Token)) {
+    fn mark_goto(&mut self, pair: (&str, &Token<'a>)) {
         self.pending_gotos
             .push((pair.0.to_string(), pair.1.clone()));
     }
@@ -65,7 +65,7 @@ impl LabelResolver {
     ///
     /// Returns an error if a `goto` target was not found in
     /// the current function scope.
-    fn check_gotos(&mut self) -> core::result::Result<(), (String, Token)> {
+    fn check_gotos(&mut self) -> core::result::Result<(), (String, Token<'_>)> {
         for (label, token) in self.pending_gotos.drain(..) {
             if !self.labels.contains_key(&label) {
                 return Err((label, token));
@@ -91,8 +91,15 @@ impl LabelResolver {
 ///
 /// Returns an error if a duplicate label is found or an
 /// undefined label is used within a function scope.
-pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<LabelPhase>> {
-    fn resolve_block(block: &Block, ctx: &Context<'_>, resolver: &mut LabelResolver) -> Result<()> {
+pub fn resolve_labels<'a>(
+    mut ast: AST<'a, TypePhase>,
+    ctx: &Context<'_>,
+) -> Result<AST<'a, LabelPhase>> {
+    fn resolve_block<'a>(
+        block: &Block<'a>,
+        ctx: &Context<'_>,
+        resolver: &mut LabelResolver<'a>,
+    ) -> Result<()> {
         for block_item in &block.0 {
             if let BlockItem::Stmt(stmt) = block_item {
                 resolve_statement_labels(stmt, ctx, resolver)?;
@@ -102,10 +109,10 @@ pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<
         Ok(())
     }
 
-    fn resolve_statement_labels(
-        stmt: &Statement,
+    fn resolve_statement_labels<'a>(
+        stmt: &Statement<'a>,
         ctx: &Context<'_>,
-        resolver: &mut LabelResolver,
+        resolver: &mut LabelResolver<'a>,
     ) -> Result<()> {
         match stmt {
             Statement::If { then, opt_else, .. } => {
@@ -197,8 +204,8 @@ pub fn resolve_labels(mut ast: AST<TypePhase>, ctx: &Context<'_>) -> Result<AST<
 
 /// Updates original labels/`goto` target identifiers with their canonical
 /// identifier.
-fn update_labels(body: &mut Block, resolver: &LabelResolver) {
-    fn resolve_block(block: &mut Block, resolver: &LabelResolver) {
+fn update_labels(body: &mut Block<'_>, resolver: &LabelResolver<'_>) {
+    fn resolve_block(block: &mut Block<'_>, resolver: &LabelResolver<'_>) {
         for block_item in &mut block.0 {
             if let BlockItem::Stmt(stmt) = block_item {
                 resolve_statement_labels(stmt, resolver);
@@ -206,7 +213,7 @@ fn update_labels(body: &mut Block, resolver: &LabelResolver) {
         }
     }
 
-    fn resolve_statement_labels(stmt: &mut Statement, resolver: &LabelResolver) {
+    fn resolve_statement_labels(stmt: &mut Statement<'_>, resolver: &LabelResolver<'_>) {
         match stmt {
             Statement::If { then, opt_else, .. } => {
                 resolve_statement_labels(then, resolver);

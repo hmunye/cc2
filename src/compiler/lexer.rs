@@ -236,11 +236,11 @@ impl fmt::Debug for OperatorKind {
 
 /// Lexical elements that can be emitted.
 #[derive(Clone, PartialEq, Eq)]
-pub enum TokenType {
+pub enum TokenType<'a> {
     /// Reserved word (e.g., `if`, `return`).
     Keyword(Reserved),
     /// User-defined identifier.
-    Ident(String),
+    Ident(&'a str),
     /// Integer constant (32-bit signed).
     IntConstant(i32),
     /// Operator token.
@@ -263,7 +263,7 @@ pub enum TokenType {
     Semicolon,
 }
 
-impl fmt::Display for TokenType {
+impl fmt::Display for TokenType<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TokenType::Keyword(kw) => fmt::Display::fmt(kw, f),
@@ -282,7 +282,7 @@ impl fmt::Display for TokenType {
     }
 }
 
-impl fmt::Debug for TokenType {
+impl fmt::Debug for TokenType<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TokenType::Keyword(kw) => fmt::Debug::fmt(kw, f),
@@ -319,18 +319,18 @@ impl fmt::Display for Location {
 
 /// Minimal lexical token that can be emitted.
 #[derive(Clone)]
-pub struct Token {
+pub struct Token<'a> {
     pub loc: Location,
-    pub ty: TokenType,
+    pub ty: TokenType<'a>,
 }
 
-impl fmt::Display for Token {
+impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}\t\t{}", self.loc, self.ty)
     }
 }
 
-impl fmt::Debug for Token {
+impl fmt::Debug for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.ty)
     }
@@ -366,7 +366,7 @@ impl<'a> Lexer<'a> {
 
     /// Skips over an identifier or keyword (_ASCII_ uppercase/lowercase letter
     /// or `_`), returning a `Token`.
-    fn consume_ident(&mut self) -> Token {
+    fn consume_ident(&mut self) -> Token<'a> {
         let col = self.col();
         let token_start = self.cur;
 
@@ -383,7 +383,7 @@ impl<'a> Lexer<'a> {
             }
         } else {
             Token {
-                ty: TokenType::Ident(token.into()),
+                ty: TokenType::Ident(token),
                 loc: self.token_loc(col),
             }
         }
@@ -395,7 +395,7 @@ impl<'a> Lexer<'a> {
     ///
     /// Returns an error if the constant contains an illegal suffix or cannot be
     /// parsed.
-    fn consume_constant(&mut self) -> Result<Token> {
+    fn consume_constant(&mut self) -> Result<Token<'a>> {
         let col = self.col();
         let token_start = self.cur;
 
@@ -431,22 +431,20 @@ impl<'a> Lexer<'a> {
 
         let token = self.ctx.src_slice(token_start..self.cur);
 
-        let Ok(integer) = token.parse::<i32>() else {
-            let line_content = self.ctx.src_slice(self.bol..self.line_end);
-
+        let Ok(int) = token.parse::<i32>() else {
             return Err(fmt_token_err!(
                 self.ctx.in_path.display(),
                 self.line,
                 col,
                 token,
                 token.len() - 1,
-                line_content,
+                self.ctx.src_slice(self.bol..self.line_end),
                 "integer constant is too large for its type (32-bit signed)"
             ));
         };
 
         Ok(Token {
-            ty: TokenType::IntConstant(integer),
+            ty: TokenType::IntConstant(int),
             loc: self.token_loc(col),
         })
     }
@@ -555,8 +553,8 @@ impl<'a> Lexer<'a> {
     }
 }
 
-impl Iterator for Lexer<'_> {
-    type Item = Result<Token>;
+impl<'a> Iterator for Lexer<'a> {
+    type Item = Result<Token<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.has_next() {

@@ -267,7 +267,7 @@ impl<'a> TACBuilder<'a> {
 /// Generate intermediate representation (_IR_), given an abstract syntax tree
 /// (_AST_).
 #[must_use]
-pub fn generate_ir(ast: &ast::AST<Analyzed>) -> IR {
+pub fn generate_ir(ast: &ast::AST<'_, Analyzed>) -> IR {
     let mut ir_funcs = vec![];
 
     let mut builder = TACBuilder {
@@ -288,8 +288,8 @@ pub fn generate_ir(ast: &ast::AST<Analyzed>) -> IR {
 }
 
 /// Generate an _IR_ function definition from the provided _AST_ function.
-fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> Function {
-    fn process_ast_block(block: &ast::Block, builder: &mut TACBuilder<'_>) {
+fn generate_ir_function(func: &ast::Function<'_>, builder: &mut TACBuilder<'_>) -> Function {
+    fn process_ast_block(block: &ast::Block<'_>, builder: &mut TACBuilder<'_>) {
         for block_item in &block.0 {
             match block_item {
                 ast::BlockItem::Stmt(stmt) => process_ast_statement(stmt, builder),
@@ -298,7 +298,7 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
         }
     }
 
-    fn process_ast_declaration(decl: &ast::Declaration, builder: &mut TACBuilder<'_>) {
+    fn process_ast_declaration(decl: &ast::Declaration<'_>, builder: &mut TACBuilder<'_>) {
         if let ast::Declaration::Var { ident, init, .. } = decl
             && let Some(init) = &init
         {
@@ -315,7 +315,7 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
         }
     }
 
-    fn process_ast_statement(stmt: &ast::Statement, builder: &mut TACBuilder<'_>) {
+    fn process_ast_statement(stmt: &ast::Statement<'_>, builder: &mut TACBuilder<'_>) {
         match stmt {
             ast::Statement::Return(expr) => {
                 let ir_val = generate_ir_value(expr, builder);
@@ -613,7 +613,7 @@ fn generate_ir_function(func: &ast::Function, builder: &mut TACBuilder<'_>) -> F
 }
 
 /// Generate an _IR_ value from the provided _AST_ expression.
-fn generate_ir_value(expr: &ast::Expression, builder: &mut TACBuilder<'_>) -> Value {
+fn generate_ir_value(expr: &ast::Expression<'_>, builder: &mut TACBuilder<'_>) -> Value {
     match expr {
         ast::Expression::IntConstant(v) => Value::IntConstant(*v),
         ast::Expression::Var { ident, .. } => Value::Var(ident.clone()),

@@ -17,9 +17,12 @@ pub type TypeMap<'a> = HashMap<&'a str, Type>;
 ///
 /// This function returns an error if an identifier is undeclared, used with the
 /// wrong type, or called as a function incorrectly.
-pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<TypePhase>> {
+pub fn resolve_types<'a>(
+    ast: AST<'a, IdentPhase>,
+    ctx: &Context<'_>,
+) -> Result<AST<'a, TypePhase>> {
     fn type_check_function<'a>(
-        func: &'a Function,
+        func: &'a Function<'_>,
         ctx: &Context<'_>,
         type_map: &mut TypeMap<'a>,
     ) -> Result<()> {
@@ -70,7 +73,7 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
     }
 
     fn type_check_block<'a>(
-        block: &'a Block,
+        block: &'a Block<'_>,
         ctx: &Context<'_>,
         type_map: &mut TypeMap<'a>,
     ) -> Result<()> {
@@ -85,7 +88,7 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
     }
 
     fn type_check_statement<'a>(
-        stmt: &'a Statement,
+        stmt: &'a Statement<'_>,
         ctx: &Context<'_>,
         type_map: &mut TypeMap<'a>,
     ) -> Result<()> {
@@ -161,7 +164,7 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
     }
 
     fn type_check_declaration<'a>(
-        decl: &'a Declaration,
+        decl: &'a Declaration<'_>,
         ctx: &Context<'_>,
         type_map: &mut TypeMap<'a>,
     ) -> Result<()> {
@@ -174,7 +177,7 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
     }
 
     fn type_check_variable<'a>(
-        var: (&'a str, &'a Option<Expression>),
+        var: (&'a str, &'a Option<Expression<'_>>),
         ctx: &Context<'_>,
         type_map: &mut TypeMap<'a>,
     ) -> Result<()> {
@@ -188,7 +191,7 @@ pub fn resolve_types(ast: AST<IdentPhase>, ctx: &Context<'_>) -> Result<AST<Type
     }
 
     fn type_check_expression<'a>(
-        expr: &'a Expression,
+        expr: &'a Expression<'_>,
         ctx: &Context<'_>,
         type_map: &mut TypeMap<'a>,
     ) -> Result<()> {
