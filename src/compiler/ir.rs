@@ -273,10 +273,15 @@ pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>) -> IR<'a> {
         label: "",
     };
 
-    for func in &ast.program {
-        if func.body.is_some() {
-            builder.reset(&func.ident);
-            ir_funcs.push(generate_ir_function(func, &mut builder));
+    for decl in &ast.program {
+        match decl {
+            ast::Declaration::Var { .. } => todo!(),
+            ast::Declaration::Func(func) => {
+                if func.body.is_some() {
+                    builder.reset(&func.ident);
+                    ir_funcs.push(generate_ir_function(func, &mut builder));
+                }
+            }
         }
     }
 

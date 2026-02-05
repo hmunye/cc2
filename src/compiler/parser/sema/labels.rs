@@ -3,7 +3,7 @@ use std::collections::hash_map::Entry;
 
 use crate::compiler::lexer::Token;
 use crate::compiler::parser::ast::{
-    AST, Block, BlockItem, LabelPhase, Labeled, Statement, TypePhase,
+    AST, Block, BlockItem, Declaration, LabelPhase, Labeled, Statement, TypePhase,
 };
 use crate::{Context, Result, fmt_token_err};
 
@@ -160,8 +160,10 @@ pub fn resolve_labels<'a>(
     // functions, types, etc.) within the same function scope.
     let mut lbl_resolver = LabelResolver::default();
 
-    for func in &mut ast.program {
-        if let Some(body) = &mut func.body {
+    for decl in &mut ast.program {
+        if let Declaration::Func(func) = decl
+            && let Some(body) = &mut func.body
+        {
             lbl_resolver.reset(&func.ident);
 
             // Collect and validate all labels within the function in the first

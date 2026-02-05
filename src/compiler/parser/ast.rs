@@ -41,19 +41,43 @@ pub struct Analyzed;
 /// Abstract Syntax Tree (_AST_).
 #[derive(Debug)]
 pub struct AST<'a, P> {
-    pub program: Vec<Function<'a>>,
+    pub program: Vec<Declaration<'a>>,
     pub _phase: std::marker::PhantomData<P>,
 }
 
 impl<P> fmt::Display for AST<'_, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "AST Program")?;
-        for func in &self.program {
-            func.fmt_with_indent(f, 2)?;
+        for decl in &self.program {
+            decl.fmt_with_indent(f, 2)?;
         }
 
         Ok(())
     }
+}
+
+/// _AST_ declaration specifiers.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DeclSpecs {
+    ty: Type,
+    storage: Option<StorageClass>,
+}
+
+impl fmt::Display for DeclSpecs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(storage) = self.storage {
+            write!(f, "{:?} {:?}", storage, self.ty)
+        } else {
+            write!(f, "{:?}", self.ty)
+        }
+    }
+}
+
+/// _AST_ storage-class specifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageClass {
+    Static,
+    Extern,
 }
 
 /// _AST_ type specifier.
@@ -67,6 +91,7 @@ pub enum Type {
 #[derive(Debug)]
 pub enum Declaration<'a> {
     Var {
+        specs: DeclSpecs,
         ident: String,
         init: Option<Expression<'a>>,
         /// Identifier token.
@@ -75,12 +100,33 @@ pub enum Declaration<'a> {
     Func(Function<'a>),
 }
 
+impl Declaration<'_> {
+    fn fmt_with_indent(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        let pad = "  ".repeat(indent);
+
+        match self {
+            decl @ Declaration::Var { .. } => writeln!(f, "{pad}{decl}"),
+            Declaration::Func(func) => func.fmt_with_indent(f, indent),
+        }
+    }
+}
+
 impl fmt::Display for Declaration<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Declaration::Var { ident, init, .. } => match init {
-                Some(expr) => write!(f, "{ident:?} = {expr}"),
-                None => write!(f, "{ident:?} = uninit"),
+            Declaration::Var {
+                specs, ident, init, ..
+            } => match init {
+                Some(expr) => write!(f, "{specs} {ident:?} = {expr}"),
+                None => write!(
+                    f,
+                    "{specs} {ident:?}{}",
+                    if specs.storage == Some(StorageClass::Extern) {
+                        ""
+                    } else {
+                        " = <uninit>"
+                    }
+                ),
             },
             Declaration::Func(func) => func.fmt_with_indent(f, 0),
         }
@@ -99,6 +145,7 @@ pub struct Param<'a> {
 /// _AST_ function declaration/definition.
 #[derive(Debug)]
 pub struct Function<'a> {
+    pub specs: DeclSpecs,
     pub ident: String,
     pub params: Vec<Param<'a>>,
     pub body: Option<Block<'a>>,
@@ -116,7 +163,7 @@ impl Function<'_> {
             .collect::<Vec<_>>()
             .join(", ");
 
-        writeln!(f, "{}Fn {:?}({})", pad, self.ident, params)?;
+        writeln!(f, "\n{}{} Fn {:?}({})", pad, self.specs, self.ident, params)?;
 
         if let Some(body) = &self.body {
             body.fmt_with_indent(f, indent + 2)?;
@@ -140,7 +187,7 @@ impl Block<'_> {
             item.fmt_with_indent(f, indent + 2)?;
         }
 
-        writeln!(f, "{pad}}}")
+        writeln!(f, "{pad}}}\n")
     }
 }
 
@@ -158,7 +205,7 @@ impl BlockItem<'_> {
         match self {
             BlockItem::Stmt(stmt) => stmt.fmt_with_indent(f, indent),
             BlockItem::Decl(decl) => {
-                writeln!(f, "{pad}Decl: {decl}")
+                writeln!(f, "{pad}{decl}")
             }
         }
     }
@@ -272,7 +319,7 @@ impl Statement<'_> {
                 writeln!(f, "{pad}Return {expr}")
             }
             Statement::Expression(expr) => {
-                writeln!(f, "{pad}Expr: {expr}")
+                writeln!(f, "{pad}{expr}")
             }
             Statement::If {
                 cond,
@@ -697,15 +744,152 @@ pub fn parse_program<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
 ) -> Result<AST<'a, Parsed>> {
-    let mut funcs = vec![];
+    let mut decls = vec![];
 
     while iter.peek().is_some() {
-        funcs.push(parse_function(ctx, iter, None)?);
+        decls.push(parse_declaration(ctx, iter)?);
     }
 
     Ok(AST {
-        program: funcs,
+        program: decls,
         _phase: std::marker::PhantomData,
+    })
+}
+
+/// Parse an _AST_ declaration from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form a valid declaration.
+fn parse_declaration<'a, I: Iterator<Item = Result<Token<'a>>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Declaration<'a>> {
+    let specs = parse_declaration_specs(ctx, iter)?;
+
+    let (ident, token) = parse_ident(ctx, iter)?;
+
+    let mut init = None;
+
+    if let Some(tok) = iter.peek().map(Result::as_ref).transpose()? {
+        match &tok.ty {
+            // Function declaration/definition.
+            TokenType::LParen => {
+                let func = parse_function(ctx, iter, Some((specs, ident, token)))?;
+                return Ok(Declaration::Func(func));
+            }
+            // Variable declaration with initializer.
+            TokenType::Operator(OperatorKind::Assign) => {
+                // Consume the "=" token.
+                let _ = iter.next();
+                init = Some(parse_expression(ctx, iter, 0)?);
+            }
+            // Variable declaration with no initializer.
+            _ => {}
+        }
+    }
+
+    expect_token(ctx, iter, TokenType::Semicolon)?;
+
+    Ok(Declaration::Var {
+        specs,
+        ident,
+        token,
+        init,
+    })
+}
+
+/// Parse _AST_ declaration specifiers from the provided `Token` iterator.
+///
+/// # Errors
+///
+/// Returns an error if an invalid token is encountered or if the tokens cannot
+/// form valid declaration specifiers.
+fn parse_declaration_specs<'a, I: Iterator<Item = Result<Token<'a>>>>(
+    ctx: &Context<'_>,
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<DeclSpecs> {
+    let mut decl_ty = None;
+    let mut storage = None;
+
+    while let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+        match token.ty {
+            TokenType::Keyword(Reserved::Int) => {
+                if decl_ty.is_some() {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "two or more data types in declaration specifiers"
+                    ));
+                }
+
+                decl_ty = Some(Type::Int);
+
+                // Consume the "int" token.
+                let _ = iter.next();
+            }
+            TokenType::Keyword(Reserved::Static | Reserved::Extern) => {
+                if storage.is_some() {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "multiple storage classes in declaration specifiers"
+                    ));
+                }
+
+                if token.ty == TokenType::Keyword(Reserved::Static) {
+                    storage = Some(StorageClass::Static);
+                } else {
+                    storage = Some(StorageClass::Extern);
+                }
+
+                // Consume the storage-class token.
+                let _ = iter.next();
+            }
+            _ => break,
+        }
+    }
+
+    let Some(decl_ty) = decl_ty else {
+        if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
+            let tok_str = format!("{token:?}");
+            let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+            return Err(fmt_token_err!(
+                token.loc.file_path.display(),
+                token.loc.line,
+                token.loc.col,
+                tok_str,
+                tok_str.len() - 1,
+                line_content,
+                "missing type specifier in declaration"
+            ));
+        } else {
+            return Err(fmt_err!(
+                ctx.program,
+                "expected '<decl_specs>' at end of input"
+            ));
+        }
+    };
+
+    Ok(DeclSpecs {
+        ty: decl_ty,
+        storage,
     })
 }
 
@@ -719,14 +903,15 @@ pub fn parse_program<'a, I: Iterator<Item = Result<Token<'a>>>>(
 fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     iter: &mut std::iter::Peekable<I>,
-    opt_sig: Option<(Type, String, Token<'a>)>,
+    opt_sig: Option<(DeclSpecs, String, Token<'a>)>,
 ) -> Result<Function<'a>> {
-    let (ident, token) = if let Some(sig) = opt_sig {
-        debug_assert!(sig.0 == Type::Int);
-        (sig.1, sig.2)
+    let (specs, ident, token) = if let Some(sig) = opt_sig {
+        sig
     } else {
-        expect_token(ctx, iter, TokenType::Keyword(Reserved::Int))?;
-        parse_ident(ctx, iter)?
+        let specs = parse_declaration_specs(ctx, iter)?;
+        let (ident, token) = parse_ident(ctx, iter)?;
+
+        (specs, ident, token)
     };
 
     expect_token(ctx, iter, TokenType::LParen)?;
@@ -741,6 +926,7 @@ fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
         // Function declaration.
         return Ok(Function {
+            specs,
             ident,
             params,
             body: None,
@@ -752,6 +938,7 @@ fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
     // Function definition.
     Ok(Function {
+        specs,
         ident,
         params,
         body: Some(body),
@@ -827,45 +1014,6 @@ fn parse_params<'a, I: Iterator<Item = Result<Token<'a>>>>(
     }
 }
 
-/// Parse an _AST_ declaration from the provided `Token` iterator.
-///
-/// # Errors
-///
-/// Returns an error if an invalid token is encountered or if the tokens cannot
-/// form a valid declaration.
-fn parse_declaration<'a, I: Iterator<Item = Result<Token<'a>>>>(
-    ctx: &Context<'_>,
-    iter: &mut std::iter::Peekable<I>,
-) -> Result<Declaration<'a>> {
-    expect_token(ctx, iter, TokenType::Keyword(Reserved::Int))?;
-
-    let (ident, token) = parse_ident(ctx, iter)?;
-
-    let mut init = None;
-
-    if let Some(tok) = iter.peek().map(Result::as_ref).transpose()? {
-        match &tok.ty {
-            // Function declaration/definition.
-            TokenType::LParen => {
-                let func = parse_function(ctx, iter, Some((Type::Int, ident, token)))?;
-                return Ok(Declaration::Func(func));
-            }
-            // Variable declaration with initializer.
-            TokenType::Operator(OperatorKind::Assign) => {
-                // Consume the "=" token.
-                let _ = iter.next();
-                init = Some(parse_expression(ctx, iter, 0)?);
-            }
-            // Variable declaration with no initializer.
-            _ => {}
-        }
-    }
-
-    expect_token(ctx, iter, TokenType::Semicolon)?;
-
-    Ok(Declaration::Var { ident, token, init })
-}
-
 /// Parse an _AST_ block from the provided `Token` iterator.
 ///
 /// # Errors
@@ -905,8 +1053,11 @@ fn parse_block_item<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ) -> Result<BlockItem<'a>> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
         match token.ty {
-            // Parse this as a declaration (starts with a type).
-            TokenType::Keyword(Reserved::Int) => Ok(BlockItem::Decl(parse_declaration(ctx, iter)?)),
+            // Parse this as a declaration (starts with a type/storage-class
+            // specifier).
+            TokenType::Keyword(Reserved::Int | Reserved::Static | Reserved::Extern) => {
+                Ok(BlockItem::Decl(parse_declaration(ctx, iter)?))
+            }
             // Parse this as a statement.
             _ => Ok(BlockItem::Stmt(parse_statement(ctx, iter)?)),
         }

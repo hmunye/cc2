@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::parser::ast::{
-    AST, Analyzed, Block, BlockItem, CtrlFlowPhase, Expression, Labeled, Statement, SwitchCase,
+    AST, Analyzed, Block, BlockItem, CtrlFlowPhase, Declaration, Expression, Labeled, Statement,
+    SwitchCase,
 };
 use crate::{Context, Result, fmt_token_err};
 
@@ -298,10 +299,15 @@ pub fn resolve_switches<'a>(
 
     let mut switch_resolver = SwitchResolver::default();
 
-    for func in &mut ast.program {
-        if let Some(body) = &mut func.body {
-            resolve_block(body, ctx, &mut switch_resolver)?;
-            switch_resolver.reset();
+    for decl in &mut ast.program {
+        match decl {
+            Declaration::Var { .. } => todo!(),
+            Declaration::Func(func) => {
+                if let Some(body) = &mut func.body {
+                    resolve_block(body, ctx, &mut switch_resolver)?;
+                    switch_resolver.reset();
+                }
+            }
         }
     }
 

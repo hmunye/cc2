@@ -267,6 +267,7 @@ pub fn resolve_idents<'a>(
         resolver: &mut IdentResolver,
     ) -> Result<()> {
         let Function {
+            specs: _,
             ident,
             params,
             body,
@@ -476,7 +477,12 @@ pub fn resolve_idents<'a>(
         resolver: &mut IdentResolver,
     ) -> Result<()> {
         match decl {
-            Declaration::Var { ident, init, token } => {
+            Declaration::Var {
+                specs: _,
+                ident,
+                init,
+                token,
+            } => {
                 resolve_variable((ident, init, token), ctx, resolver)?;
             }
             Declaration::Func(func) => {
@@ -639,8 +645,11 @@ pub fn resolve_idents<'a>(
 
     let mut ident_resolver = IdentResolver::default();
 
-    for func in &mut ast.program {
-        resolve_function(func, ctx, &mut ident_resolver)?;
+    for decl in &mut ast.program {
+        match decl {
+            Declaration::Var { .. } => todo!(),
+            Declaration::Func(func) => resolve_function(func, ctx, &mut ident_resolver)?,
+        }
     }
 
     Ok(AST {

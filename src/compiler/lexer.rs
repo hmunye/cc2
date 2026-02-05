@@ -26,6 +26,8 @@ pub enum Reserved {
     Switch,
     Case,
     Default,
+    Static,
+    Extern,
 }
 
 impl Reserved {
@@ -46,6 +48,8 @@ impl Reserved {
             Reserved::Switch => "switch",
             Reserved::Case => "case",
             Reserved::Default => "default",
+            Reserved::Static => "static",
+            Reserved::Extern => "extern",
         }
     }
 
@@ -66,6 +70,8 @@ impl Reserved {
             "switch" => Some(Reserved::Switch),
             "case" => Some(Reserved::Case),
             "default" => Some(Reserved::Default),
+            "static" => Some(Reserved::Static),
+            "extern" => Some(Reserved::Extern),
             _ => None,
         }
     }

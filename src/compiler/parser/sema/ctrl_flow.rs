@@ -1,5 +1,5 @@
 use crate::compiler::parser::ast::{
-    AST, Block, BlockItem, CtrlFlowPhase, LabelPhase, Labeled, Statement,
+    AST, Block, BlockItem, CtrlFlowPhase, Declaration, LabelPhase, Labeled, Statement,
 };
 use crate::{Context, Result, fmt_token_err};
 
@@ -205,9 +205,14 @@ pub fn resolve_escapable_ctrl<'a>(
 
     let mut ctrl_resolver = CtrlResolver::default();
 
-    for func in &mut ast.program {
-        if let Some(body) = &mut func.body {
-            resolve_block(body, ctx, &mut ctrl_resolver)?;
+    for decl in &mut ast.program {
+        match decl {
+            Declaration::Var { .. } => todo!(),
+            Declaration::Func(func) => {
+                if let Some(body) = &mut func.body {
+                    resolve_block(body, ctx, &mut ctrl_resolver)?;
+                }
+            }
         }
     }
 

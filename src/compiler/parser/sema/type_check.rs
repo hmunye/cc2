@@ -27,6 +27,7 @@ pub fn resolve_types<'a>(
         type_map: &mut TypeMap<'a>,
     ) -> Result<()> {
         let Function {
+            specs: _,
             ident,
             params,
             body,
@@ -285,8 +286,11 @@ pub fn resolve_types<'a>(
 
     let mut type_map: TypeMap<'_> = HashMap::new();
 
-    for func in &ast.program {
-        type_check_function(func, ctx, &mut type_map)?;
+    for decl in &ast.program {
+        match decl {
+            Declaration::Var { .. } => todo!(),
+            Declaration::Func(func) => type_check_function(func, ctx, &mut type_map)?,
+        }
     }
 
     Ok(AST {
