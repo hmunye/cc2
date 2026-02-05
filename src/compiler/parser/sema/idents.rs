@@ -12,7 +12,7 @@ use crate::{Context, Result, fmt_token_err};
 struct Scope {
     /// Currently active scope IDs.
     scopes: Vec<usize>,
-    /// Monotonic counter for unique scope IDs.
+    /// Monotonic counter.
     next_scope: usize,
 }
 
@@ -56,8 +56,8 @@ impl Scope {
     }
 
     #[inline]
-    fn reset_active(&mut self) {
-        // `FILE_SCOPE` always remains active
+    fn reset(&mut self) {
+        // `FILE_SCOPE` always remains active.
         self.scopes.truncate(1);
     }
 }
@@ -75,8 +75,7 @@ enum DeclStatus {
     TypeConflict,
     /// Invalid variable re-declaration.
     VarConflict,
-    /// No re-declaration (e.g., first declaration, multiple function
-    /// declarations).
+    /// No re-declaration (e.g., first declaration, function declaration).
     None,
 }
 
@@ -95,7 +94,7 @@ enum Linkage {
 struct NameBinding {
     ident: String,
     scope: usize,
-    /// `None` -> no linkage (lexically scoped/local).
+    /// `None` indicates no linkage.
     linkage: Option<Linkage>,
 }
 
@@ -109,7 +108,6 @@ enum BindingType {
 /// Resolved binding information for an identifier within a scope.
 #[derive(Debug, Clone)]
 struct BindingInfo {
-    /// Resolved binding identifier.
     canonical: String,
     is_definition: bool,
     ty: BindingType,
@@ -133,7 +131,6 @@ impl IdentResolver {
 
     /// Returns `true` if the given identifier has already been defined in the
     /// current scope (or file scope for external/internal linkage).
-    #[inline]
     fn is_redefinition(&self, ident: &str, linkage: Option<Linkage>) -> bool {
         let scope = match linkage {
             Some(Linkage::External | Linkage::Internal) => Scope::FILE_SCOPE,
@@ -149,9 +146,7 @@ impl IdentResolver {
             .is_some_and(|bind_info| bind_info.is_definition)
     }
 
-    /// Checks if an identifier has already been declared in the current scope,
-    /// returning its declaration status.
-    #[inline]
+    /// Returns the declaration status of an identifier, given it's binding type.
     fn is_redeclaration(&self, ident: &str, ty: BindingType) -> DeclStatus {
         // Check if there is a function declaration with external linkage
         // already in scope with the same identifier as a variable.
@@ -193,8 +188,7 @@ impl IdentResolver {
                 let scope = if is_definition {
                     Scope::FILE_SCOPE
                 } else {
-                    // Function declarations declared within their current
-                    // scope.
+                    // Functions declarations are within their current scope.
                     self.scope.current_scope()
                 };
 
@@ -255,8 +249,8 @@ impl IdentResolver {
     }
 }
 
-/// Assigns a canonical identifier to each identifier encountered, performing
-/// semantic checks (e.g., duplicate definitions, undeclared references).
+/// Converts each encountered identifier to its canonical form, while performing
+/// semantic checks.
 ///
 /// # Errors
 ///
@@ -316,7 +310,7 @@ pub fn resolve_idents<'a>(
 
         if let Some(body) = body {
             resolve_block(body, ctx, resolver)?;
-            resolver.scope.reset_active();
+            resolver.scope.reset();
         } else {
             resolver.scope.exit_scope();
         }
@@ -441,7 +435,7 @@ pub fn resolve_idents<'a>(
                 }
 
                 match &mut **init {
-                    // New scope introduced enclosing for-loop header and body.
+                    // New scope enclosing for-loop header and body.
                     ForInit::Decl(decl) => {
                         resolve_declaration(decl, ctx, resolver)?;
                     }
@@ -582,10 +576,8 @@ pub fn resolve_idents<'a>(
             }
             Expression::Var { ident, token } => {
                 if let Some(bind_info) = resolver.resolve_ident(ident, BindingType::Var) {
-                    // Use the canonical identifier mapped from the original
-                    // identifier.
-                    ident.clear();
-                    ident.push_str(&bind_info.canonical);
+                    // Use the canonical identifier.
+                    *ident = bind_info.canonical;
                 } else {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -619,8 +611,7 @@ pub fn resolve_idents<'a>(
             }
             Expression::FuncCall { ident, args, token } => {
                 if let Some(bind_info) = resolver.resolve_ident(ident, BindingType::Func) {
-                    ident.clear();
-                    ident.push_str(&bind_info.canonical);
+                    *ident = bind_info.canonical;
 
                     for expr in args {
                         resolve_expression(expr, ctx, resolver)?;

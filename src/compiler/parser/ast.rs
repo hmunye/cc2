@@ -1357,7 +1357,9 @@ fn parse_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     BinaryOperator::AssignBitXor => BinaryOperator::BitXor,
                     BinaryOperator::AssignShiftLeft => BinaryOperator::ShiftLeft,
                     BinaryOperator::AssignShiftRight => BinaryOperator::ShiftRight,
-                    _ => unreachable!(),
+                    _ => unreachable!(
+                        "non-assignment expression operators should not reach this match arm"
+                    ),
                 };
 
                 // This ensures we can handle right-associative operators since

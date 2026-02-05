@@ -7,16 +7,16 @@ use crate::compiler::parser::ast::{
 };
 use crate::{Context, Result, fmt_token_err};
 
-/// Mapping of canonical identifier to `Type` information.
+/// Maps a canonical identifier to its type information.
 pub type TypeMap<'a> = HashMap<&'a str, Type>;
 
 /// Performs type checking and enforces semantic constraints on expressions and
-/// declarations.
+/// declarations within the given _AST_.
 ///
 /// # Errors
 ///
-/// This function returns an error if an identifier is undeclared, used with the
-/// wrong type, or called as a function incorrectly.
+/// Returns an error if an identifier is undeclared, used with the wrong type,
+/// or called as a function incorrectly.
 pub fn resolve_types<'a>(
     ast: AST<'a, IdentPhase>,
     ctx: &Context<'_>,

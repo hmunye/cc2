@@ -1,7 +1,7 @@
 //! Intermediate Representation
 //!
-//! Compiler pass that lowers an abstract syntax tree (_AST_) into intermediate
-//! representation (_IR_) using three-address code (_TAC_).
+//! Compiler pass that lowers an abstract syntax tree (_AST_) into three-address
+//! code (_TAC_) intermediate representation (_IR_).
 
 use std::{borrow::Cow, fmt};
 
@@ -10,7 +10,7 @@ use crate::compiler::parser::ast::{self, Analyzed, BinaryOperator, Signedness, U
 /// Intermediate representation (_IR_).
 #[derive(Debug)]
 pub struct IR<'a> {
-    /// Function that represent the structure of the program.
+    /// Functions that represent the structure of the program.
     pub program: Vec<Function<'a>>,
 }
 
@@ -53,8 +53,6 @@ pub enum Instruction<'a> {
     /// Returns a value to the caller.
     Return(Value<'a>),
     /// Perform a unary operation on `src`, storing the result in `dst`.
-    ///
-    /// The `dst` of any unary instruction must be `Value::Var`.
     Unary {
         op: UnaryOperator,
         src: Value<'a>,
@@ -64,8 +62,6 @@ pub enum Instruction<'a> {
     },
     /// Perform a binary operation on `lhs` and `rhs`, storing the result in
     /// `dst`.
-    ///
-    /// The `dst` of any binary instruction must be `Value::Var`.
     Binary {
         op: BinaryOperator,
         lhs: Value<'a>,
@@ -76,17 +72,18 @@ pub enum Instruction<'a> {
     },
     /// Copies the value from `src` into `dst`.
     Copy { src: Value<'a>, dst: Value<'a> },
-    /// Unconditionally jumps to the point in code labeled by an "identifier".
+    /// Unconditionally jumps to the point in code labeled by an identifier.
     Jump(String),
-    /// Conditionally jumps to the point in code labeled by an "identifier" if
-    /// the condition evaluates to zero.
+    /// Conditionally jumps to the point in code labeled by an identifier if
+    /// `cond` evaluates to zero.
     JumpIfZero { cond: Value<'a>, target: String },
-    /// Conditionally jumps to the point in code labeled by an "identifier" if
-    /// the condition does not evaluates to zero.
+    /// Conditionally jumps to the point in code labeled by an identifier if
+    /// `cond` does not evaluates to zero.
     JumpIfNotZero { cond: Value<'a>, target: String },
-    /// Associates an "identifier" with a location in the program.
+    /// Associates an identifier with instructions.
     Label(String),
-    /// Function call.
+    /// Transfers control to the callee labeled `ident`, passes `args`, and
+    /// stores the return value in `dst`.
     Call {
         ident: &'a str,
         args: Vec<Value<'a>>,
@@ -146,7 +143,7 @@ impl fmt::Display for Instruction<'_> {
                     width = width
                 )
             }
-            Instruction::Jump(i) => write!(f, "{:<17}{:?}", "Jump", i),
+            Instruction::Jump(label) => write!(f, "{:<17}{:?}", "Jump", label),
             Instruction::JumpIfZero { cond, target } => {
                 let cond_str = format!("{cond}");
                 let len = cond_str.len();
@@ -178,12 +175,12 @@ impl fmt::Display for Instruction<'_> {
                 )
             }
             Instruction::Call { ident, args, dst } => {
-                let src_str = args
+                let args_str = args
                     .iter()
                     .map(|val| format!("{val}"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                let len = src_str.len();
+                let len = args_str.len();
 
                 let max_width: usize = 32;
                 let width = max_width.saturating_sub(len);
@@ -192,13 +189,13 @@ impl fmt::Display for Instruction<'_> {
 
                 write!(
                     f,
-                    "{:<17}{src_str} {:>width$}  {dst}",
+                    "{:<17}{args_str} {:>width$}  {dst}",
                     prefix,
                     "->",
                     width = width
                 )
             }
-            Instruction::Label(i) => write!(f, "{:<17}{:?}", "Label", i),
+            Instruction::Label(label) => write!(f, "{:<17}{:?}", "Label", label),
         }
     }
 }
@@ -206,7 +203,7 @@ impl fmt::Display for Instruction<'_> {
 /// _IR_ value.
 #[derive(Debug, Clone)]
 pub enum Value<'a> {
-    /// Constant int value (32-bit).
+    /// Integer constant (32-bit signed).
     IntConstant(i32),
     /// Temporary variable.
     Var(Cow<'a, str>),
@@ -216,20 +213,19 @@ impl fmt::Display for Value<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::IntConstant(v) => write!(f, "{v}"),
-            Value::Var(i) => write!(f, "{i:?}"),
+            Value::Var(ident) => write!(f, "{ident:?}"),
         }
     }
 }
 
 /// Helper for lowering nested _AST_ expressions into three-address code (_TAC_)
 /// instructions.
+#[derive(Debug)]
 struct TACBuilder<'a> {
     instructions: Vec<Instruction<'a>>,
-    // For temporary variables.
     tmp_count: usize,
-    // For `jmp` labels.
     label_count: usize,
-    // Function label.
+    // Current _AST_ function label.
     label: &'a str,
 }
 
@@ -253,7 +249,7 @@ impl<'a> TACBuilder<'a> {
         label
     }
 
-    /// Resets the builder state, given the next _AST_ function label.
+    /// Resets the builder state, providing the next _AST_ function label.
     const fn reset(&mut self, label: &'a str) {
         // Function label already ensures uniqueness for identifiers and labels
         // across the translation unit.
@@ -417,7 +413,6 @@ fn generate_ir_function<'a>(
                 // Handle appending instructions for statements recursively.
                 process_ast_statement(stmt, builder);
 
-                // Always emitting labels for `continue` statements.
                 builder.instructions.push(Instruction::Label(cont_label));
 
                 let cond = generate_ir_value(cond, builder);
@@ -427,7 +422,6 @@ fn generate_ir_function<'a>(
                     target: start_label,
                 });
 
-                // Always emitting labels for `break` statements.
                 builder.instructions.push(Instruction::Label(break_label));
             }
             ast::Statement::While {
@@ -438,7 +432,6 @@ fn generate_ir_function<'a>(
                 let cont_label = format!("cont_{label}");
                 let break_label = format!("break_{label}");
 
-                // Always emitting labels for `continue` statements.
                 builder
                     .instructions
                     .push(Instruction::Label(cont_label.clone()));
@@ -455,7 +448,6 @@ fn generate_ir_function<'a>(
 
                 builder.instructions.push(Instruction::Jump(cont_label));
 
-                // Always emitting labels for `break` statements.
                 builder.instructions.push(Instruction::Label(break_label));
             }
             ast::Statement::For {
@@ -503,7 +495,6 @@ fn generate_ir_function<'a>(
                 // Handle appending instructions for statements recursively.
                 process_ast_statement(stmt, builder);
 
-                // Always emitting labels for `continue` statements.
                 builder.instructions.push(Instruction::Label(cont_label));
 
                 if let Some(post) = opt_post {
@@ -527,11 +518,9 @@ fn generate_ir_function<'a>(
                 let lhs = generate_ir_value(cond, builder);
 
                 // Only generate code for the switch if there are case labels or
-                // a default.
+                // default label.
                 if !cases.is_empty() || default.is_some() {
                     let break_label = format!("break_{label}");
-
-                    // for (label, expr) in cases {
 
                     for case in cases {
                         let dst = Value::Var(Cow::Owned(builder.new_tmp()));
@@ -566,7 +555,6 @@ fn generate_ir_function<'a>(
                     // Handle appending instructions for statements recursively.
                     process_ast_statement(stmt, builder);
 
-                    // Always emitting labels for `break` statements.
                     builder.instructions.push(Instruction::Label(break_label));
                 }
             }
@@ -631,9 +619,9 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
                 _ => Signedness::Unsigned,
             };
 
-            // Recursively process the expression until the base case is
-            // reached. This ensures the inner expression is processed initially
-            // before unwinding.
+            // Recursively process the expression until the base case is reached.
+            // This ensures the inner expression is processed initially before
+            // unwinding.
             let src = generate_ir_value(expr, builder);
             let dst = Value::Var(Cow::Owned(builder.new_tmp()));
 
@@ -644,7 +632,9 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
                     let binop = match op {
                         UnaryOperator::Increment => BinaryOperator::Add,
                         UnaryOperator::Decrement => BinaryOperator::Subtract,
-                        _ => unreachable!(),
+                        _ => unreachable!(
+                            "only increment/decrement unary operators should reach this match arm"
+                        ),
                     };
 
                     let tmp = Value::Var(Cow::Owned(builder.new_tmp()));
@@ -663,15 +653,13 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
                             dst: src.clone(),
                         });
 
-                        // Prefix - the updated value of `src` is moved to
-                        // `dst`.
+                        // Updated value of `src` is moved to `dst`.
                         builder.instructions.push(Instruction::Copy {
                             src,
                             dst: dst.clone(),
                         });
                     } else {
-                        // Postfix - the original value of `src` is moved to
-                        // `dst`.
+                        // Original value of `src` is moved to `dst`.
                         builder.instructions.push(Instruction::Copy {
                             src: src.clone(),
                             dst: dst.clone(),
@@ -692,8 +680,6 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
                 }
             }
 
-            // The returned `dst` is used as the new `src` in each unwind of
-            // the recursion.
             dst
         }
         ast::Expression::Binary { op, lhs, rhs, .. } => {
@@ -708,13 +694,12 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
             };
 
             match op {
-                // Need to short-circuit if the `lhs` is 0 for `&&`, or `lhs` is
-                // non-zero for `||`. In those cases, `rhs` instructions are
-                // never executed.
                 ast::BinaryOperator::LogAnd | ast::BinaryOperator::LogOr => {
                     let lhs = generate_ir_value(lhs, builder);
                     let dst = Value::Var(Cow::Owned(builder.new_tmp()));
 
+                    // Need to short-circuit if the `lhs` is 0 for `&&`. In
+                    // those cases, `rhs` instructions are never executed.
                     if matches!(op, ast::BinaryOperator::LogAnd) {
                         let f_lbl = builder.new_label("and.false");
                         let e_lbl = builder.new_label("and.end");
@@ -745,6 +730,9 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
                             Instruction::Label(e_lbl),
                         ]);
                     } else {
+                        // Need to short-circuit if the `lhs` is non-zero for
+                        // `||`. In those cases, `rhs` instructions are never
+                        // executed.
                         let t_lbl = builder.new_label("or.true");
                         let e_lbl = builder.new_label("or.end");
 
@@ -802,7 +790,7 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
         ast::Expression::Assignment { lvalue, rvalue, .. } => {
             let dst = match &**lvalue {
                 ast::Expression::Var { ident, .. } => Value::Var(Cow::Borrowed(ident.as_str())),
-                _ => unreachable!("lvalue of an expression should be an `Expression::Var`"),
+                _ => unreachable!("lvalue of an expression should be Expression::Var"),
             };
 
             let result = generate_ir_value(rvalue, builder);

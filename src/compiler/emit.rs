@@ -1,7 +1,7 @@
 //! Code Emission
 //!
-//! Compiler pass that emits textual _gas-x86-64-linux_ assembly from the
-//! compiler's _MIR_.
+//! Compiler pass that emits _gas-x86-64-linux_ textual assembly from the
+//! an _MIR x86-64_ representation.
 
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -16,7 +16,7 @@ use crate::compiler::mir::{BinaryOperator, UnaryOperator};
 ///
 /// # Errors
 ///
-/// Returns an error if writing textual assembly fails.
+/// Returns an error if textual assembly could not be written to the `writer`.
 pub fn emit_gas_x86_64_linux(
     ctx: &Context<'_>,
     mir: &MIRX86<'_>,
@@ -31,6 +31,8 @@ pub fn emit_gas_x86_64_linux(
 
     for (i, func) in mir.program.iter().enumerate() {
         // `.L` is the local label prefix for Linux.
+        //
+        // `FB` - Function Begin
         writeln!(
             &mut writer,
             "\t.globl\t{label}\n\t.type\t{label}, @function\n{label}:\n.LFB{i}:",
@@ -41,7 +43,7 @@ pub fn emit_gas_x86_64_linux(
 
         // Records the byte size of the function in the _ELF_ symbol table.
         //
-        // `.L` is the local label prefix for Linux.
+        // `FE` - Function End
         writeln!(
             &mut writer,
             ".LFE{i}:\n\t.size\t{label}, .-{label}",
@@ -57,18 +59,17 @@ pub fn emit_gas_x86_64_linux(
     )
 }
 
-/// Return a string assembly representation of the given _MIR_ function.
+/// Return a string assembly representation of the given _MIR x86-64_ function.
 fn emit_asm_function(func: &mir::Function<'_>, locales: &HashSet<&str>) -> io::Result<String> {
     let mut asm = String::new();
 
     // Generate the function prologue:
     //
-    // 1. Push the current base pointer (`rbp`) onto the stack to save
-    // the caller's stack frame.
+    // 1. Push the current base pointer (`%rbp`) onto the stack to save the
+    // caller's stack frame base.
     //
-    // 2. Move the current stack pointer (`rsp`) into the base pointer
-    // (`rbp`) to establish the start of the current function's stack
-    // frame.
+    // 2. Move the current stack pointer (`%rsp`) into the base pointer (`%rbp`)
+    // to establish the start of the callee's stack frame.
     writeln!(&mut asm, "\tpushq\t%rbp\n\tmovq\t%rsp, %rbp").map_err(io::Error::other)?;
 
     for inst in &func.instructions {
@@ -84,7 +85,8 @@ fn emit_asm_function(func: &mir::Function<'_>, locales: &HashSet<&str>) -> io::R
     Ok(asm)
 }
 
-/// Return a string assembly representation of the given _MIR_ instruction.
+/// Return a string assembly representation of the given _MIR x86-64_
+/// instruction.
 fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&str>) -> String {
     match instruction {
         mir::Instruction::Mov { src, dst } => {
@@ -107,8 +109,8 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
                 BinaryOperator::Or => ("orl", 4),
                 BinaryOperator::Xor => ("xorl", 4),
                 // `l` suffix on shift mnemonics indicates the destination
-                // operand is 32-bit. 1 indicates the source operand is 8-bit
-                // "%cl" register or immediate value.
+                // operand is 32-bit. 1 indicates the source operand is the
+                // 8-bit "%cl" register or an immediate value.
                 BinaryOperator::Shl => ("shll", 1),
                 BinaryOperator::Shr => ("shrl", 1),
                 BinaryOperator::Sar => ("sarl", 1),
@@ -136,11 +138,14 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
         mir::Instruction::StackDealloc(v) => format!("addq\t${v}, %rsp"),
         mir::Instruction::Push(src) => format!("pushq\t{}", emit_asm_operand(src, 8)),
         // On _macOS_, function names are prefixed with underscore
-        // (e.g., `call _foo`).
+        // (`call _puts`).
         //
         // On Linux, function names not defined in the current translation unit
         // are suffixed with `@PLT` (Procedure Linkage Table), a section in
-        // `ELF` binaries (e.g., `call puts@PLT`).
+        // `ELF` binaries (`call puts@PLT`).
+        //
+        // `call` instruction pushes the address of the following instruction
+        // onto the stack, then loads the label’s address into `%rip`.
         mir::Instruction::Call(label) => {
             format!(
                 "call\t{label}{}",
@@ -149,26 +154,24 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
         }
         // Include the function epilogue before returning to the caller:
         //
-        // 1. Move the current base pointer (`rbp`) into the stack pointer
-        // (`rsp`) to restore the stack to its state before the function was
-        // called.
+        // 1. Move the saved stack pointer in `%rbp` back into the `%rsp` to
+        // restore the stack frame to its state after the function prologue.
         //
-        // 2. Pop the previously saved base pointer (`rbp`) from the stack back
-        // into the `rbp` register, restoring the caller's stack frame.
+        // 2. Pop the previously pushed base pointer (`%rbp`) from the stack
+        // back into `%rbp`, restoring the caller's stack frame.
         //
-        // 3. Return control to the caller, jumping to the return address stored
-        // on the caller's stack frame.
+        // 3. Return control to the caller, moving the return address pushed by
+        // the caller's `call` instruction into `%rip`.
         mir::Instruction::Ret => "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into(),
         mir::Instruction::Label(_) => panic!("label emission should not be handled here"),
     }
 }
 
-/// Return a string assembly representation of the given _MIR_ operand.
-///
-/// `size` formats register operands depending on the required bytes.
+/// Return a string assembly representation of the given _MIR_ operand. `size`
+/// formats register operands depending on the required size in bytes.
 fn emit_asm_operand(op: &mir::Operand<'_>, size: u8) -> String {
     match op {
-        mir::Operand::Imm32(v) => format!("${v}"),
+        mir::Operand::Imm32(i) => format!("${i}"),
         mir::Operand::Register(r) => match r {
             mir::Reg::AX => match size {
                 1 => "%al",
@@ -243,7 +246,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8) -> String {
             }
             .to_string(),
         },
-        mir::Operand::Stack(s) => format!("{s}(%rbp)"),
-        mir::Operand::Pseudo(_) => panic!("pseudoregisters should not be emitted"),
+        mir::Operand::Stack(i) => format!("{i}(%rbp)"),
+        mir::Operand::Pseudo(_) => panic!("pseudoregisters should not be emitted to assembly"),
     }
 }

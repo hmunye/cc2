@@ -19,9 +19,8 @@ struct CtrlLabel<'a> {
     kind: CtrlKind,
 }
 
-/// Helper to uniquely label all escapable control-flow statements
-/// (loops/switches) and resolve `break` and `continue` targets during
-/// semantic analysis within an _AST_.
+/// Helper to uniquely label all escapable control-flow statements and resolve
+/// `break` and `continue` targets during semantic analysis of an _AST_.
 #[derive(Debug, Default)]
 struct CtrlResolver<'a> {
     labels: Vec<CtrlLabel<'a>>,
@@ -85,8 +84,8 @@ impl<'a> CtrlResolver<'a> {
 ///
 /// # Errors
 ///
-/// Returns an error if a `continue` statement is not found
-/// within a loop or a `break` statement is not found within a loop or `switch`.
+/// Returns an error if a `continue` statement is not found within a loop or a
+/// `break` statement is not found within a loop or `switch`.
 pub fn resolve_escapable_ctrl<'a>(
     mut ast: AST<'a, LabelPhase>,
     ctx: &Context<'_>,
@@ -131,7 +130,7 @@ pub fn resolve_escapable_ctrl<'a>(
             }
             Statement::Continue { jmp_label, token } => {
                 // Ensures a `continue` inside a `switch` context doesn’t
-                // immediately trigger a error.
+                // immediately trigger an error.
                 if let Some(ctrl) = resolver.current_loop() {
                     *jmp_label = ctrl.label.to_string();
                 } else {

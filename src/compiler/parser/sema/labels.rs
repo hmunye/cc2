@@ -9,20 +9,14 @@ use crate::{Context, Result, fmt_token_err};
 
 /// Helper to perform semantic analysis on label/`goto` statements within an
 /// _AST_.
-///
-/// Labels live in a different namespace from ordinary identifiers (variables,
-/// functions, types, etc.) within the same function scope, so they are
-/// collected separately.
 #[derive(Debug, Default)]
 struct LabelResolver<'a> {
-    /// `key` = label
-    ///
-    /// `value` = canonical identifier
+    /// Maps each encountered label to it's canonicalized form.
     labels: HashMap<String, String>,
     /// Collected label/token pairs for every `goto` statement within a function
     /// scope.
     pending_gotos: Vec<(String, Token<'a>)>,
-    /// Current function identifier for canonical identifier generation.
+    /// Current function identifier.
     fn_ident: String,
 }
 
@@ -50,8 +44,7 @@ impl<'a> LabelResolver<'a> {
         }
     }
 
-    /// Records a `goto` statement's contents so they can be validated after
-    /// processing labels.
+    /// Records a `goto` statement's contents with the current function scope.
     #[inline]
     fn mark_goto(&mut self, pair: (&str, &Token<'a>)) {
         self.pending_gotos
@@ -63,8 +56,8 @@ impl<'a> LabelResolver<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if a `goto` target was not found in
-    /// the current function scope.
+    /// Returns an error if a `goto` target was not found in the current
+    /// function scope.
     fn check_gotos(&mut self) -> core::result::Result<(), (String, Token<'_>)> {
         for (label, token) in self.pending_gotos.drain(..) {
             if !self.labels.contains_key(&label) {
@@ -89,8 +82,8 @@ impl<'a> LabelResolver<'a> {
 ///
 /// # Errors
 ///
-/// Returns an error if a duplicate label is found or an
-/// undefined label is used within a function scope.
+/// Returns an error if a duplicate label is found or an undefined label is used
+/// within a function scope.
 pub fn resolve_labels<'a>(
     mut ast: AST<'a, TypePhase>,
     ctx: &Context<'_>,
@@ -163,18 +156,20 @@ pub fn resolve_labels<'a>(
         Ok(())
     }
 
+    // Labels live in a different namespace from ordinary identifiers (variables,
+    // functions, types, etc.) within the same function scope.
     let mut lbl_resolver = LabelResolver::default();
 
     for func in &mut ast.program {
         if let Some(body) = &mut func.body {
             lbl_resolver.reset(&func.ident);
 
-            // Collect and validate all labels within the function in
-            // the first pass.
+            // Collect and validate all labels within the function in the first
+            // pass.
             resolve_block(body, ctx, &mut lbl_resolver)?;
 
-            // Second pass ensures all `goto` statements point to a
-            // valid target within the same function scope.
+            // Second pass ensures all `goto` statements point to a valid target
+            // within the same function scope.
             if let Err((label, token)) = lbl_resolver.check_gotos() {
                 let tok_str = format!("{token:?}");
                 let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -203,7 +198,7 @@ pub fn resolve_labels<'a>(
 }
 
 /// Updates original labels/`goto` target identifiers with their canonical
-/// identifier.
+/// form.
 fn update_labels(body: &mut Block<'_>, resolver: &LabelResolver<'_>) {
     fn resolve_block(block: &mut Block<'_>, resolver: &LabelResolver<'_>) {
         for block_item in &mut block.0 {

@@ -5,22 +5,22 @@ use crate::compiler::parser::ast::{
 };
 use crate::{Context, Result, fmt_token_err};
 
-/// Kind of labeled statement within `switch`.
+/// Kind of labeled statement within a `switch` statement.
 #[derive(Debug, Clone, Copy)]
 enum LabelKind {
     Case,
     Default,
 }
 
-/// `key` = switch statement label
-///
-/// `value` = (case values, default label, case label/expression list)
+/// Maps a `switch` label to its evaluated case values, default label, and
+/// associated cases.
 type ScopedSwitches<'a> = HashMap<String, (HashSet<i32>, Option<String>, Vec<SwitchCase<'a>>)>;
 
-/// Helper for _AST_ to perform semantic analysis on `switch` statement cases.
+/// Helper to perform semantic analysis on `switch` statement cases within an
+/// _AST_.
 #[derive(Debug, Default)]
 struct SwitchResolver<'a> {
-    /// Stack of switch statement labels.
+    /// `switch` statement labels.
     labels: Vec<String>,
     scope_cases: ScopedSwitches<'a>,
     case_count: usize,
@@ -47,8 +47,8 @@ impl<'a> SwitchResolver<'a> {
         }
     }
 
-    /// Returns a unique label for the given `case` expression, or `None` if it
-    /// has been encountered within the current `switch` context.
+    /// Returns a unique label for the given `case` expression, or `None` if the
+    /// expression has been encountered within the current `switch` context.
     fn mark_case(&mut self, label: &str, expr: &Expression<'a>) -> Option<String> {
         let case_label = self.new_label(LabelKind::Case);
 
@@ -66,7 +66,7 @@ impl<'a> SwitchResolver<'a> {
         // compiler.
         let val = match expr {
             Expression::IntConstant(i) => *i,
-            _ => unreachable!(),
+            _ => unreachable!("cases expressions should only be integer constants"),
         };
 
         if entry.0.insert(val) {
@@ -145,9 +145,8 @@ impl<'a> SwitchResolver<'a> {
 ///
 /// # Errors
 ///
-/// Returns an error if a `switch` contains duplicate cases,
-/// multiple `default` labels, or if a `case`/`default` label appears outside of
-/// a `switch`.
+/// Returns an error if a `switch` contains duplicate cases, multiple `default`
+/// labels, or if a `case`/`default` label appears outside of a `switch`.
 pub fn resolve_switches<'a>(
     mut ast: AST<'a, CtrlFlowPhase>,
     ctx: &Context<'_>,

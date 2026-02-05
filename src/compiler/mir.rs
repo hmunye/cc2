@@ -390,7 +390,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
                             ast::BinaryOperator::Eq => CondCode::E,
                             ast::BinaryOperator::NotEq => CondCode::NE,
                             _ => unreachable!(
-                                "non-comparison AST binary operators should not reach this match arm"
+                                "non-comparison binary operators should not reach this match arm"
                             ),
                         };
 
