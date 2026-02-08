@@ -2,12 +2,17 @@
 
 set -uo pipefail
 
-src=example.c
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <file>" >&2
+  exit 1
+fi
+
+src="${1:-example.c}"
 asm=example.s
 bin=a.out
 
 printf "\x1b[1;45m=== cc2 ===\x1b[0m\n"
-cargo r -q -- "$src" -p &&
+cargo r -q --release -- "$src" -p -o "$asm" &&
     (gcc "$asm" -o "$bin"; "./$bin"; echo "exit code: $?")
 
 echo

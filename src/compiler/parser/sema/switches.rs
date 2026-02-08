@@ -152,162 +152,14 @@ pub fn resolve_switches<'a>(
     mut ast: AST<'a, CtrlFlowPhase>,
     ctx: &Context<'_>,
 ) -> Result<AST<'a, Analyzed>> {
-    fn resolve_block<'a>(
-        block: &mut Block<'a>,
-        ctx: &Context<'_>,
-        resolver: &mut SwitchResolver<'a>,
-    ) -> Result<()> {
-        for block_item in &mut block.0 {
-            if let BlockItem::Stmt(stmt) = block_item {
-                resolve_statement(stmt, ctx, resolver)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn resolve_statement<'a>(
-        stmt: &mut Statement<'a>,
-        ctx: &Context<'_>,
-        resolver: &mut SwitchResolver<'a>,
-    ) -> Result<()> {
-        match stmt {
-            Statement::Switch {
-                stmt,
-                cases,
-                default,
-                switch_label,
-                ..
-            } => {
-                resolver.enter_switch(switch_label);
-
-                resolve_statement(stmt, ctx, resolver)?;
-
-                *default = resolver.current_default_lbl();
-
-                resolver.exit_switch(cases);
-            }
-            Statement::LabeledStatement(labeled) => match labeled {
-                Labeled::Label { stmt, .. } => {
-                    resolve_statement(stmt, ctx, resolver)?;
-                }
-                Labeled::Case {
-                    expr,
-                    token,
-                    stmt,
-                    jmp_label: label,
-                    ..
-                } => {
-                    if let Some(ctx_label) = resolver.current_switch() {
-                        if let Some(case_label) = resolver.mark_case(ctx_label.as_str(), expr) {
-                            *label = case_label;
-                        } else {
-                            let tok_str = format!("{token:?}");
-                            let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                            return Err(fmt_token_err!(
-                                token.loc.file_path.display(),
-                                token.loc.line,
-                                token.loc.col,
-                                tok_str,
-                                tok_str.len() - 1,
-                                line_content,
-                                "duplicate case value"
-                            ));
-                        }
-                    } else {
-                        let tok_str = format!("{token:?}");
-                        let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                        return Err(fmt_token_err!(
-                            token.loc.file_path.display(),
-                            token.loc.line,
-                            token.loc.col,
-                            tok_str,
-                            tok_str.len() - 1,
-                            line_content,
-                            "case label not within a switch statement"
-                        ));
-                    }
-
-                    resolve_statement(stmt, ctx, resolver)?;
-                }
-                Labeled::Default {
-                    token,
-                    stmt,
-                    jmp_label: label,
-                } => {
-                    if let Some(ctx_label) = resolver.current_switch() {
-                        if let Some(default_label) = resolver.mark_default(ctx_label.as_str()) {
-                            *label = default_label;
-                        } else {
-                            let tok_str = format!("{token:?}");
-                            let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                            return Err(fmt_token_err!(
-                                token.loc.file_path.display(),
-                                token.loc.line,
-                                token.loc.col,
-                                tok_str,
-                                tok_str.len() - 1,
-                                line_content,
-                                "multiple default labels in one switch"
-                            ));
-                        }
-                    } else {
-                        let tok_str = format!("{token:?}");
-                        let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                        return Err(fmt_token_err!(
-                            token.loc.file_path.display(),
-                            token.loc.line,
-                            token.loc.col,
-                            tok_str,
-                            tok_str.len() - 1,
-                            line_content,
-                            "default label not within a switch statement"
-                        ));
-                    }
-
-                    resolve_statement(stmt, ctx, resolver)?;
-                }
-            },
-            Statement::While { stmt, .. }
-            | Statement::Do { stmt, .. }
-            | Statement::For { stmt, .. } => {
-                resolve_statement(stmt, ctx, resolver)?;
-            }
-            Statement::If { then, opt_else, .. } => {
-                resolve_statement(then, ctx, resolver)?;
-                if let Some(else_stmt) = opt_else {
-                    resolve_statement(else_stmt, ctx, resolver)?;
-                }
-            }
-            Statement::Compound(block) => {
-                resolve_block(block, ctx, resolver)?;
-            }
-            Statement::Return(_)
-            | Statement::Expression(_)
-            | Statement::Break { .. }
-            | Statement::Continue { .. }
-            | Statement::Goto { .. }
-            | Statement::Empty => {}
-        }
-
-        Ok(())
-    }
-
     let mut switch_resolver = SwitchResolver::default();
 
     for decl in &mut ast.program {
-        match decl {
-            Declaration::Var { .. } => todo!(),
-            Declaration::Func(func) => {
-                if let Some(body) = &mut func.body {
-                    resolve_block(body, ctx, &mut switch_resolver)?;
-                    switch_resolver.reset();
-                }
-            }
+        if let Declaration::Func(func) = decl
+            && let Some(body) = &mut func.body
+        {
+            resolve_block(body, ctx, &mut switch_resolver)?;
+            switch_resolver.reset();
         }
     }
 
@@ -315,4 +167,149 @@ pub fn resolve_switches<'a>(
         program: ast.program,
         _phase: std::marker::PhantomData,
     })
+}
+
+fn resolve_block<'a>(
+    block: &mut Block<'a>,
+    ctx: &Context<'_>,
+    resolver: &mut SwitchResolver<'a>,
+) -> Result<()> {
+    for block_item in &mut block.0 {
+        if let BlockItem::Stmt(stmt) = block_item {
+            resolve_statement(stmt, ctx, resolver)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_statement<'a>(
+    stmt: &mut Statement<'a>,
+    ctx: &Context<'_>,
+    resolver: &mut SwitchResolver<'a>,
+) -> Result<()> {
+    match stmt {
+        Statement::Switch {
+            stmt,
+            cases,
+            default,
+            switch_label,
+            ..
+        } => {
+            resolver.enter_switch(switch_label);
+
+            resolve_statement(stmt, ctx, resolver)?;
+
+            *default = resolver.current_default_lbl();
+
+            resolver.exit_switch(cases);
+        }
+        Statement::LabeledStatement(labeled) => match labeled {
+            Labeled::Label { stmt, .. } => {
+                resolve_statement(stmt, ctx, resolver)?;
+            }
+            Labeled::Case {
+                expr,
+                token,
+                stmt,
+                jmp_label: label,
+                ..
+            } => {
+                if let Some(ctx_label) = resolver.current_switch() {
+                    if let Some(case_label) = resolver.mark_case(ctx_label.as_str(), expr) {
+                        *label = case_label;
+                    } else {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                        return Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "duplicate case value"
+                        ));
+                    }
+                } else {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "case label not within a switch statement"
+                    ));
+                }
+
+                resolve_statement(stmt, ctx, resolver)?;
+            }
+            Labeled::Default {
+                token,
+                stmt,
+                jmp_label: label,
+            } => {
+                if let Some(ctx_label) = resolver.current_switch() {
+                    if let Some(default_label) = resolver.mark_default(ctx_label.as_str()) {
+                        *label = default_label;
+                    } else {
+                        let tok_str = format!("{token:?}");
+                        let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                        return Err(fmt_token_err!(
+                            token.loc.file_path.display(),
+                            token.loc.line,
+                            token.loc.col,
+                            tok_str,
+                            tok_str.len() - 1,
+                            line_content,
+                            "multiple default labels in one switch"
+                        ));
+                    }
+                } else {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "default label not within a switch statement"
+                    ));
+                }
+
+                resolve_statement(stmt, ctx, resolver)?;
+            }
+        },
+        Statement::While { stmt, .. }
+        | Statement::Do { stmt, .. }
+        | Statement::For { stmt, .. } => {
+            resolve_statement(stmt, ctx, resolver)?;
+        }
+        Statement::If { then, opt_else, .. } => {
+            resolve_statement(then, ctx, resolver)?;
+            if let Some(else_stmt) = opt_else {
+                resolve_statement(else_stmt, ctx, resolver)?;
+            }
+        }
+        Statement::Compound(block) => {
+            resolve_block(block, ctx, resolver)?;
+        }
+        Statement::Return(_)
+        | Statement::Expression(_)
+        | Statement::Break { .. }
+        | Statement::Continue { .. }
+        | Statement::Goto { .. }
+        | Statement::Empty => {}
+    }
+
+    Ok(())
 }

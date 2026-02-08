@@ -158,7 +158,13 @@ fn main() {
 /// preprocessing fails.
 fn preprocess_input(args: &args::Args) -> Result<fs::File> {
     let tmp_dir = env::temp_dir();
-    let tmp_path = tmp_dir.join(args.in_path.with_extension("i"));
+    let tmp_path = tmp_dir
+        .join(
+            args.in_path
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("input.c")),
+        )
+        .with_extension("i");
 
     let tmp_file = fs::File::options()
         .read(true)

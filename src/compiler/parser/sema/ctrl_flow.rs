@@ -90,129 +90,13 @@ pub fn resolve_escapable_ctrl<'a>(
     mut ast: AST<'a, LabelPhase>,
     ctx: &Context<'_>,
 ) -> Result<AST<'a, CtrlFlowPhase>> {
-    fn resolve_block<'a>(
-        block: &'a mut Block<'_>,
-        ctx: &Context<'_>,
-        resolver: &mut CtrlResolver<'a>,
-    ) -> Result<()> {
-        for block_item in &mut block.0 {
-            if let BlockItem::Stmt(stmt) = block_item {
-                resolve_loop_statement(stmt, ctx, resolver)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn resolve_loop_statement<'a>(
-        stmt: &'a mut Statement<'_>,
-        ctx: &Context<'_>,
-        resolver: &mut CtrlResolver<'a>,
-    ) -> Result<()> {
-        match stmt {
-            Statement::Break { jmp_label, token } => {
-                if let Some(ctrl) = resolver.current_ctrl() {
-                    *jmp_label = ctrl.label.to_string();
-                } else {
-                    let tok_str = format!("{token:?}");
-                    let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                    return Err(fmt_token_err!(
-                        token.loc.file_path.display(),
-                        token.loc.line,
-                        token.loc.col,
-                        tok_str,
-                        tok_str.len() - 1,
-                        line_content,
-                        "break statement not within a loop or switch"
-                    ));
-                }
-            }
-            Statement::Continue { jmp_label, token } => {
-                // Ensures a `continue` inside a `switch` context doesn’t
-                // immediately trigger an error.
-                if let Some(ctrl) = resolver.current_loop() {
-                    *jmp_label = ctrl.label.to_string();
-                } else {
-                    let tok_str = format!("{token:?}");
-                    let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                    return Err(fmt_token_err!(
-                        token.loc.file_path.display(),
-                        token.loc.line,
-                        token.loc.col,
-                        tok_str,
-                        tok_str.len() - 1,
-                        line_content,
-                        "continue statement not within a loop"
-                    ));
-                }
-            }
-            Statement::While {
-                stmt, loop_label, ..
-            }
-            | Statement::Do {
-                stmt, loop_label, ..
-            }
-            | Statement::For {
-                stmt, loop_label, ..
-            } => {
-                *loop_label = resolver.new_label(CtrlKind::Loop);
-
-                resolver.enter_ctx(loop_label, CtrlKind::Loop);
-
-                resolve_loop_statement(stmt, ctx, resolver)?;
-
-                resolver.exit_ctx();
-            }
-            Statement::Switch {
-                stmt, switch_label, ..
-            } => {
-                *switch_label = resolver.new_label(CtrlKind::Switch);
-
-                resolver.enter_ctx(switch_label, CtrlKind::Switch);
-
-                resolve_loop_statement(stmt, ctx, resolver)?;
-
-                resolver.exit_ctx();
-            }
-            Statement::If { then, opt_else, .. } => {
-                resolve_loop_statement(then, ctx, resolver)?;
-                if let Some(else_stmt) = opt_else {
-                    resolve_loop_statement(else_stmt, ctx, resolver)?;
-                }
-            }
-            Statement::LabeledStatement(labeled) => {
-                let stmt = match labeled {
-                    Labeled::Label { stmt, .. }
-                    | Labeled::Case { stmt, .. }
-                    | Labeled::Default { stmt, .. } => stmt,
-                };
-
-                resolve_loop_statement(stmt, ctx, resolver)?;
-            }
-            Statement::Compound(block) => {
-                resolve_block(block, ctx, resolver)?;
-            }
-            Statement::Return(_)
-            | Statement::Expression(_)
-            | Statement::Goto { .. }
-            | Statement::Empty => {}
-        }
-
-        Ok(())
-    }
-
     let mut ctrl_resolver = CtrlResolver::default();
 
     for decl in &mut ast.program {
-        match decl {
-            Declaration::Var { .. } => todo!(),
-            Declaration::Func(func) => {
-                if let Some(body) = &mut func.body {
-                    resolve_block(body, ctx, &mut ctrl_resolver)?;
-                }
-            }
+        if let Declaration::Func(func) = decl
+            && let Some(body) = &mut func.body
+        {
+            resolve_block(body, ctx, &mut ctrl_resolver)?;
         }
     }
 
@@ -220,4 +104,117 @@ pub fn resolve_escapable_ctrl<'a>(
         program: ast.program,
         _phase: std::marker::PhantomData,
     })
+}
+
+fn resolve_block<'a>(
+    block: &'a mut Block<'_>,
+    ctx: &Context<'_>,
+    resolver: &mut CtrlResolver<'a>,
+) -> Result<()> {
+    for block_item in &mut block.0 {
+        if let BlockItem::Stmt(stmt) = block_item {
+            resolve_loop_statement(stmt, ctx, resolver)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_loop_statement<'a>(
+    stmt: &'a mut Statement<'_>,
+    ctx: &Context<'_>,
+    resolver: &mut CtrlResolver<'a>,
+) -> Result<()> {
+    match stmt {
+        Statement::Break { jmp_label, token } => {
+            if let Some(ctrl) = resolver.current_ctrl() {
+                *jmp_label = ctrl.label.to_string();
+            } else {
+                let tok_str = format!("{token:?}");
+                let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                return Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    line_content,
+                    "break statement not within a loop or switch"
+                ));
+            }
+        }
+        Statement::Continue { jmp_label, token } => {
+            // Ensures a `continue` inside a `switch` context doesn’t
+            // immediately trigger an error.
+            if let Some(ctrl) = resolver.current_loop() {
+                *jmp_label = ctrl.label.to_string();
+            } else {
+                let tok_str = format!("{token:?}");
+                let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                return Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    line_content,
+                    "continue statement not within a loop"
+                ));
+            }
+        }
+        Statement::While {
+            stmt, loop_label, ..
+        }
+        | Statement::Do {
+            stmt, loop_label, ..
+        }
+        | Statement::For {
+            stmt, loop_label, ..
+        } => {
+            *loop_label = resolver.new_label(CtrlKind::Loop);
+
+            resolver.enter_ctx(loop_label, CtrlKind::Loop);
+
+            resolve_loop_statement(stmt, ctx, resolver)?;
+
+            resolver.exit_ctx();
+        }
+        Statement::Switch {
+            stmt, switch_label, ..
+        } => {
+            *switch_label = resolver.new_label(CtrlKind::Switch);
+
+            resolver.enter_ctx(switch_label, CtrlKind::Switch);
+
+            resolve_loop_statement(stmt, ctx, resolver)?;
+
+            resolver.exit_ctx();
+        }
+        Statement::If { then, opt_else, .. } => {
+            resolve_loop_statement(then, ctx, resolver)?;
+            if let Some(else_stmt) = opt_else {
+                resolve_loop_statement(else_stmt, ctx, resolver)?;
+            }
+        }
+        Statement::LabeledStatement(labeled) => {
+            let stmt = match labeled {
+                Labeled::Label { stmt, .. }
+                | Labeled::Case { stmt, .. }
+                | Labeled::Default { stmt, .. } => stmt,
+            };
+
+            resolve_loop_statement(stmt, ctx, resolver)?;
+        }
+        Statement::Compound(block) => {
+            resolve_block(block, ctx, resolver)?;
+        }
+        Statement::Return(_)
+        | Statement::Expression(_)
+        | Statement::Goto { .. }
+        | Statement::Empty => {}
+    }
+
+    Ok(())
 }

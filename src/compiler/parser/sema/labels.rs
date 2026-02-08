@@ -29,24 +29,24 @@ impl<'a> LabelResolver<'a> {
         format!("{}.{suffix}", self.fn_ident)
     }
 
-    /// Returns `true` if the label was not encountered in the current function
+    /// Returns `true` if the label was encountered in the current function
     /// scope, recording it as seen.
     #[inline]
-    fn mark_label(&mut self, label: &str) -> bool {
+    fn label_seen(&mut self, label: &str) -> bool {
         let canonical = self.new_label(label);
 
         match self.labels.entry(label.to_string()) {
-            Entry::Occupied(_) => false,
+            Entry::Occupied(_) => true,
             Entry::Vacant(entry) => {
                 entry.insert(canonical);
-                true
+                false
             }
         }
     }
 
     /// Records a `goto` statement's contents with the current function scope.
     #[inline]
-    fn mark_goto(&mut self, pair: (&str, &Token<'a>)) {
+    fn record_goto(&mut self, pair: (&str, &Token<'a>)) {
         self.pending_gotos
             .push((pair.0.to_string(), pair.1.clone()));
     }
@@ -58,7 +58,7 @@ impl<'a> LabelResolver<'a> {
     ///
     /// Returns an error if a `goto` target was not found in the current
     /// function scope.
-    fn check_gotos(&mut self) -> core::result::Result<(), (String, Token<'_>)> {
+    fn check_recorded_gotos(&mut self) -> core::result::Result<(), (String, Token<'_>)> {
         for (label, token) in self.pending_gotos.drain(..) {
             if !self.labels.contains_key(&label) {
                 return Err((label, token));
@@ -115,10 +115,10 @@ pub fn resolve_labels<'a>(
                     resolve_statement_labels(else_stmt, ctx, resolver)?;
                 }
             }
-            Statement::Goto { target, token } => resolver.mark_goto((target, token)),
+            Statement::Goto { target, token } => resolver.record_goto((target, token)),
             Statement::LabeledStatement(labeled) => match labeled {
                 Labeled::Label { label, token, stmt } => {
-                    if !resolver.mark_label(label) {
+                    if resolver.label_seen(label) {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());
 
@@ -172,7 +172,7 @@ pub fn resolve_labels<'a>(
 
             // Second pass ensures all `goto` statements point to a valid target
             // within the same function scope.
-            if let Err((label, token)) = lbl_resolver.check_gotos() {
+            if let Err((label, token)) = lbl_resolver.check_recorded_gotos() {
                 let tok_str = format!("{token:?}");
                 let line_content = ctx.src_slice(token.loc.line_span.clone());
 

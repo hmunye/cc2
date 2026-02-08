@@ -59,8 +59,8 @@ impl<P> fmt::Display for AST<'_, P> {
 /// _AST_ declaration specifiers.
 #[derive(Debug, PartialEq, Eq)]
 pub struct DeclSpecs {
-    ty: Type,
-    storage: Option<StorageClass>,
+    pub ty: Type,
+    pub storage: Option<StorageClass>,
 }
 
 impl fmt::Display for DeclSpecs {
@@ -105,7 +105,7 @@ impl Declaration<'_> {
         let pad = "  ".repeat(indent);
 
         match self {
-            decl @ Declaration::Var { .. } => writeln!(f, "{pad}{decl}"),
+            var @ Declaration::Var { .. } => writeln!(f, "{pad}{var}"),
             Declaration::Func(func) => func.fmt_with_indent(f, indent),
         }
     }
@@ -163,10 +163,11 @@ impl Function<'_> {
             .collect::<Vec<_>>()
             .join(", ");
 
-        writeln!(f, "\n{}{} Fn {:?}({})", pad, self.specs, self.ident, params)?;
-
         if let Some(body) = &self.body {
+            writeln!(f, "{}{} Fn {:?}({})", pad, self.specs, self.ident, params)?;
             body.fmt_with_indent(f, indent + 2)?;
+        } else {
+            write!(f, "{}{} Fn {:?}({})", pad, self.specs, self.ident, params)?;
         }
 
         Ok(())
@@ -187,7 +188,7 @@ impl Block<'_> {
             item.fmt_with_indent(f, indent + 2)?;
         }
 
-        writeln!(f, "{pad}}}\n")
+        writeln!(f, "{pad}}}")
     }
 }
 
@@ -723,7 +724,7 @@ pub fn parse_ast<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ) -> Result<AST<'a, Analyzed>> {
     let ast = parse_program(ctx, &mut iter)?;
 
-    let ast = sema::resolve_idents(ast, ctx)?;
+    let ast = sema::resolve_symbols(ast, ctx)?;
 
     let ast = sema::resolve_types(ast, ctx)?;
 
@@ -877,7 +878,7 @@ fn parse_declaration_specs<'a, I: Iterator<Item = Result<Token<'a>>>>(
                 tok_str,
                 tok_str.len() - 1,
                 line_content,
-                "missing type specifier in declaration"
+                "type specifier missing in declaration"
             ));
         } else {
             return Err(fmt_err!(
@@ -994,6 +995,20 @@ fn parse_params<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
                 Ok(params)
             }
+            TokenType::Keyword(Reserved::Static | Reserved::Extern) => {
+                let tok_str = format!("{token:?}");
+                let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                Err(fmt_token_err!(
+                    token.loc.file_path.display(),
+                    token.loc.line,
+                    token.loc.col,
+                    tok_str,
+                    tok_str.len() - 1,
+                    line_content,
+                    "storage class specified for parameter"
+                ))
+            }
             _ => {
                 let tok_str = format!("{token:?}");
                 let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -1077,8 +1092,12 @@ fn parse_for_init<'a, I: Iterator<Item = Result<Token<'a>>>>(
     iter: &mut std::iter::Peekable<I>,
 ) -> Result<ForInit<'a>> {
     if let Some(token) = iter.peek().map(Result::as_ref).transpose()? {
-        // Parse this as a declaration (starts with a type).
-        if token.ty == TokenType::Keyword(Reserved::Int) {
+        // Parse this as a declaration (starts with a type/storage-class
+        // specifier).
+        if matches!(
+            token.ty,
+            TokenType::Keyword(Reserved::Int | Reserved::Static | Reserved::Extern)
+        ) {
             match parse_declaration(ctx, iter)? {
                 Declaration::Func(func) => {
                     let token = &func.token;
@@ -1096,7 +1115,7 @@ fn parse_for_init<'a, I: Iterator<Item = Result<Token<'a>>>>(
                         "declaration of non-variable '{tok_str}' in 'for' loop initial declaration"
                     ))
                 }
-                decl @ Declaration::Var { .. } => Ok(ForInit::Decl(decl)),
+                var @ Declaration::Var { .. } => Ok(ForInit::Decl(var)),
             }
         } else {
             // Parse this as an optional expression.
@@ -1332,7 +1351,7 @@ fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "case label does not evaluate to a constant (currently only support integer literals)"
+                        "case label does not reduce to an integer constant (currently only support integer literals)"
                     ))
                 }
             }
