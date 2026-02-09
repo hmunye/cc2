@@ -7,6 +7,7 @@ use std::fmt;
 use std::ops::Range;
 use std::path::Path;
 
+use crate::compiler::parser::types::c_int;
 use crate::{Context, Result, fmt_token_err};
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
@@ -247,8 +248,8 @@ pub enum TokenType<'a> {
     Keyword(Reserved),
     /// User-defined identifier.
     Ident(&'a str),
-    /// Integer constant (32-bit signed).
-    IntConstant(i32),
+    /// Integer constant.
+    IntConstant(c_int),
     /// Operator token.
     Operator(OperatorKind),
     /// `(`.
@@ -436,7 +437,7 @@ impl<'a> Lexer<'a> {
 
         let token = self.ctx.src_slice(token_start..self.cur);
 
-        let Ok(int) = token.parse::<i32>() else {
+        let Ok(int) = token.parse::<c_int>() else {
             return Err(fmt_token_err!(
                 self.ctx.in_path.display(),
                 self.line,

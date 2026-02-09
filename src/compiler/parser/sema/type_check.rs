@@ -1,47 +1,25 @@
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled,
-    Statement, StorageClass, Type, TypePhase,
+    Statement, StorageClass, TypePhase,
 };
+use crate::compiler::parser::sema::symbols::SymbolMap;
+use crate::compiler::parser::types::Type;
 use crate::{Context, Result, fmt_token_err};
 
-/// Storage duration of an identifier.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub enum StorageDuration {
-    /// Block-scope/local variables.
-    Automatic,
-    /// File-scope or `static` local variables.
-    Static,
-}
-
-/// Information tracked for each canonical identifier.
-#[derive(Debug)]
-pub struct TypeInfo {
-    pub ty: Type,
-    /// `None` for function declarations/definitions.
-    pub duration: Option<StorageDuration>,
-}
-
-/// Maps a canonical identifier to its type information.
-pub type TypeMap<'a> = HashMap<&'a str, TypeInfo>;
-
-/// Performs type checking and enforces semantic constraints on expressions and
-/// declarations within the given _AST_.
+/// Performs type checking using the provided `symbol_map`, enforcing semantic
+/// constraints on expressions and declarations within the given _AST_.
 ///
 /// # Errors
 ///
 /// Returns an error if an identifier is undeclared, used with the wrong type,
-/// or called as a function incorrectly.
+/// called as a function incorrectly, etc.
 pub fn resolve_types<'a>(
     ast: AST<'a, IdentPhase>,
     ctx: &Context<'_>,
+    symbol_map: &SymbolMap,
 ) -> Result<AST<'a, TypePhase>> {
-    let mut type_map: TypeMap<'_> = HashMap::new();
-
     for decl in &ast.program {
-        type_check_declaration(decl, true, ctx, &mut type_map)?;
+        type_check_declaration(decl, true, ctx, symbol_map)?;
     }
 
     Ok(AST {
@@ -50,81 +28,60 @@ pub fn resolve_types<'a>(
     })
 }
 
-fn type_check_declaration<'a>(
-    decl: &'a Declaration<'_>,
+fn type_check_declaration(
+    decl: &Declaration<'_>,
     is_file_scope: bool,
     ctx: &Context<'_>,
-    type_map: &mut TypeMap<'a>,
+    symbol_map: &SymbolMap,
 ) -> Result<()> {
     match decl {
-        var @ Declaration::Var { .. } => type_check_variable(var, is_file_scope, ctx, type_map),
-        Declaration::Func(func) => type_check_function(func, ctx, type_map),
+        var @ Declaration::Var { .. } => type_check_variable(var, is_file_scope, ctx, symbol_map),
+        Declaration::Func(func) => type_check_function(func, ctx, symbol_map),
     }
 }
 
-fn type_check_function<'a>(
-    func: &'a Function<'_>,
+fn type_check_function(
+    func: &Function<'_>,
     ctx: &Context<'_>,
-    type_map: &mut TypeMap<'a>,
+    symbol_map: &SymbolMap,
 ) -> Result<()> {
     let Function {
-        specs: _,
+        specs,
         ident,
-        params,
         body,
         token,
+        ..
     } = func;
 
-    let ty = Type::Func {
-        params: params.len(),
-    };
+    if let Some(entry) = symbol_map.get(ident.as_str())
+        && entry.ty != specs.ty
+    {
+        let tok_str = format!("{token:?}");
+        let line_content = ctx.src_slice(token.loc.line_span.clone());
 
-    match type_map.entry(ident.as_str()) {
-        Entry::Occupied(entry) => {
-            let entry = entry.get();
-
-            if entry.ty != ty {
-                let tok_str = format!("{token:?}");
-                let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                return Err(fmt_token_err!(
-                    token.loc.file_path.display(),
-                    token.loc.line,
-                    token.loc.col,
-                    tok_str,
-                    tok_str.len() - 1,
-                    line_content,
-                    "'{tok_str}' redeclared as different kind of symbol",
-                ));
-            }
-        }
-        Entry::Vacant(entry) => {
-            entry.insert(TypeInfo { ty, duration: None });
-        }
+        return Err(fmt_token_err!(
+            token.loc.file_path.display(),
+            token.loc.line,
+            token.loc.col,
+            tok_str,
+            tok_str.len() - 1,
+            line_content,
+            "'{tok_str}' redeclared as different kind of symbol",
+        ));
     }
 
     if let Some(body) = body {
-        for param in params {
-            type_map.insert(
-                param.ident.as_str(),
-                TypeInfo {
-                    ty: param.ty,
-                    duration: Some(StorageDuration::Automatic),
-                },
-            );
-        }
-
-        type_check_block(body, ctx, type_map)?;
+        type_check_block(body, ctx, symbol_map)?;
     }
 
     Ok(())
 }
 
-fn type_check_variable<'a>(
-    var: &'a Declaration<'_>,
+fn type_check_variable(
+    var: &Declaration<'_>,
     is_file_scope: bool,
     ctx: &Context<'_>,
-    type_map: &mut TypeMap<'a>,
+    symbol_map: &SymbolMap,
 ) -> Result<()> {
     if let Declaration::Var {
         specs,
@@ -148,18 +105,8 @@ fn type_check_variable<'a>(
             ));
         }
 
-        // All file-scope variables have `static` storage duration.
-        let duration = if is_file_scope || specs.storage.is_some() {
-            Some(StorageDuration::Static)
-        } else {
-            Some(StorageDuration::Automatic)
-        };
-
-        // NOTE: Update when constant-expression eval is available
-        // to the compiler.
-        if duration == Some(StorageDuration::Static)
-            && let Some(init) = init
-            && !matches!(init, Expression::IntConstant(_))
+        if let Some(entry) = symbol_map.get(ident.as_str())
+            && entry.ty != specs.ty
         {
             let tok_str = format!("{token:?}");
             let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -171,78 +118,48 @@ fn type_check_variable<'a>(
                 tok_str,
                 tok_str.len() - 1,
                 line_content,
-                "initializer element is not constant (currently only support integer literals)",
+                "'{tok_str}' redeclared as different kind of symbol",
             ));
         }
 
-        let ty = Type::Int;
-
-        match type_map.entry(ident.as_str()) {
-            Entry::Occupied(entry) => {
-                let entry = entry.get();
-
-                if entry.ty != ty {
-                    let tok_str = format!("{token:?}");
-                    let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                    return Err(fmt_token_err!(
-                        token.loc.file_path.display(),
-                        token.loc.line,
-                        token.loc.col,
-                        tok_str,
-                        tok_str.len() - 1,
-                        line_content,
-                        "'{tok_str}' redeclared as different kind of symbol",
-                    ));
-                }
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(TypeInfo { ty, duration });
-            }
-        }
-
         if let Some(init) = init {
-            type_check_expression(init, ctx, type_map)?;
+            type_check_expression(init, ctx, symbol_map)?;
         }
     }
 
     Ok(())
 }
 
-fn type_check_block<'a>(
-    block: &'a Block<'_>,
-    ctx: &Context<'_>,
-    type_map: &mut TypeMap<'a>,
-) -> Result<()> {
+fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, symbol_map: &SymbolMap) -> Result<()> {
     for block_item in &block.0 {
         match block_item {
-            BlockItem::Stmt(stmt) => type_check_statement(stmt, ctx, type_map)?,
-            BlockItem::Decl(decl) => type_check_declaration(decl, false, ctx, type_map)?,
+            BlockItem::Stmt(stmt) => type_check_statement(stmt, ctx, symbol_map)?,
+            BlockItem::Decl(decl) => type_check_declaration(decl, false, ctx, symbol_map)?,
         }
     }
 
     Ok(())
 }
 
-fn type_check_statement<'a>(
-    stmt: &'a Statement<'_>,
+fn type_check_statement(
+    stmt: &Statement<'_>,
     ctx: &Context<'_>,
-    type_map: &mut TypeMap<'a>,
+    symbol_map: &SymbolMap,
 ) -> Result<()> {
     match stmt {
         Statement::Return(expr) | Statement::Expression(expr) => {
-            type_check_expression(expr, ctx, type_map)
+            type_check_expression(expr, ctx, symbol_map)
         }
         Statement::If {
             cond,
             then,
             opt_else,
         } => {
-            type_check_expression(cond, ctx, type_map)?;
-            type_check_statement(then, ctx, type_map)?;
+            type_check_expression(cond, ctx, symbol_map)?;
+            type_check_statement(then, ctx, symbol_map)?;
 
             if let Some(stmt) = opt_else {
-                type_check_statement(stmt, ctx, type_map)?;
+                type_check_statement(stmt, ctx, symbol_map)?;
             }
 
             Ok(())
@@ -251,19 +168,19 @@ fn type_check_statement<'a>(
             let stmt = match labeled {
                 Labeled::Label { stmt, .. } | Labeled::Default { stmt, .. } => stmt,
                 Labeled::Case { expr, stmt, .. } => {
-                    type_check_expression(expr, ctx, type_map)?;
+                    type_check_expression(expr, ctx, symbol_map)?;
                     stmt
                 }
             };
 
-            type_check_statement(stmt, ctx, type_map)
+            type_check_statement(stmt, ctx, symbol_map)
         }
-        Statement::Compound(block) => type_check_block(block, ctx, type_map),
+        Statement::Compound(block) => type_check_block(block, ctx, symbol_map),
         Statement::While { cond, stmt, .. }
         | Statement::Do { stmt, cond, .. }
         | Statement::Switch { cond, stmt, .. } => {
-            type_check_expression(cond, ctx, type_map)?;
-            type_check_statement(stmt, ctx, type_map)
+            type_check_expression(cond, ctx, symbol_map)?;
+            type_check_statement(stmt, ctx, symbol_map)
         }
         Statement::For {
             init,
@@ -290,7 +207,7 @@ fn type_check_statement<'a>(
                             ));
                         }
 
-                        type_check_variable(decl, false, ctx, type_map)?;
+                        type_check_variable(decl, false, ctx, symbol_map)?;
                     }
                     Declaration::Func(_) => unreachable!(
                         "'for' loop initial declaration should never contain a function declaration"
@@ -298,20 +215,20 @@ fn type_check_statement<'a>(
                 },
                 ForInit::Expr(opt_init) => {
                     if let Some(init) = opt_init {
-                        type_check_expression(init, ctx, type_map)?;
+                        type_check_expression(init, ctx, symbol_map)?;
                     }
                 }
             }
 
             if let Some(cond) = opt_cond {
-                type_check_expression(cond, ctx, type_map)?;
+                type_check_expression(cond, ctx, symbol_map)?;
             }
 
             if let Some(post) = opt_post {
-                type_check_expression(post, ctx, type_map)?;
+                type_check_expression(post, ctx, symbol_map)?;
             }
 
-            type_check_statement(stmt, ctx, type_map)
+            type_check_statement(stmt, ctx, symbol_map)
         }
         Statement::Goto { .. }
         | Statement::Break { .. }
@@ -320,32 +237,32 @@ fn type_check_statement<'a>(
     }
 }
 
-fn type_check_expression<'a>(
-    expr: &'a Expression<'_>,
+fn type_check_expression(
+    expr: &Expression<'_>,
     ctx: &Context<'_>,
-    type_map: &mut TypeMap<'a>,
+    symbol_map: &SymbolMap,
 ) -> Result<()> {
     match expr {
         Expression::Assignment { lvalue, rvalue, .. } => {
-            type_check_expression(lvalue, ctx, type_map)?;
-            type_check_expression(rvalue, ctx, type_map)
+            type_check_expression(lvalue, ctx, symbol_map)?;
+            type_check_expression(rvalue, ctx, symbol_map)
         }
-        Expression::Unary { expr, .. } => type_check_expression(expr, ctx, type_map),
+        Expression::Unary { expr, .. } => type_check_expression(expr, ctx, symbol_map),
         Expression::Binary { lhs, rhs, .. } => {
-            type_check_expression(lhs, ctx, type_map)?;
-            type_check_expression(rhs, ctx, type_map)
+            type_check_expression(lhs, ctx, symbol_map)?;
+            type_check_expression(rhs, ctx, symbol_map)
         }
         Expression::Conditional {
             cond,
             second,
             third,
         } => {
-            type_check_expression(cond, ctx, type_map)?;
-            type_check_expression(second, ctx, type_map)?;
-            type_check_expression(third, ctx, type_map)
+            type_check_expression(cond, ctx, symbol_map)?;
+            type_check_expression(second, ctx, symbol_map)?;
+            type_check_expression(third, ctx, symbol_map)
         }
         Expression::Var { ident, token } => {
-            let entry = type_map
+            let entry = symbol_map
                 .get(ident.as_str())
                 .expect("variable type should be available after symbol resolution");
 
@@ -367,7 +284,7 @@ fn type_check_expression<'a>(
             Ok(())
         }
         Expression::FuncCall { ident, args, token } => {
-            let f_type = type_map
+            let f_type = symbol_map
                 .get(ident.as_str())
                 .expect("function type should be available after symbol resolution");
 
@@ -390,7 +307,7 @@ fn type_check_expression<'a>(
                 }
 
                 for expr in args {
-                    type_check_expression(expr, ctx, type_map)?;
+                    type_check_expression(expr, ctx, symbol_map)?;
                 }
 
                 Ok(())

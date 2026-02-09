@@ -1,138 +1,58 @@
+// TODO: Finish updating refactoring so symbol map can be created.
+
 use std::collections::HashMap;
 
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled, Param,
     Parsed, Statement, StorageClass,
 };
+use crate::compiler::parser::types::Type;
 use crate::{Context, Result, fmt_token_err};
 
-/// Helper to track scopes in _AST_ traversal.
-#[derive(Debug)]
-struct Scope {
-    /// Currently active scope IDs.
-    active_scopes: Vec<usize>,
-    /// Monotonic counter.
-    next_scope: usize,
-}
+use super::{Linkage, Scope, StorageDuration, SymbolMap, SymbolState, convert_bindings_map};
 
-impl Scope {
-    /// Global scope (e.g, functions, global variables).
-    const FILE_SCOPE: usize = 0;
-
-    #[inline]
-    fn new() -> Self {
-        Scope {
-            active_scopes: vec![Self::FILE_SCOPE],
-            next_scope: Self::FILE_SCOPE + 1,
-        }
-    }
-
-    #[inline]
-    fn current_scope(&self) -> usize {
-        *self
-            .active_scopes
-            .last()
-            .expect("file scope should always be on the stack")
-    }
-
-    #[inline]
-    fn enter_scope(&mut self) {
-        let scope = self.next_scope;
-        self.next_scope += 1;
-
-        self.active_scopes.push(scope);
-    }
-
-    #[inline]
-    fn exit_scope(&mut self) {
-        debug_assert!(!self.at_file_scope(), "attempting to exit file scope");
-        self.active_scopes.pop();
-    }
-
-    #[inline]
-    const fn at_file_scope(&self) -> bool {
-        self.active_scopes.len() == 1
-    }
-
-    #[inline]
-    fn reset(&mut self) {
-        // `FILE_SCOPE` always remains active.
-        self.active_scopes.truncate(1);
-    }
-}
-
-impl Default for Scope {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Conflicts in the declaration/definition of an identifier.
+/// Conflicts in the declaration/definition of a symbol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConflictStatus {
     /// Attempted redeclaration/definition of an already declared variable.
     Var,
-    /// Attempted redeclaration/definition with conflicting linkage. Stores
-    /// previous declaration linkage.
+    /// Attempted redeclaration/definition with conflicting linkage (stores
+    /// previous declaration linkage).
     Linkage(Option<Linkage>),
     /// Attempted redefinition of existing function.
     Func,
 }
 
-/// Declaration state of an identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DeclState {
-    /// Tentative definition (without initializer).
-    Tentative,
-    /// Fully defined with an initializer.
-    Defined,
-}
-
-/// Linkage of an identifier across translation units.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Linkage {
-    /// Identifier is visible across translation units.
-    External,
-    /// Identifier is local to the current translation unit.
-    Internal,
-}
-
-/// Types of declarations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BindingType {
-    Func,
-    Var,
-}
-
-/// Identifier within a scope.
+/// Symbol binding within a scope.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct IdentKey {
-    /// Source identifier.
-    ident: String,
-    scope: usize,
+pub struct BindingKey {
+    /// Symbol as appears in source.
+    pub ident: String,
+    pub scope: usize,
 }
 
-/// Resolved information about an identifier within a scope.
+/// Resolved information about a symbol binding within a scope.
 #[derive(Debug, Clone)]
-struct BindingInfo {
+pub struct BindingInfo {
     /// Canonicalized identifier.
-    canonical: String,
-    state: Option<DeclState>,
-    linkage: Option<Linkage>,
-    ty: BindingType,
-    /// If this entry exists only for file-scope visibility. Second entry
-    /// doesn’t represent a real declaration in the source code.
-    is_proxy: bool,
+    pub canonical: String,
+    pub state: SymbolState,
+    pub linkage: Option<Linkage>,
+    pub duration: Option<StorageDuration>,
+    pub ty: Type,
+    /// If this entry exists only for file-scope visibility. Proxy (second)
+    /// entry doesn’t represent a real declaration in the source code.
+    pub is_proxy: bool,
 }
 
-/// Helper to perform semantic analysis on identifiers within an _AST_.
+/// Helper to perform semantic analysis on symbols within an _AST_.
 #[derive(Debug, Default)]
-struct IdentResolver {
-    bindings: HashMap<IdentKey, BindingInfo>,
+struct SymbolResolver {
+    bindings: HashMap<BindingKey, BindingInfo>,
     scope: Scope,
 }
 
-impl IdentResolver {
+impl SymbolResolver {
     /// Returns a new temporary identifier using the provided prefix.
     #[inline]
     fn new_tmp(&self, prefix: &str) -> String {
@@ -141,23 +61,23 @@ impl IdentResolver {
         format!("{prefix}@{}", self.scope.current_scope())
     }
 
-    /// Checks if the given identifier has a conflicting declaration/definition,
+    /// Checks if the given symbol has a conflicting declaration/definition,
     /// returning the appropriate linkage given any prior declarations.
     ///
     /// # Errors
     ///
-    /// Returns an error if the identifier was redeclared with conflicting type,
+    /// Returns an error if the symbol was redeclared with conflicting type,
     /// linkage, or other variable within the same scope.
     fn check_ident_conflict(
         &self,
-        ident: &str,
-        state: Option<DeclState>,
+        symbol: &str,
+        state: SymbolState,
         mut linkage: Option<Linkage>,
         storage: Option<StorageClass>,
-        ty: BindingType,
+        ty: &Type,
     ) -> core::result::Result<Option<Linkage>, ConflictStatus> {
-        let key = IdentKey {
-            ident: ident.to_string(),
+        let key = BindingKey {
+            ident: symbol.to_string(),
             scope: self.scope.current_scope(),
         };
 
@@ -167,8 +87,10 @@ impl IdentResolver {
                 return Err(ConflictStatus::Linkage(bind_info.linkage));
             }
 
-            if (ty == BindingType::Func && matches!(storage, Some(StorageClass::Extern) | None))
-                || (ty == BindingType::Var && storage == Some(StorageClass::Extern))
+            if (matches!(
+                (ty, storage),
+                (Type::Func { .. }, Some(StorageClass::Extern) | None)
+            )) || (*ty == Type::Int && storage == Some(StorageClass::Extern))
             {
                 // Linkage matches the prior visible declaration.
                 linkage = bind_info.linkage;
@@ -183,26 +105,29 @@ impl IdentResolver {
             }
 
             match (ty, bind_info.ty) {
-                (BindingType::Func, BindingType::Func) => {
+                (Type::Func { .. }, Type::Func { .. }) => {
                     // Multiple function declarations always allowed, not
                     // definitions.
                     if matches!(
                         (state, bind_info.state),
-                        (Some(DeclState::Defined), Some(DeclState::Defined))
+                        (SymbolState::Defined, SymbolState::Defined)
                     ) {
                         return Err(ConflictStatus::Func);
                     }
                 }
                 // Multiple variables declarations only allowed if previous
                 // declaration was tentative or not a definition.
-                (BindingType::Var, BindingType::Var) => {
-                    #[allow(clippy::match_same_arms)]
+                (Type::Int, Type::Int) => {
                     match (linkage, state, bind_info.state) {
                         // Internal linkage: multiple tentative or nonexistent
                         // definitions are allowed.
-                        (Some(Linkage::Internal), Some(DeclState::Tentative) | None, _) => {}
+                        (
+                            Some(Linkage::Internal),
+                            SymbolState::Tentative | SymbolState::Declared,
+                            _,
+                        ) |
                         // Previous definition was tentative or nonexistent.
-                        (_, _, Some(DeclState::Tentative) | None) => {}
+                        (_, _, SymbolState::Tentative | SymbolState::Declared) => {}
                         _ => return Err(ConflictStatus::Var),
                     }
                 }
@@ -223,9 +148,10 @@ impl IdentResolver {
     fn declare_ident(
         &mut self,
         ident: &str,
-        state: Option<DeclState>,
+        state: SymbolState,
         linkage: Option<Linkage>,
-        ty: BindingType,
+        duration: Option<StorageDuration>,
+        ty: Type,
     ) -> String {
         let resolved_ident = if linkage.is_some() {
             ident.to_string()
@@ -234,7 +160,7 @@ impl IdentResolver {
         };
 
         let mut insert_binding = |scope, is_proxy| {
-            let key = IdentKey {
+            let key = BindingKey {
                 ident: ident.to_string(),
                 scope,
             };
@@ -242,9 +168,11 @@ impl IdentResolver {
             self.bindings
                 .entry(key)
                 .and_modify(|binding| {
-                    // Ensures declarations do not incorrectly update the state
-                    // of a definition with the same symbol.
-                    if binding.state != Some(DeclState::Defined) {
+                    // Promote proxy entries to real declarations and update
+                    // state for non-defined symbols, ensuring declarations do
+                    // not overwrite existing definitions.
+                    if binding.state != state && binding.state != SymbolState::Defined {
+                        binding.is_proxy = false;
                         binding.state = state;
                     }
 
@@ -259,6 +187,7 @@ impl IdentResolver {
                     canonical: resolved_ident.clone(),
                     state,
                     linkage,
+                    duration,
                     ty,
                     is_proxy,
                 });
@@ -266,8 +195,7 @@ impl IdentResolver {
 
         insert_binding(self.scope.current_scope(), false);
 
-        // If the identifier has external linkage, ensure a file scope entry
-        // exists.
+        // Insert proxy entry at file scope.
         if !self.scope.at_file_scope() && linkage == Some(Linkage::External) {
             insert_binding(Scope::FILE_SCOPE, true);
         }
@@ -278,15 +206,16 @@ impl IdentResolver {
     /// Returns the binding information for a given identifier, searching the
     /// appropriate scopes, or `None` if not found.
     fn resolve_ident(&self, ident: &str) -> Option<BindingInfo> {
-        let mut key = IdentKey {
+        let mut key = BindingKey {
             ident: ident.to_string(),
-            scope: Scope::FILE_SCOPE,
+            scope: usize::MAX,
         };
 
         for scope in self.scope.active_scopes.iter().rev() {
             key.scope = *scope;
 
             if let Some(bind_info) = self.bindings.get(&key)
+                // Ignores any entries made for file-scope resolution purposes.
                 && !bind_info.is_proxy
             {
                 return Some(bind_info.clone());
@@ -298,7 +227,7 @@ impl IdentResolver {
 }
 
 /// Converts each encountered symbol to its canonical form, while performing
-/// semantic checks.
+/// semantic checks, returning an initialized symbol map.
 ///
 /// # Errors
 ///
@@ -308,26 +237,39 @@ impl IdentResolver {
 pub fn resolve_symbols<'a>(
     mut ast: AST<'a, Parsed>,
     ctx: &Context<'_>,
-) -> Result<AST<'a, IdentPhase>> {
-    let mut ident_resolver = IdentResolver::default();
+) -> Result<(AST<'a, IdentPhase>, SymbolMap)> {
+    let mut ident_resolver = SymbolResolver::default();
 
     for decl in &mut ast.program {
-        match decl {
-            var @ Declaration::Var { .. } => resolve_variable(var, ctx, &mut ident_resolver)?,
-            Declaration::Func(func) => resolve_function(func, ctx, &mut ident_resolver)?,
-        }
+        resolve_declaration(decl, ctx, &mut ident_resolver)?;
     }
 
-    Ok(AST {
-        program: ast.program,
-        _phase: std::marker::PhantomData,
-    })
+    let sym_map = convert_bindings_map(ident_resolver.bindings);
+
+    Ok((
+        AST {
+            program: ast.program,
+            _phase: std::marker::PhantomData,
+        },
+        sym_map,
+    ))
+}
+
+fn resolve_declaration(
+    decl: &mut Declaration<'_>,
+    ctx: &Context<'_>,
+    resolver: &mut SymbolResolver,
+) -> Result<()> {
+    match decl {
+        var @ Declaration::Var { .. } => resolve_variable(var, ctx, resolver),
+        Declaration::Func(func) => resolve_function(func, ctx, resolver),
+    }
 }
 
 fn resolve_function(
     func: &mut Function<'_>,
     ctx: &Context<'_>,
-    resolver: &mut IdentResolver,
+    resolver: &mut SymbolResolver,
 ) -> Result<()> {
     let Function {
         specs,
@@ -375,19 +317,17 @@ fn resolve_function(
     };
 
     let state = if body.is_some() {
-        Some(DeclState::Defined)
+        SymbolState::Defined
     } else {
-        None
+        SymbolState::Declared
     };
 
-    // Updates linkage only if `extern` adopts prior declaration.
-    linkage = match resolver.check_ident_conflict(
-        ident,
-        state,
-        linkage,
-        specs.storage,
-        BindingType::Func,
-    ) {
+    let ty = Type::Func {
+        params: params.len(),
+    };
+
+    // Updates linkage only if `extern` adopts prior declaration linkage.
+    linkage = match resolver.check_ident_conflict(ident, state, linkage, specs.storage, &ty) {
         Ok(resolved_linkage) => resolved_linkage,
         Err(status) => {
             let tok_str = format!("{token:?}");
@@ -421,17 +361,17 @@ fn resolve_function(
         }
     };
 
-    *ident = resolver.declare_ident(ident, state, linkage, BindingType::Func);
+    *ident = resolver.declare_ident(ident, state, linkage, None, ty);
 
     resolver.scope.enter_scope();
 
     for param in params {
-        let Param { ident, token, .. } = param;
-        let state = Some(DeclState::Defined);
+        let Param {
+            ty, ident, token, ..
+        } = param;
+        let state = SymbolState::Defined;
 
-        if let Err(status) =
-            resolver.check_ident_conflict(ident, state, None, None, BindingType::Var)
-        {
+        if let Err(status) = resolver.check_ident_conflict(ident, state, None, None, ty) {
             debug_assert!(
                 status == ConflictStatus::Var,
                 "function parameters can only conflict based on variable redeclaration"
@@ -451,7 +391,7 @@ fn resolve_function(
             ));
         }
 
-        *ident = resolver.declare_ident(ident, state, None, BindingType::Var);
+        *ident = resolver.declare_ident(ident, state, None, None, *ty);
     }
 
     if let Some(body) = body {
@@ -467,7 +407,7 @@ fn resolve_function(
 fn resolve_variable(
     var: &mut Declaration<'_>,
     ctx: &Context<'_>,
-    resolver: &mut IdentResolver,
+    resolver: &mut SymbolResolver,
 ) -> Result<()> {
     if let Declaration::Var {
         specs,
@@ -489,29 +429,56 @@ fn resolve_variable(
             _ => None,
         };
 
-        let state = {
-            if resolver.scope.at_file_scope() {
-                if init.is_some() {
-                    Some(DeclState::Defined)
-                } else if specs.storage == Some(StorageClass::Extern) {
-                    None
-                } else {
-                    Some(DeclState::Tentative)
-                }
-            } else if specs.storage == Some(StorageClass::Extern) {
-                None
-            } else {
-                Some(DeclState::Defined)
-            }
+        // All file-scope variables have `static` storage duration.
+        let duration = if resolver.scope.at_file_scope() || specs.storage.is_some() {
+            Some(StorageDuration::Static)
+        } else {
+            Some(StorageDuration::Automatic)
         };
 
-        // Updates linkage only if `extern` adopts prior declaration.
+        let state = if duration == Some(StorageDuration::Static) {
+            if let Some(init) = init {
+                // NOTE: Update when constant-expression eval is available to
+                // the compiler.
+                if let Expression::IntConstant(value) = init {
+                    SymbolState::ConstDefined(*value)
+                } else {
+                    let tok_str = format!("{token:?}");
+                    let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                    return Err(fmt_token_err!(
+                        token.loc.file_path.display(),
+                        token.loc.line,
+                        token.loc.col,
+                        tok_str,
+                        tok_str.len() - 1,
+                        line_content,
+                        "initializer element is not constant (currently only support integer literals)",
+                    ));
+                }
+            } else if resolver.scope.at_file_scope() {
+                // Static/non-static file scope variable.
+                SymbolState::Tentative
+            } else if specs.storage == Some(StorageClass::Extern) {
+                // File/block-scope `extern` variable.
+                SymbolState::Declared
+            } else {
+                // Static block-scope variable.
+                SymbolState::Defined
+            }
+        } else {
+            // Automatic storage duration variables are always considered
+            // defined.
+            SymbolState::Defined
+        };
+
+        // Updates linkage only if `extern` adopts prior declaration linkage.
         linkage = match resolver.check_ident_conflict(
             ident,
             state,
             linkage,
             specs.storage,
-            BindingType::Var,
+            &specs.ty,
         ) {
             Ok(resolved_linkage) => resolved_linkage,
             Err(status) => {
@@ -591,7 +558,7 @@ fn resolve_variable(
             }
         };
 
-        *ident = resolver.declare_ident(ident, state, linkage, BindingType::Var);
+        *ident = resolver.declare_ident(ident, state, linkage, duration, specs.ty);
 
         if let Some(init) = init {
             resolve_expression(init, ctx, resolver)?;
@@ -604,7 +571,7 @@ fn resolve_variable(
 fn resolve_block(
     block: &mut Block<'_>,
     ctx: &Context<'_>,
-    resolver: &mut IdentResolver,
+    resolver: &mut SymbolResolver,
 ) -> Result<()> {
     for block_item in &mut block.0 {
         match block_item {
@@ -619,7 +586,7 @@ fn resolve_block(
 fn resolve_statement(
     stmt: &mut Statement<'_>,
     ctx: &Context<'_>,
-    resolver: &mut IdentResolver,
+    resolver: &mut SymbolResolver,
 ) -> Result<()> {
     match stmt {
         Statement::Return(expr) | Statement::Expression(expr) => {
@@ -717,21 +684,10 @@ fn resolve_statement(
     }
 }
 
-fn resolve_declaration(
-    decl: &mut Declaration<'_>,
-    ctx: &Context<'_>,
-    resolver: &mut IdentResolver,
-) -> Result<()> {
-    match decl {
-        var @ Declaration::Var { .. } => resolve_variable(var, ctx, resolver),
-        Declaration::Func(func) => resolve_function(func, ctx, resolver),
-    }
-}
-
 fn resolve_expression(
     expr: &mut Expression<'_>,
     ctx: &Context<'_>,
-    resolver: &mut IdentResolver,
+    resolver: &mut SymbolResolver,
 ) -> Result<()> {
     match expr {
         Expression::Assignment {

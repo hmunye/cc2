@@ -8,6 +8,7 @@ use std::fmt;
 use super::sema;
 
 use crate::compiler::lexer::{OperatorKind, Reserved, Token, TokenType};
+use crate::compiler::parser::types::{Type, c_int};
 use crate::{Context, Result, fmt_err, fmt_token_err};
 
 /// Zero-sized marker indicating a parsed _AST_ (no semantic analysis).
@@ -78,13 +79,6 @@ impl fmt::Display for DeclSpecs {
 pub enum StorageClass {
     Static,
     Extern,
-}
-
-/// _AST_ type specifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Type {
-    Int,
-    Func { params: usize },
 }
 
 /// _AST_ declaration.
@@ -440,7 +434,7 @@ impl Statement<'_> {
 #[derive(Debug, Clone)]
 pub enum Expression<'a> {
     /// Integer constant (32-bit signed).
-    IntConstant(i32),
+    IntConstant(c_int),
     Var {
         ident: String,
         /// Identifier token.
@@ -724,9 +718,9 @@ pub fn parse_ast<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ) -> Result<AST<'a, Analyzed>> {
     let ast = parse_program(ctx, &mut iter)?;
 
-    let ast = sema::resolve_symbols(ast, ctx)?;
+    let (ast, symbol_map) = sema::resolve_symbols(ast, ctx)?;
 
-    let ast = sema::resolve_types(ast, ctx)?;
+    let ast = sema::resolve_types(ast, ctx, &symbol_map)?;
 
     let ast = sema::resolve_labels(ast, ctx)?;
 
@@ -918,6 +912,14 @@ fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
     expect_token(ctx, iter, TokenType::LParen)?;
     let params = parse_params(ctx, iter)?;
     expect_token(ctx, iter, TokenType::RParen)?;
+
+    // NOTE: Include `specs.ty` as return type for function.
+    let specs = DeclSpecs {
+        ty: Type::Func {
+            params: params.len(),
+        },
+        storage: specs.storage,
+    };
 
     if let Some(tok) = iter.peek().map(Result::as_ref).transpose()?
         && matches!(tok.ty, TokenType::Semicolon)

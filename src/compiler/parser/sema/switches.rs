@@ -4,6 +4,7 @@ use crate::compiler::parser::ast::{
     AST, Analyzed, Block, BlockItem, CtrlFlowPhase, Declaration, Expression, Labeled, Statement,
     SwitchCase,
 };
+use crate::compiler::parser::types::c_int;
 use crate::{Context, Result, fmt_token_err};
 
 /// Kind of labeled statement within a `switch` statement.
@@ -15,7 +16,7 @@ enum LabelKind {
 
 /// Maps a `switch` label to its evaluated case values, default label, and
 /// associated cases.
-type ScopedSwitches<'a> = HashMap<String, (HashSet<i32>, Option<String>, Vec<SwitchCase<'a>>)>;
+type ScopedSwitches<'a> = HashMap<String, (HashSet<c_int>, Option<String>, Vec<SwitchCase<'a>>)>;
 
 /// Helper to perform semantic analysis on `switch` statement cases within an
 /// _AST_.

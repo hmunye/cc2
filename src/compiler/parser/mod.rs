@@ -5,5 +5,6 @@
 
 pub mod ast;
 pub mod sema;
+pub mod types;
 
 pub use ast::parse_ast;

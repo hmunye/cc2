@@ -9,6 +9,7 @@ use std::fmt;
 
 use crate::compiler::ir::{self, IR};
 use crate::compiler::parser::ast::{self, Signedness};
+use crate::compiler::parser::types::c_int;
 
 /// Machine _IR_: structured _x86-64_ assembly representation.
 #[derive(Debug)]
@@ -165,8 +166,8 @@ impl fmt::Display for Instruction<'_> {
 /// _MIR x86-64_ operand.
 #[derive(Debug, Clone, Copy)]
 pub enum Operand<'a> {
-    /// Immediate value (32-bit signed).
-    Imm32(i32),
+    /// Immediate value.
+    Imm32(c_int),
     /// Register name.
     Register(Reg),
     /// Pseudoregister (temporary variable).
