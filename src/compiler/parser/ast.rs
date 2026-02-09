@@ -8,6 +8,7 @@ use std::fmt;
 use super::sema;
 
 use crate::compiler::lexer::{OperatorKind, Reserved, Token, TokenType};
+use crate::compiler::parser::sema::symbols::SymbolMap;
 use crate::compiler::parser::types::{Type, c_int};
 use crate::{Context, Result, fmt_err, fmt_token_err};
 
@@ -67,9 +68,9 @@ pub struct DeclSpecs {
 impl fmt::Display for DeclSpecs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(storage) = self.storage {
-            write!(f, "{:?} {:?}", storage, self.ty)
+            write!(f, "{:?} {}", storage, self.ty)
         } else {
-            write!(f, "{:?}", self.ty)
+            write!(f, "{}", self.ty)
         }
     }
 }
@@ -158,10 +159,10 @@ impl Function<'_> {
             .join(", ");
 
         if let Some(body) = &self.body {
-            writeln!(f, "{}{} Fn {:?}({})", pad, self.specs, self.ident, params)?;
+            writeln!(f, "{pad}{} {:?}({params})", self.specs, self.ident)?;
             body.fmt_with_indent(f, indent + 2)?;
         } else {
-            write!(f, "{}{} Fn {:?}({})", pad, self.specs, self.ident, params)?;
+            write!(f, "{pad}{} {:?}({params})", self.specs, self.ident)?;
         }
 
         Ok(())
@@ -706,7 +707,8 @@ pub enum Signedness {
     Unsigned,
 }
 
-/// Parses an abstract syntax tree (_AST_) from the provided `Token` iterator.
+/// Parses an abstract syntax tree (_AST_) from the provided `Token` iterator,
+/// returning an analyzed _AST_ and symbol map.
 ///
 /// # Errors
 ///
@@ -715,18 +717,20 @@ pub enum Signedness {
 pub fn parse_ast<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     mut iter: std::iter::Peekable<I>,
-) -> Result<AST<'a, Analyzed>> {
+) -> Result<(AST<'a, Analyzed>, SymbolMap)> {
     let ast = parse_program(ctx, &mut iter)?;
 
-    let (ast, symbol_map) = sema::resolve_symbols(ast, ctx)?;
+    let (ast, sym_map) = sema::resolve_symbols(ast, ctx)?;
 
-    let ast = sema::resolve_types(ast, ctx, &symbol_map)?;
+    let ast = sema::resolve_types(ast, ctx, &sym_map)?;
 
     let ast = sema::resolve_labels(ast, ctx)?;
 
     let ast = sema::resolve_escapable_ctrl(ast, ctx)?;
 
-    sema::resolve_switches(ast, ctx)
+    let ast = sema::resolve_switches(ast, ctx)?;
+
+    Ok((ast, sym_map))
 }
 
 /// Parses an _AST_ program from the provided `Token` iterator.

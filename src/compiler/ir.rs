@@ -5,23 +5,56 @@
 
 use std::{borrow::Cow, fmt};
 
-use crate::compiler::parser::ast::{self, Analyzed, BinaryOperator, Signedness, UnaryOperator};
+use crate::compiler::parser::{
+    ast::{self, Analyzed, BinaryOperator, Signedness, StorageClass, UnaryOperator},
+    sema::symbols::{Linkage, StorageDuration, SymbolMap, SymbolState},
+    types::c_int,
+};
 
 /// Intermediate representation (_IR_).
 #[derive(Debug)]
 pub struct IR<'a> {
-    /// Functions that represent the structure of the program.
-    pub program: Vec<Function<'a>>,
+    /// Items that represent the structure of the program.
+    pub program: Vec<Item<'a>>,
 }
 
 impl fmt::Display for IR<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "IR Program")?;
-        for func in &self.program {
-            writeln!(f, "{:4}{func}", "")?;
+        for item in &self.program {
+            writeln!(f, "{:4}{item}", "")?;
         }
 
         Ok(())
+    }
+}
+
+/// _IR_ top-level construct
+#[derive(Debug)]
+pub enum Item<'a> {
+    Func(Function<'a>),
+    /// Declaration with `static` storage duration.
+    Static {
+        init: c_int,
+        ident: &'a str,
+        is_global: bool,
+    },
+}
+
+impl fmt::Display for Item<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Item::Func(func) => write!(f, "{func}"),
+            Item::Static {
+                init,
+                ident,
+                is_global,
+            } => writeln!(
+                f,
+                "Static ({}) {ident:?} = {init}",
+                if *is_global { "G" } else { "L" }
+            ),
+        }
     }
 }
 
@@ -31,13 +64,19 @@ pub struct Function<'a> {
     pub ident: &'a str,
     pub params: Vec<&'a str>,
     pub instructions: Vec<Instruction<'a>>,
+    pub is_global: bool,
 }
 
 impl fmt::Display for Function<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let params = self.params.join(", ");
 
-        writeln!(f, "Fn {:?}({})", self.ident, params)?;
+        writeln!(
+            f,
+            "Fn ({}) {:?}({params})",
+            if self.is_global { "G" } else { "L" },
+            self.ident
+        )?;
 
         for inst in &self.instructions {
             writeln!(f, "{:8}{inst}", "")?;
@@ -203,8 +242,8 @@ impl fmt::Display for Instruction<'_> {
 /// _IR_ value.
 #[derive(Debug, Clone)]
 pub enum Value<'a> {
-    /// Integer constant (32-bit signed).
-    IntConstant(i32),
+    /// Integer constant.
+    IntConstant(c_int),
     /// Temporary variable.
     Var(Cow<'a, str>),
 }
@@ -225,8 +264,11 @@ struct TACBuilder<'a> {
     instructions: Vec<Instruction<'a>>,
     tmp_count: usize,
     label_count: usize,
-    // Current _AST_ function label.
+    /// Current _AST_ function label.
     label: &'a str,
+    /// Canonical names of block-scope static objects, later resolved to _IR_
+    /// static items.
+    block_statics: Vec<&'a str>,
 }
 
 impl<'a> TACBuilder<'a> {
@@ -261,65 +303,155 @@ impl<'a> TACBuilder<'a> {
 }
 
 /// Generate intermediate representation (_IR_), given an abstract syntax tree
-/// (_AST_).
+/// (_AST_) and symbol map.
+///
+/// # Panics
+///
+/// Panics if an identifier could not be found in the symbol map.
 #[must_use]
-pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>) -> IR<'a> {
-    let mut ir_funcs = vec![];
+pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &SymbolMap) -> IR<'a> {
+    let mut ir_items = vec![];
 
     let mut builder = TACBuilder {
         instructions: vec![],
         tmp_count: 0,
         label_count: 0,
         label: "",
+        block_statics: vec![],
     };
 
     for decl in &ast.program {
         match decl {
-            ast::Declaration::Var { .. } => todo!(),
+            ast::Declaration::Var {
+                specs, ident, init, ..
+            } => {
+                if specs.storage == Some(StorageClass::Extern) && init.is_none() {
+                    // Skip any `extern` _AST_ declarations at file-scope.
+                    continue;
+                }
+
+                let sym_info = sym_map.get(ident.as_str()).expect(
+                    "semantic analysis ensures every identifier is registered in the symbol map",
+                );
+
+                let init = match sym_info.state {
+                    SymbolState::ConstDefined(i) => i,
+                    SymbolState::Tentative => 0,
+                    _ => continue,
+                };
+
+                ir_items.push(Item::Static {
+                    init,
+                    ident,
+                    // File-scope declarations can either have external or
+                    // internal linkage, never none.
+                    is_global: sym_info.linkage == Some(Linkage::External),
+                });
+            }
             ast::Declaration::Func(func) => {
                 if func.body.is_some() {
                     builder.reset(&func.ident);
-                    ir_funcs.push(generate_ir_function(func, &mut builder));
+
+                    ir_items.push(Item::Func(generate_ir_function(
+                        func,
+                        &mut builder,
+                        sym_map,
+                    )));
                 }
             }
         }
     }
 
-    IR { program: ir_funcs }
+    for ident in builder.block_statics {
+        let sym_info = sym_map
+            .get(ident)
+            .expect("semantic analysis ensures every identifier is registered in the symbol map");
+
+        let init = match sym_info.state {
+            SymbolState::ConstDefined(i) => i,
+            SymbolState::Defined => 0,
+            _ => unreachable!(
+                "block-scope static declarations can only be zero-initialized or defined with a constant expression"
+            ),
+        };
+
+        ir_items.push(Item::Static {
+            init,
+            ident,
+            is_global: false,
+        });
+    }
+
+    IR { program: ir_items }
 }
 
 /// Generate an _IR_ function definition from the provided _AST_ function.
 fn generate_ir_function<'a>(
     func: &'a ast::Function<'_>,
     builder: &mut TACBuilder<'a>,
+    sym_map: &SymbolMap,
 ) -> Function<'a> {
-    fn process_ast_block<'a>(block: &'a ast::Block<'_>, builder: &mut TACBuilder<'a>) {
+    fn process_ast_block<'a>(
+        block: &'a ast::Block<'_>,
+        builder: &mut TACBuilder<'a>,
+        sym_map: &SymbolMap,
+    ) {
         for block_item in &block.0 {
             match block_item {
-                ast::BlockItem::Stmt(stmt) => process_ast_statement(stmt, builder),
-                ast::BlockItem::Decl(decl) => process_ast_declaration(decl, builder),
+                ast::BlockItem::Stmt(stmt) => process_ast_statement(stmt, builder, sym_map),
+                ast::BlockItem::Decl(decl) => process_ast_declaration(decl, builder, sym_map),
             }
         }
     }
 
-    fn process_ast_declaration<'a>(decl: &'a ast::Declaration<'_>, builder: &mut TACBuilder<'a>) {
-        if let ast::Declaration::Var { ident, init, .. } = decl
-            && let Some(init) = &init
+    fn process_ast_declaration<'a>(
+        decl: &'a ast::Declaration<'_>,
+        builder: &mut TACBuilder<'a>,
+        sym_map: &SymbolMap,
+    ) {
+        if let ast::Declaration::Var {
+            specs, ident, init, ..
+        } = decl
         {
-            // Generate and append any instructions needed to encode the
-            // declaration's initializer.
-            let ir_val = generate_ir_value(init, builder);
+            if specs.storage == Some(StorageClass::Extern) {
+                // Skip any `extern` _AST_ declarations at block-scope.
+                return;
+            }
 
-            // Ensure the initializer expression result is copied to the
-            // destination.
-            builder.instructions.push(Instruction::Copy {
-                src: ir_val,
-                dst: Value::Var(Cow::Borrowed(ident.as_str())),
-            });
+            let sym_info = sym_map.get(ident.as_str()).expect(
+                "semantic analysis ensures every identifier is registered in the symbol map",
+            );
+
+            match sym_info.duration {
+                Some(StorageDuration::Static) => {
+                    builder.block_statics.push(ident.as_str());
+                }
+                Some(StorageDuration::Automatic) => {
+                    if let Some(init) = &init {
+                        // Generate and append any instructions needed to encode the
+                        // declaration's initializer.
+                        let ir_val = generate_ir_value(init, builder);
+
+                        // Ensure the initializer expression result is copied to the
+                        // destination.
+                        builder.instructions.push(Instruction::Copy {
+                            src: ir_val,
+                            dst: Value::Var(Cow::Borrowed(ident.as_str())),
+                        });
+                    }
+                }
+                None => unreachable!(
+                    "only function declarations/definitions should have no storage duration"
+                ),
+            }
         }
     }
 
-    fn process_ast_statement<'a>(stmt: &'a ast::Statement<'_>, builder: &mut TACBuilder<'a>) {
+    fn process_ast_statement<'a>(
+        stmt: &'a ast::Statement<'_>,
+        builder: &mut TACBuilder<'a>,
+        sym_map: &SymbolMap,
+    ) {
         match stmt {
             ast::Statement::Return(expr) => {
                 let ir_val = generate_ir_value(expr, builder);
@@ -348,13 +480,13 @@ fn generate_ir_function<'a>(
                     });
 
                     // Handle appending instructions for statements recursively.
-                    process_ast_statement(then, builder);
+                    process_ast_statement(then, builder, sym_map);
 
                     builder.instructions.push(Instruction::Jump(e_lbl.clone()));
                     builder.instructions.push(Instruction::Label(else_lbl));
 
                     // Handle appending instructions for statements recursively.
-                    process_ast_statement(else_stmt, builder);
+                    process_ast_statement(else_stmt, builder, sym_map);
                 } else {
                     builder.instructions.push(Instruction::JumpIfZero {
                         cond,
@@ -362,7 +494,7 @@ fn generate_ir_function<'a>(
                     });
 
                     // Handle appending instructions for statements recursively.
-                    process_ast_statement(then, builder);
+                    process_ast_statement(then, builder, sym_map);
                 }
 
                 builder.instructions.push(Instruction::Label(e_lbl));
@@ -387,11 +519,11 @@ fn generate_ir_function<'a>(
 
                         // Handle appending instructions for statements
                         // recursively.
-                        process_ast_statement(stmt, builder);
+                        process_ast_statement(stmt, builder, sym_map);
                     }
                 }
             }
-            ast::Statement::Compound(block) => process_ast_block(block, builder),
+            ast::Statement::Compound(block) => process_ast_block(block, builder, sym_map),
             ast::Statement::Break { jmp_label, .. } => {
                 builder
                     .instructions
@@ -416,7 +548,7 @@ fn generate_ir_function<'a>(
                     .push(Instruction::Label(start_label.clone()));
 
                 // Handle appending instructions for statements recursively.
-                process_ast_statement(stmt, builder);
+                process_ast_statement(stmt, builder, sym_map);
 
                 builder.instructions.push(Instruction::Label(cont_label));
 
@@ -449,7 +581,7 @@ fn generate_ir_function<'a>(
                 });
 
                 // Handle appending instructions for statements recursively.
-                process_ast_statement(stmt, builder);
+                process_ast_statement(stmt, builder, sym_map);
 
                 builder.instructions.push(Instruction::Jump(cont_label));
 
@@ -463,7 +595,7 @@ fn generate_ir_function<'a>(
                 loop_label: label,
             } => {
                 match &**init {
-                    ast::ForInit::Decl(decl) => process_ast_declaration(decl, builder),
+                    ast::ForInit::Decl(decl) => process_ast_declaration(decl, builder, sym_map),
                     ast::ForInit::Expr(opt_expr) => {
                         if let Some(expr) = opt_expr {
                             // Generate and append any instructions needed to
@@ -498,7 +630,7 @@ fn generate_ir_function<'a>(
                 }
 
                 // Handle appending instructions for statements recursively.
-                process_ast_statement(stmt, builder);
+                process_ast_statement(stmt, builder, sym_map);
 
                 builder.instructions.push(Instruction::Label(cont_label));
 
@@ -558,7 +690,7 @@ fn generate_ir_function<'a>(
                     }
 
                     // Handle appending instructions for statements recursively.
-                    process_ast_statement(stmt, builder);
+                    process_ast_statement(stmt, builder, sym_map);
 
                     builder.instructions.push(Instruction::Label(break_label));
                 }
@@ -579,7 +711,7 @@ fn generate_ir_function<'a>(
         .as_ref()
         .expect("should not generate IR for function declarations");
 
-    process_ast_block(body, builder);
+    process_ast_block(body, builder, sym_map);
 
     // _C17_ 5.1.2.2.3 (Program termination)
     //
@@ -599,10 +731,17 @@ fn generate_ir_function<'a>(
         .instructions
         .push(Instruction::Return(Value::IntConstant(0)));
 
+    let sym_info = sym_map
+        .get(label)
+        .expect("semantic analysis ensures every identifier is registered in the symbol map");
+
     Function {
         instructions: builder.instructions.drain(..).collect(),
         ident: label,
         params,
+        // File-scope declarations can either have external or internal linkage,
+        // never none.
+        is_global: sym_info.linkage == Some(Linkage::External),
     }
 }
 

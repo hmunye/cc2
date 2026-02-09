@@ -1,5 +1,3 @@
-// TODO: Finish updating refactoring so symbol map can be created.
-
 use std::collections::HashMap;
 
 use crate::compiler::parser::ast::{
@@ -56,9 +54,9 @@ impl SymbolResolver {
     /// Returns a new temporary identifier using the provided prefix.
     #[inline]
     fn new_tmp(&self, prefix: &str) -> String {
-        // `@` guarantees it won’t conflict with user-defined identifiers, since
-        // the _C_ standard forbids using `@` in identifiers.
-        format!("{prefix}@{}", self.scope.current_scope())
+        // `.` guarantees it won’t conflict with user-defined identifiers, since
+        // the _C_ standard forbids using `.` in identifiers.
+        format!("{prefix}.{}", self.scope.current_scope())
     }
 
     /// Checks if the given symbol has a conflicting declaration/definition,
@@ -417,7 +415,9 @@ fn resolve_variable(
     } = var
     {
         let mut linkage = match specs.storage {
-            Some(StorageClass::Extern) => Some(Linkage::External),
+            Some(StorageClass::Extern) | None if resolver.scope.at_file_scope() => {
+                Some(Linkage::External)
+            }
             Some(StorageClass::Static) => {
                 if resolver.scope.at_file_scope() {
                     Some(Linkage::Internal)
@@ -425,7 +425,6 @@ fn resolve_variable(
                     None
                 }
             }
-            None if resolver.scope.at_file_scope() => Some(Linkage::External),
             _ => None,
         };
 
@@ -456,12 +455,12 @@ fn resolve_variable(
                         "initializer element is not constant (currently only support integer literals)",
                     ));
                 }
-            } else if resolver.scope.at_file_scope() {
-                // Static/non-static file scope variable.
-                SymbolState::Tentative
             } else if specs.storage == Some(StorageClass::Extern) {
                 // File/block-scope `extern` variable.
                 SymbolState::Declared
+            } else if resolver.scope.at_file_scope() {
+                // Static/non-static file scope variable.
+                SymbolState::Tentative
             } else {
                 // Static block-scope variable.
                 SymbolState::Defined

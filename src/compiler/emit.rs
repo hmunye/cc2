@@ -3,6 +3,7 @@
 //! Compiler pass that emits _gas-x86-64-linux_ textual assembly from the
 //! an _MIR x86-64_ representation.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
@@ -22,33 +23,118 @@ pub fn emit_gas_x86_64_linux(
     mir: &MIRX86<'_>,
     mut writer: Box<dyn IoWrite>,
 ) -> io::Result<()> {
-    // Write the file prologue in GNU `as` (assembler) format.
     writeln!(
         &mut writer,
         "\t.file\t\"{}\"\n\t.text",
         ctx.in_path.display()
     )?;
 
-    for (i, func) in mir.program.iter().enumerate() {
-        // `.L` is the local label prefix for Linux.
-        //
-        // `FB` - Function Begin
-        writeln!(
-            &mut writer,
-            "\t.globl\t{label}\n\t.type\t{label}, @function\n{label}:\n.LFB{i}:",
-            label = &func.label
-        )?;
+    // Track last emitted _ELF_ section.
+    let mut curr_section = ".text";
+    let mut i = 0;
 
-        write!(&mut writer, "{}", emit_asm_function(func, &mir.locales)?)?;
+    for item in &mir.program {
+        match item {
+            mir::Item::Func(func) => {
+                let section_emit = if curr_section == ".text" {
+                    ""
+                } else {
+                    curr_section = ".text";
+                    "\t.text\n"
+                };
 
-        // Records the byte size of the function in the _ELF_ symbol table.
-        //
-        // `FE` - Function End
-        writeln!(
-            &mut writer,
-            ".LFE{i}:\n\t.size\t{label}, .-{label}",
-            label = &func.label
-        )?;
+                let globl_emit = if func.is_global {
+                    Cow::Owned(format!("\t.globl\t{}\n", func.label))
+                } else {
+                    Cow::Borrowed("")
+                };
+
+                // `.L` is the local label prefix for Linux.
+                //
+                // `FB` - Function Begin
+                writeln!(
+                    &mut writer,
+                    "{section_emit}{globl_emit}\t.type\t{label}, @function\n{label}:\n.LFB{i}:",
+                    label = &func.label
+                )?;
+
+                write!(&mut writer, "{}", emit_asm_function(func, &mir.locales)?)?;
+
+                // `.size` directive records the byte size of the function in
+                // the _ELF_ symbol table.
+                //
+                // `FE` - Function End
+                writeln!(
+                    &mut writer,
+                    ".LFE{i}:\n\t.size\t{label}, .-{label}",
+                    label = &func.label
+                )?;
+
+                i += 1;
+            }
+            mir::Item::Static {
+                init,
+                label,
+                is_global,
+            } => {
+                let globl_emit = if *is_global {
+                    Cow::Owned(format!("\t.globl\t{label}\n"))
+                } else {
+                    Cow::Borrowed("")
+                };
+
+                if *init == 0 {
+                    let section_emit = if curr_section == ".bss" {
+                        ""
+                    } else {
+                        curr_section = ".bss";
+                        "\t.bss\n"
+                    };
+
+                    if globl_emit.is_empty() {
+                        // Declare a zero-initialized internal variable as a
+                        // common symbol. `.local` makes it private to this
+                        // object file. `.comm` reserves `size` bytes with
+                        // `align` alignment; the linker places it in the
+                        // `.bss` section at runtime.
+                        writeln!(
+                            &mut writer,
+                            "\t.local\t{label}\n\t.comm\t{label},{size},{align}",
+                            size = 4,
+                            align = 4
+                        )?;
+                    } else {
+                        // `.align` directive aligns a value to `2^n` on macOS,
+                        // `.balign` directive aligns a value to `n` bytes.
+                        //
+                        // `.align` and `.balign` are interchangeable on Linux.
+                        //
+                        // `.size` directive records the byte size of the object in
+                        // the _ELF_ symbol table.
+                        writeln!(
+                            &mut writer,
+                            "{globl_emit}{section_emit}\t.align\t{align}\n\t.type\t{label}, @object\n\t.size\t{label}, {size}\n{label}:\n\t.zero\t{size}",
+                            align = 4,
+                            size = 4
+                        )?;
+                    }
+                } else {
+                    let section_emit = if curr_section == ".data" {
+                        ""
+                    } else {
+                        curr_section = ".data";
+                        "\t.data\n"
+                    };
+
+                    writeln!(
+                        &mut writer,
+                        "{globl_emit}{section_emit}\t.align\t{align}\n\t.type\t{label}, @object\n\t.size\t{label}, {size}\n{label}:\n\t.long\t{init}",
+                        align = 4,
+                        size = 4
+                    )?;
+                }
+            }
+        }
     }
 
     // Indicates the program does not need an executable stack on Linux.
@@ -142,7 +228,7 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
         //
         // On Linux, function names not defined in the current translation unit
         // are suffixed with `@PLT` (Procedure Linkage Table), a section in
-        // `ELF` binaries (`call puts@PLT`).
+        // _ELF_ binaries (`call puts@PLT`).
         //
         // `call` instruction pushes the address of the following instruction
         // onto the stack, then loads the label’s address into `%rip`.
@@ -247,6 +333,8 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8) -> String {
             .to_string(),
         },
         mir::Operand::Stack(i) => format!("{i}(%rbp)"),
-        mir::Operand::Pseudo(_) => panic!("pseudoregisters should not be emitted to assembly"),
+        // On _macOS_, label is prefixed with underscore (e.g., `_foo(%rip)`).
+        mir::Operand::Data(label) => format!("{label}(%rip)"),
+        mir::Operand::Symbol(_) => panic!("pseudoregisters should not be emitted to assembly"),
     }
 }

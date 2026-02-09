@@ -9,13 +9,14 @@ use std::fmt;
 
 use crate::compiler::ir::{self, IR};
 use crate::compiler::parser::ast::{self, Signedness};
+use crate::compiler::parser::sema::symbols::{StorageDuration, SymbolMap};
 use crate::compiler::parser::types::c_int;
 
 /// Machine _IR_: structured _x86-64_ assembly representation.
 #[derive(Debug)]
 pub struct MIRX86<'a> {
-    /// Functions that represent the structure of the assembly program.
-    pub program: Vec<Function<'a>>,
+    /// Items that represent the structure of the assembly program.
+    pub program: Vec<Item<'a>>,
     /// Tracks the set of functions defined within the current translation unit.
     pub locales: HashSet<&'a str>,
 }
@@ -23,11 +24,40 @@ pub struct MIRX86<'a> {
 impl fmt::Display for MIRX86<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MIR (x86-64) Program")?;
-        for func in &self.program {
-            writeln!(f, "{:4}{func}", "")?;
+        for item in &self.program {
+            writeln!(f, "{:4}{item}", "")?;
         }
 
         Ok(())
+    }
+}
+
+/// _MIR x86-64_ top-level construct
+#[derive(Debug)]
+pub enum Item<'a> {
+    Func(Function<'a>),
+    /// Declaration with `static` storage duration.
+    Static {
+        init: c_int,
+        label: &'a str,
+        is_global: bool,
+    },
+}
+
+impl fmt::Display for Item<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Item::Func(func) => write!(f, "{func}"),
+            Item::Static {
+                init,
+                label: ident,
+                is_global,
+            } => writeln!(
+                f,
+                "Static ({}) {ident:?} = {init}",
+                if *is_global { "G" } else { "L" }
+            ),
+        }
     }
 }
 
@@ -36,11 +66,17 @@ impl fmt::Display for MIRX86<'_> {
 pub struct Function<'a> {
     pub label: &'a str,
     pub instructions: Vec<Instruction<'a>>,
+    pub is_global: bool,
 }
 
 impl fmt::Display for Function<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Label {:?}:", self.label)?;
+        writeln!(
+            f,
+            "Label ({}) {:?}:",
+            if self.is_global { "G" } else { "L" },
+            self.label
+        )?;
 
         for inst in &self.instructions {
             writeln!(f, "{:8}{inst}", "")?;
@@ -170,10 +206,12 @@ pub enum Operand<'a> {
     Imm32(c_int),
     /// Register name.
     Register(Reg),
-    /// Pseudoregister (temporary variable).
-    Pseudo(&'a str),
-    /// Stack address with specified offset from `rbp`.
+    /// Symbolic operand (e.g., global, static, temporary variable).
+    Symbol(&'a str),
+    /// Stack address with specified offset from `%rbp`.
     Stack(isize),
+    /// `%rip`-relative global/static data in `.data` or `.bss`.
+    Data(&'a str),
 }
 
 impl fmt::Display for Operand<'_> {
@@ -181,8 +219,9 @@ impl fmt::Display for Operand<'_> {
         match self {
             Operand::Imm32(i) => write!(f, "{i}"),
             Operand::Register(r) => write!(f, "%{r:?}"),
-            Operand::Pseudo(ident) => write!(f, "{ident:?}"),
+            Operand::Symbol(ident) => write!(f, "{ident:?}"),
             Operand::Stack(i) => write!(f, "stack({i})"),
+            Operand::Data(label) => write!(f, "{label:?} [static memory]"),
         }
     }
 }
@@ -278,23 +317,38 @@ pub enum BinaryOperator {
 /// Generate _x86-64_ machine intermediate representation (_MIR_), given an
 /// intermediate representation (_IR_).
 #[must_use]
-pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>) -> MIRX86<'a> {
-    let mut mir_funcs = vec![];
+pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>, sym_map: &SymbolMap) -> MIRX86<'a> {
+    let mut mir_items = vec![];
     let mut locales = HashSet::new();
 
-    for func in &ir.program {
-        locales.insert(func.ident);
-        mir_funcs.push(generate_mir_function(func));
+    for item in &ir.program {
+        match item {
+            ir::Item::Static {
+                init,
+                ident,
+                is_global,
+            } => {
+                mir_items.push(Item::Static {
+                    init: *init,
+                    label: ident,
+                    is_global: *is_global,
+                });
+            }
+            ir::Item::Func(func) => {
+                locales.insert(func.ident);
+                mir_items.push(Item::Func(generate_mir_function(func, sym_map)));
+            }
+        }
     }
 
     MIRX86 {
-        program: mir_funcs,
+        program: mir_items,
         locales,
     }
 }
 
 /// Generate a _MIR_ function definition from the provided _IR_ function.
-fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
+fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) -> Function<'a> {
     let mut instructions = vec![];
 
     // Lower any function parameters before processing the function
@@ -541,9 +595,10 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
     let mut func = Function {
         label: func.ident,
         instructions,
+        is_global: func.is_global,
     };
 
-    let stack_offset = replace_pseudoregisters(&mut func);
+    let stack_offset = replace_symbols(&mut func, sym_map);
 
     rewrite_invalid_instructions(&mut func);
 
@@ -567,7 +622,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
 fn generate_mir_operand<'a>(val: &'a ir::Value<'_>) -> Operand<'a> {
     match val {
         ir::Value::IntConstant(v) => Operand::Imm32(*v),
-        ir::Value::Var(v) => Operand::Pseudo(v),
+        ir::Value::Var(v) => Operand::Symbol(v),
     }
 }
 
@@ -590,7 +645,7 @@ fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a
     for (i, param) in params.iter().take(6).enumerate() {
         out.push(Instruction::Mov {
             src: Operand::Register(registers[i]),
-            dst: Operand::Pseudo(param),
+            dst: Operand::Symbol(param),
         });
     }
 
@@ -608,7 +663,7 @@ fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a
             out.push(Instruction::Mov {
                 // Positive offsets are used to refer to caller stack frame.
                 src: Operand::Stack(stack_offset),
-                dst: Operand::Pseudo(param),
+                dst: Operand::Symbol(param),
             });
 
             stack_offset += 8; // 8 bytes per parameter.
@@ -616,66 +671,77 @@ fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a
     }
 }
 
-/// Replaces each _pseudoregister_ encountered with a stack offset from `%rbp`,
-/// returning the final stack offset.
-fn replace_pseudoregisters(func: &mut Function<'_>) -> isize {
-    let mut map: HashMap<&str, isize> = HashMap::default();
+/// Replaces each symbolic operand with its corresponding location: either a
+/// stack offset from `%rbp` or an address in the `.bss` / `.data` section,
+/// returning the final stack offset used.
+fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
+    let mut offset_map: HashMap<&str, isize> = HashMap::default();
 
     let mut stack_offset = 0;
 
-    // Either increment the current stack offset, or use the stored offset
-    // if the pseudoregister has already been seen.
-    let mut get_offset = |ident| match map.entry(ident) {
-        Entry::Occupied(entry) => *entry.get(),
-        Entry::Vacant(entry) => {
-            // NOTE: Allocating in 4-byte offsets.
-            stack_offset += 4;
-            // Negating the offset refers to a local variable on the stack
-            // relative to `%rbp`.
-            entry.insert(-stack_offset);
-            -stack_offset
+    let mut convert_symbol = |ident| {
+        if let Some(sym_info) = sym_map.get(ident)
+            && sym_info.duration == Some(StorageDuration::Static)
+        {
+            Operand::Data(ident)
+        } else {
+            // Either we encountered an `automatic` storage-duration variable or
+            // an _IR_ temporary variable.
+            let offset = match offset_map.entry(ident) {
+                Entry::Occupied(entry) => *entry.get(),
+                Entry::Vacant(entry) => {
+                    // NOTE: Allocating in 4-byte offsets.
+                    stack_offset += 4;
+                    // Negating the offset refers to a local variable on the \
+                    // stack relative to `%rbp`.
+                    entry.insert(-stack_offset);
+                    -stack_offset
+                }
+            };
+
+            Operand::Stack(offset)
         }
     };
 
     for inst in &mut func.instructions {
         match inst {
             Instruction::Mov { src, dst } => {
-                if let Operand::Pseudo(ident) = src {
-                    *src = Operand::Stack(get_offset(ident));
+                if let Operand::Symbol(ident) = src {
+                    *src = convert_symbol(ident);
                 }
-                if let Operand::Pseudo(ident) = dst {
-                    *dst = Operand::Stack(get_offset(ident));
+                if let Operand::Symbol(ident) = dst {
+                    *dst = convert_symbol(ident);
                 }
             }
             Instruction::Unary { dst, .. } | Instruction::SetC { dst, .. } => {
-                if let Operand::Pseudo(ident) = dst {
-                    *dst = Operand::Stack(get_offset(ident));
+                if let Operand::Symbol(ident) = dst {
+                    *dst = convert_symbol(ident);
                 }
             }
             Instruction::Binary { rhs, dst, .. } => {
-                if let Operand::Pseudo(ident) = rhs {
-                    *rhs = Operand::Stack(get_offset(ident));
+                if let Operand::Symbol(ident) = rhs {
+                    *rhs = convert_symbol(ident);
                 }
-                if let Operand::Pseudo(ident) = dst {
-                    *dst = Operand::Stack(get_offset(ident));
+                if let Operand::Symbol(ident) = dst {
+                    *dst = convert_symbol(ident);
                 }
             }
             Instruction::Cmp { rhs, lhs } => {
-                if let Operand::Pseudo(ident) = rhs {
-                    *rhs = Operand::Stack(get_offset(ident));
+                if let Operand::Symbol(ident) = rhs {
+                    *rhs = convert_symbol(ident);
                 }
-                if let Operand::Pseudo(ident) = lhs {
-                    *lhs = Operand::Stack(get_offset(ident));
+                if let Operand::Symbol(ident) = lhs {
+                    *lhs = convert_symbol(ident);
                 }
             }
             Instruction::Idiv(div) => {
-                if let Operand::Pseudo(ident) = div {
-                    *div = Operand::Stack(get_offset(ident));
+                if let Operand::Symbol(ident) = div {
+                    *div = convert_symbol(ident);
                 }
             }
             Instruction::Push(op) => {
-                if let Operand::Pseudo(ident) = op {
-                    *op = Operand::Stack(get_offset(ident));
+                if let Operand::Symbol(ident) = op {
+                    *op = convert_symbol(ident);
                 }
             }
             _ => {}
@@ -687,15 +753,19 @@ fn replace_pseudoregisters(func: &mut Function<'_>) -> isize {
 
 /// Rewrite instructions with invalid operands to valid _x86-64_ equivalents.
 fn rewrite_invalid_instructions(func: &mut Function<'_>) {
+    /// Returns `true` if the operand refers to a memory location.
+    #[inline]
+    const fn is_memory_operand(op: &Operand<'_>) -> bool {
+        matches!(op, Operand::Stack(_) | Operand::Data(_))
+    }
+
     let mut i = 0;
 
     while i < func.instructions.len() {
         let inst = &mut func.instructions[i];
 
         match inst {
-            Instruction::Mov { src, dst }
-                if matches!(src, Operand::Stack(_)) && matches!(dst, Operand::Stack(_)) =>
-            {
+            Instruction::Mov { src, dst } if is_memory_operand(src) && is_memory_operand(dst) => {
                 let src = *src;
                 let dst = *dst;
 
@@ -745,8 +815,8 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                         | BinaryOperator::And
                         | BinaryOperator::Or
                         | BinaryOperator::Xor
-                ) && matches!(rhs, Operand::Stack(_))
-                    && matches!(dst, Operand::Stack(_)) =>
+                ) && is_memory_operand(rhs)
+                    && is_memory_operand(dst) =>
             {
                 let rhs = *rhs;
                 let dst = *dst;
@@ -774,7 +844,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                 binop: BinaryOperator::Imul,
                 rhs,
                 dst,
-            } if matches!(dst, Operand::Stack(_)) => {
+            } if is_memory_operand(dst) => {
                 let rhs = *rhs;
                 let dst = *dst;
 
@@ -832,7 +902,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                 i += 1;
             }
             Instruction::Cmp { rhs, lhs }
-                if (matches!(rhs, Operand::Stack(_)) && matches!(lhs, Operand::Stack(_)))
+                if (is_memory_operand(rhs) && is_memory_operand(lhs))
                     || matches!(lhs, Operand::Imm32(_)) =>
             {
                 let rhs = *rhs;

@@ -90,42 +90,46 @@ fn main() {
             print!("{lexer}");
         }
         "parse" => {
-            let ast = compiler::parser::parse_ast(&ctx, lexer.peekable()).unwrap_or_else(|err| {
-                eprintln!("{err}");
-                process::exit(1);
-            });
+            let (ast, _) =
+                compiler::parser::parse_ast(&ctx, lexer.peekable()).unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    process::exit(1);
+                });
 
             print!("{ast}");
         }
         "ir" => {
-            let ast = compiler::parser::parse_ast(&ctx, lexer.peekable()).unwrap_or_else(|err| {
-                eprintln!("{err}");
-                process::exit(1);
-            });
+            let (ast, sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())
+                .unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    process::exit(1);
+                });
 
-            let ir = compiler::ir::generate_ir(&ast);
+            let ir = compiler::ir::generate_ir(&ast, &sym_map);
 
             print!("{ir}");
         }
         "mir" => {
-            let ast = compiler::parser::parse_ast(&ctx, lexer.peekable()).unwrap_or_else(|err| {
-                eprintln!("{err}");
-                process::exit(1);
-            });
+            let (ast, sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())
+                .unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    process::exit(1);
+                });
 
-            let ir = compiler::ir::generate_ir(&ast);
-            let mir = compiler::mir::generate_x86_64_mir(&ir);
+            let ir = compiler::ir::generate_ir(&ast, &sym_map);
+            let mir = compiler::mir::generate_x86_64_mir(&ir, &sym_map);
 
             print!("{mir}");
         }
         stage => {
-            let ast = compiler::parser::parse_ast(&ctx, lexer.peekable()).unwrap_or_else(|err| {
-                eprintln!("{err}");
-                process::exit(1);
-            });
+            let (ast, sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())
+                .unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    process::exit(1);
+                });
 
-            let ir = compiler::ir::generate_ir(&ast);
-            let mir = compiler::mir::generate_x86_64_mir(&ir);
+            let ir = compiler::ir::generate_ir(&ast, &sym_map);
+            let mir = compiler::mir::generate_x86_64_mir(&ir, &sym_map);
 
             let writer: Box<dyn Write> = if stage == "asm" {
                 Box::new(io::stdout().lock())
