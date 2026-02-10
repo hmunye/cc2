@@ -134,7 +134,7 @@ impl SymbolResolver {
                 // pass.
                 _ => {}
             }
-        } else if storage == Some(StorageClass::Extern) {
+        } else if linkage.is_some() {
             key.scope = Scope::FILE_SCOPE;
 
             if let Some(bind_info) = self.bindings.get(&key) {
