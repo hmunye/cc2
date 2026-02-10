@@ -5,7 +5,8 @@ use crate::compiler::lexer::Token;
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, Declaration, LabelPhase, Labeled, Statement, TypePhase,
 };
-use crate::{Context, Result, fmt_token_err};
+use crate::compiler::{Context, Result};
+use crate::fmt_token_err;
 
 /// Helper to perform semantic analysis on label/`goto` statements within an
 /// _AST_.

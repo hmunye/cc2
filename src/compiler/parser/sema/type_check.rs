@@ -4,7 +4,8 @@ use crate::compiler::parser::ast::{
 };
 use crate::compiler::parser::sema::symbols::SymbolMap;
 use crate::compiler::parser::types::Type;
-use crate::{Context, Result, fmt_token_err};
+use crate::compiler::{Context, Result};
+use crate::fmt_token_err;
 
 /// Performs type checking using the provided `symbol_map`, enforcing semantic
 /// constraints on expressions and declarations within the given _AST_.

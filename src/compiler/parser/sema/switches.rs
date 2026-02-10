@@ -5,7 +5,8 @@ use crate::compiler::parser::ast::{
     SwitchCase,
 };
 use crate::compiler::parser::types::c_int;
-use crate::{Context, Result, fmt_token_err};
+use crate::compiler::{Context, Result};
+use crate::fmt_token_err;
 
 /// Kind of labeled statement within a `switch` statement.
 #[derive(Debug, Clone, Copy)]

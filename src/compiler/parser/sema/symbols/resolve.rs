@@ -5,7 +5,8 @@ use crate::compiler::parser::ast::{
     Parsed, Statement, StorageClass,
 };
 use crate::compiler::parser::types::Type;
-use crate::{Context, Result, fmt_token_err};
+use crate::compiler::{Context, Result};
+use crate::fmt_token_err;
 
 use super::{Linkage, Scope, StorageDuration, SymbolMap, SymbolState, convert_bindings_map};
 

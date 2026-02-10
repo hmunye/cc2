@@ -8,7 +8,8 @@ use std::ops::Range;
 use std::path::Path;
 
 use crate::compiler::parser::types::c_int;
-use crate::{Context, Result, fmt_token_err};
+use crate::compiler::{Context, Result};
+use crate::fmt_token_err;
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
 
-use crate::Context;
+use crate::compiler::Context;
 use crate::compiler::mir::{self, MIRX86};
 use crate::compiler::mir::{BinaryOperator, UnaryOperator};
 
