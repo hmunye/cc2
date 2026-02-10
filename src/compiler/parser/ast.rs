@@ -158,11 +158,10 @@ impl Function<'_> {
             .collect::<Vec<_>>()
             .join(", ");
 
+        writeln!(f, "{pad}{} {:?}({params})", self.specs, self.ident)?;
+
         if let Some(body) = &self.body {
-            writeln!(f, "{pad}{} {:?}({params})", self.specs, self.ident)?;
             body.fmt_with_indent(f, indent + 2)?;
-        } else {
-            write!(f, "{pad}{} {:?}({params})", self.specs, self.ident)?;
         }
 
         Ok(())

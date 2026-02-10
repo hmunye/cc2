@@ -36,6 +36,15 @@ pub enum SymbolState {
     ConstDefined(c_int),
 }
 
+impl SymbolState {
+    /// Returns `true` if the symbol state represents a definition.
+    #[inline]
+    #[must_use]
+    pub fn is_definition(&self) -> bool {
+        *self != SymbolState::Declared
+    }
+}
+
 /// Resolved information about a canonical symbol.
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
@@ -57,15 +66,28 @@ pub fn convert_bindings_map<S: std::hash::BuildHasher>(
     let mut sym_map = SymbolMap::new();
 
     for bind_info in binding_map.into_values() {
-        sym_map.insert(
-            bind_info.canonical,
-            SymbolInfo {
+        sym_map
+            .entry(bind_info.canonical)
+            // Need to modify existing entries to avoid order-dependent
+            // overwrites, since `binding_map` may contains the same symbol
+            // declared in different scopes, and `HashMap` iteration is
+            // non-deterministic.
+            .and_modify(|existing| {
+                // Never overwrite an existing definition with a declaration.
+                if !existing.state.is_definition() {
+                    existing.state = bind_info.state;
+                }
+
+                existing.linkage = existing.linkage.or(bind_info.linkage);
+                existing.duration = existing.duration.or(bind_info.duration);
+                existing.ty = bind_info.ty;
+            })
+            .or_insert_with(|| SymbolInfo {
                 state: bind_info.state,
                 linkage: bind_info.linkage,
                 ty: bind_info.ty,
                 duration: bind_info.duration,
-            },
-        );
+            });
     }
 
     sym_map

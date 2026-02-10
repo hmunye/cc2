@@ -74,7 +74,7 @@ impl SymbolResolver {
         storage: Option<StorageClass>,
         ty: &Type,
     ) -> core::result::Result<Option<Linkage>, ConflictStatus> {
-        let key = BindingKey {
+        let mut key = BindingKey {
             ident: symbol.to_string(),
             scope: self.scope.current_scope(),
         };
@@ -85,10 +85,11 @@ impl SymbolResolver {
                 return Err(ConflictStatus::Linkage(bind_info.linkage));
             }
 
-            if (matches!(
-                (ty, storage),
-                (Type::Func { .. }, Some(StorageClass::Extern) | None)
-            )) || (*ty == Type::Int && storage == Some(StorageClass::Extern))
+            if bind_info.linkage.is_some()
+                && (matches!(
+                    (ty, storage),
+                    (Type::Func { .. }, Some(StorageClass::Extern) | None)
+                ) || (*ty == Type::Int && storage == Some(StorageClass::Extern)))
             {
                 // Linkage matches the prior visible declaration.
                 linkage = bind_info.linkage;
@@ -133,6 +134,13 @@ impl SymbolResolver {
                 // pass.
                 _ => {}
             }
+        } else if storage == Some(StorageClass::Extern) {
+            key.scope = Scope::FILE_SCOPE;
+
+            if let Some(bind_info) = self.bindings.get(&key) {
+                // Linkage matches the prior visible declaration.
+                linkage = bind_info.linkage;
+            }
         }
 
         Ok(linkage)
@@ -169,7 +177,12 @@ impl SymbolResolver {
                     // Promote proxy entries to real declarations and update
                     // state for non-defined symbols, ensuring declarations do
                     // not overwrite existing definitions.
-                    if binding.state != state && binding.state != SymbolState::Defined {
+                    if binding.state != state
+                        && !matches!(
+                            binding.state,
+                            SymbolState::Defined | SymbolState::ConstDefined(_),
+                        )
+                    {
                         binding.is_proxy = false;
                         binding.state = state;
                     }
@@ -462,12 +475,11 @@ fn resolve_variable(
                 // Static/non-static file scope variable.
                 SymbolState::Tentative
             } else {
-                // Static block-scope variable.
+                // Static block-scope variables are always considered defined.
                 SymbolState::Defined
             }
         } else {
-            // Automatic storage duration variables are always considered
-            // defined.
+            // Automatic variables are always considered defined.
             SymbolState::Defined
         };
 
