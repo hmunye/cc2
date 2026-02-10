@@ -1547,7 +1547,7 @@ fn parse_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     lhs: Box::new(lhs.clone()),
                     rhs: Box::new(rhs),
                     // NOTE: Temporary hack for arithmetic right shift.
-                    sign: Signedness::Unsigned,
+                    sign: Signedness::Signed,
                 };
 
                 lhs = Expression::Assignment {
@@ -1582,7 +1582,7 @@ fn parse_expression<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
                     // NOTE: Temporary hack for arithmetic right shift.
-                    sign: Signedness::Unsigned,
+                    sign: Signedness::Signed,
                 };
             }
         }
@@ -1679,8 +1679,9 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                                     ident: s.to_string(),
                                     token,
                                 }),
-                                // NOTE: Temporary hack for arithmetic right shift.
-                                sign: Signedness::Unsigned,
+                                // NOTE: Temporary hack for arithmetic right
+                                // shift.
+                                sign: Signedness::Signed,
                                 // Postfix unary operator.
                                 prefix: false,
                             });
@@ -1717,13 +1718,6 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                 let unop = ty_to_unop(&token.ty)
                     .expect("expected prefix unary operator when parsing factor");
 
-                // NOTE: Temporary hack for arithmetic right shift.
-                let sign = if matches!(unop, UnaryOperator::Negate) {
-                    Signedness::Signed
-                } else {
-                    Signedness::Unsigned
-                };
-
                 // Recursively parse the factor on which the unary operator is
                 // being applied to.
                 let inner_fct = parse_factor(ctx, iter)?;
@@ -1754,7 +1748,8 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                 Ok(Expression::Unary {
                     op: unop,
                     expr: Box::new(inner_fct),
-                    sign,
+                    // NOTE: Temporary hack for arithmetic right shift.
+                    sign: Signedness::Signed,
                     prefix: true,
                 })
             }
@@ -1783,7 +1778,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                             op: unop,
                             expr: Box::new(inner_expr),
                             // NOTE: Temporary hack for arithmetic right shift.
-                            sign: Signedness::Unsigned,
+                            sign: Signedness::Signed,
                             // Postfix unary operator.
                             prefix: false,
                         })

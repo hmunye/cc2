@@ -669,7 +669,7 @@ fn generate_ir_function<'a>(
                             rhs,
                             dst: dst.clone(),
                             // NOTE: Temporary hack for arithmetic right shift.
-                            sign: Signedness::Unsigned,
+                            sign: Signedness::Signed,
                         });
 
                         builder.instructions.push(Instruction::JumpIfNotZero {
@@ -752,16 +752,6 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
         ast::Expression::Unary {
             op, expr, prefix, ..
         } => {
-            // The sign of an _IR_ instruction is determined by the
-            // sub-expressions (here `expr`), not by when the operator is
-            // applied to them.
-            //
-            // NOTE: Temporary hack for arithmetic right shift.
-            let sign = match **expr {
-                ast::Expression::Unary { sign, .. } | ast::Expression::Binary { sign, .. } => sign,
-                _ => Signedness::Unsigned,
-            };
-
             // Recursively process the expression until the base case is reached.
             // This ensures the inner expression is processed initially before
             // unwinding.
@@ -787,7 +777,8 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
                         lhs: src.clone(),
                         rhs: Value::IntConstant(1),
                         dst: tmp.clone(),
-                        sign,
+                        // NOTE: Temporary hack for arithmetic right shift.
+                        sign: Signedness::Signed,
                     });
 
                     if *prefix {
@@ -818,7 +809,8 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
                         op: *op,
                         src,
                         dst: dst.clone(),
-                        sign,
+                        // NOTE: Temporary hack for arithmetic right shift.
+                        sign: Signedness::Signed,
                     });
                 }
             }
@@ -826,16 +818,6 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
             dst
         }
         ast::Expression::Binary { op, lhs, rhs, .. } => {
-            // The sign of an _IR_ instruction is determined by the
-            // sub-expressions (here `expr`), not by when the operator is
-            // applied to them.
-            //
-            // NOTE: Temporary hack for arithmetic right shift.
-            let sign = match **lhs {
-                ast::Expression::Unary { sign, .. } | ast::Expression::Binary { sign, .. } => sign,
-                _ => Signedness::Unsigned,
-            };
-
             match op {
                 ast::BinaryOperator::LogAnd | ast::BinaryOperator::LogOr => {
                     let lhs = generate_ir_value(lhs, builder);
@@ -923,7 +905,8 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
                         lhs,
                         rhs,
                         dst: dst.clone(),
-                        sign,
+                        // NOTE: Temporary hack for arithmetic right shift.
+                        sign: Signedness::Signed,
                     });
 
                     dst
