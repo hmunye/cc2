@@ -177,12 +177,7 @@ impl SymbolResolver {
                     // Promote proxy entries to real declarations and update
                     // state for non-defined symbols, ensuring declarations do
                     // not overwrite existing definitions.
-                    if binding.state != state
-                        && !matches!(
-                            binding.state,
-                            SymbolState::Defined | SymbolState::ConstDefined(_),
-                        )
-                    {
+                    if binding.state.promotes(&state) {
                         binding.is_proxy = false;
                         binding.state = state;
                     }
@@ -428,9 +423,7 @@ fn resolve_variable(
     } = var
     {
         let mut linkage = match specs.storage {
-            Some(StorageClass::Extern) | None if resolver.scope.at_file_scope() => {
-                Some(Linkage::External)
-            }
+            Some(StorageClass::Extern) => Some(Linkage::External),
             Some(StorageClass::Static) => {
                 if resolver.scope.at_file_scope() {
                     Some(Linkage::Internal)
@@ -438,6 +431,7 @@ fn resolve_variable(
                     None
                 }
             }
+            None if resolver.scope.at_file_scope() => Some(Linkage::External),
             _ => None,
         };
 

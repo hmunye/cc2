@@ -40,8 +40,25 @@ impl SymbolState {
     /// Returns `true` if the symbol state represents a definition.
     #[inline]
     #[must_use]
-    pub fn is_definition(&self) -> bool {
-        *self != SymbolState::Declared
+    pub const fn is_definition(&self) -> bool {
+        !matches!(self, SymbolState::Declared)
+    }
+
+    /// Returns `true` if the new state promotes this existing state. Symbol
+    /// states may promote upward (e.g., declared -> tentative -> defined, etc.)
+    /// and are never demoted.
+    #[inline]
+    #[must_use]
+    pub const fn promotes(&self, new: &SymbolState) -> bool {
+        match (self, new) {
+            (
+                SymbolState::Declared,
+                SymbolState::Tentative | SymbolState::Defined | SymbolState::ConstDefined(_),
+            )
+            | (SymbolState::Tentative, SymbolState::Defined | SymbolState::ConstDefined(_)) => true,
+            // All other cases are not promotions.
+            _ => false,
+        }
     }
 }
 
