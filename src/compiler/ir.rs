@@ -309,7 +309,7 @@ impl<'a> TACBuilder<'a> {
 ///
 /// Panics if an identifier could not be found in the symbol map.
 #[must_use]
-pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &SymbolMap) -> IR<'a> {
+pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &mut SymbolMap) -> IR<'a> {
     let mut ir_items = vec![];
 
     let mut builder = TACBuilder {
@@ -322,17 +322,16 @@ pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &SymbolMap) -> 
 
     for decl in &ast.program {
         match decl {
-            ast::Declaration::Var {
-                specs, ident, init, ..
-            } => {
-                if specs.storage == Some(StorageClass::Extern) && init.is_none() {
-                    // Skip any `extern` _AST_ declarations at file-scope.
-                    continue;
-                }
-
-                let sym_info = sym_map.get(ident.as_str()).expect(
+            ast::Declaration::Var { ident, .. } => {
+                let sym_info = sym_map.get_mut(ident.as_str()).expect(
                     "semantic analysis ensures every identifier is registered in the symbol map",
                 );
+
+                if sym_info.emitted {
+                    continue;
+                } else {
+                    sym_info.emitted = true;
+                }
 
                 let init = match sym_info.state {
                     SymbolState::ConstDefined(i) => i,

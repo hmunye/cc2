@@ -69,6 +69,8 @@ pub struct SymbolInfo {
     pub linkage: Option<Linkage>,
     pub ty: Type,
     pub duration: Option<StorageDuration>,
+    /// Has this symbol been emitted into _IR_ instructions.
+    pub emitted: bool,
 }
 
 /// Mapping of canonical identifier to symbol information.
@@ -104,6 +106,7 @@ pub fn convert_bindings_map<S: std::hash::BuildHasher>(
                 linkage: bind_info.linkage,
                 ty: bind_info.ty,
                 duration: bind_info.duration,
+                emitted: false,
             });
     }
 
