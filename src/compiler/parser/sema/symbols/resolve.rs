@@ -39,8 +39,9 @@ pub struct BindingInfo {
     pub linkage: Option<Linkage>,
     pub duration: Option<StorageDuration>,
     pub ty: Type,
-    /// If this entry exists only for file-scope visibility. Proxy (second)
-    /// entry doesn’t represent a real declaration in the source code.
+    /// If this entry exists only for file-scope visibility (e.g., `extern`
+    /// block-scope declarations). Proxy entry doesn’t represent a real
+    /// declaration in the source code.
     pub is_proxy: bool,
 }
 
@@ -57,6 +58,8 @@ impl SymbolResolver {
     fn new_tmp(&self, prefix: &str) -> String {
         // `.` guarantees it won’t conflict with user-defined identifiers, since
         // the _C_ standard forbids using `.` in identifiers.
+        //
+        // `@` is not allowed in GNU `as` assembly syntax.
         format!("{prefix}.{}", self.scope.current_scope())
     }
 
@@ -222,7 +225,7 @@ impl SymbolResolver {
             key.scope = *scope;
 
             if let Some(bind_info) = self.bindings.get(&key)
-                // Ignores any entries made for file-scope resolution purposes.
+                // Ignores any entries made for file-scope visibility purposes.
                 && !bind_info.is_proxy
             {
                 return Some(bind_info.clone());
@@ -436,7 +439,6 @@ fn resolve_variable(
             _ => None,
         };
 
-        // All file-scope variables have `static` storage duration.
         let duration = if resolver.scope.at_file_scope() || specs.storage.is_some() {
             Some(StorageDuration::Static)
         } else {

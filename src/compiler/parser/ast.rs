@@ -5,13 +5,13 @@
 
 use std::fmt;
 
-use super::sema;
-
 use crate::compiler::lexer::{OperatorKind, Reserved, Token, TokenType};
 use crate::compiler::parser::sema::symbols::SymbolMap;
 use crate::compiler::parser::types::{Type, c_int};
 use crate::compiler::{Context, Result};
 use crate::{fmt_err, fmt_token_err};
+
+use super::sema;
 
 /// Zero-sized marker indicating a parsed _AST_ (no semantic analysis).
 #[derive(Debug)]

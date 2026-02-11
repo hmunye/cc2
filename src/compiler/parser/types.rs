@@ -1,6 +1,6 @@
 use std::fmt;
 
-/// Equivalent to C’s signed integer (`int`) type.
+/// Equivalent to _C_ signed integer (`int`) type.
 #[allow(non_camel_case_types)]
 pub type c_int = i32;
 

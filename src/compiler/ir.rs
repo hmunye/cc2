@@ -3,13 +3,14 @@
 //! Compiler pass that lowers an abstract syntax tree (_AST_) into three-address
 //! code (_TAC_) intermediate representation (_IR_).
 
-use std::{borrow::Cow, fmt};
+use std::borrow::Cow;
+use std::fmt;
 
-use crate::compiler::parser::{
-    ast::{self, Analyzed, BinaryOperator, Signedness, StorageClass, UnaryOperator},
-    sema::symbols::{Linkage, StorageDuration, SymbolMap, SymbolState},
-    types::c_int,
+use crate::compiler::parser::ast::{
+    self, Analyzed, BinaryOperator, Signedness, StorageClass, UnaryOperator,
 };
+use crate::compiler::parser::sema::symbols::{Linkage, StorageDuration, SymbolMap, SymbolState};
+use crate::compiler::parser::types::c_int;
 
 /// Intermediate representation (_IR_).
 #[derive(Debug)]
@@ -29,7 +30,7 @@ impl fmt::Display for IR<'_> {
     }
 }
 
-/// _IR_ top-level construct
+/// _IR_ top-level construct.
 #[derive(Debug)]
 pub enum Item<'a> {
     Func(Function<'a>),
@@ -291,7 +292,8 @@ impl<'a> TACBuilder<'a> {
         label
     }
 
-    /// Resets the builder state, providing the next _AST_ function label.
+    /// Resets the builder state, providing the next _AST_ function definition
+    /// label.
     const fn reset(&mut self, label: &'a str) {
         // Function label already ensures uniqueness for identifiers and labels
         // across the translation unit.
@@ -336,14 +338,14 @@ pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &mut SymbolMap)
                 let init = match sym_info.state {
                     SymbolState::ConstDefined(i) => i,
                     SymbolState::Tentative => 0,
+                    // Do not emit any instructions for `extern` declarations at
+                    // file-scope.
                     _ => continue,
                 };
 
                 ir_items.push(Item::Static {
                     init,
                     ident,
-                    // File-scope declarations can either have external or
-                    // internal linkage, never none.
                     is_global: sym_info.linkage == Some(Linkage::External),
                 });
             }
@@ -369,9 +371,7 @@ pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &mut SymbolMap)
         let init = match sym_info.state {
             SymbolState::ConstDefined(i) => i,
             SymbolState::Defined => 0,
-            _ => unreachable!(
-                "block-scope static declarations can only be zero-initialized or defined with a constant expression"
-            ),
+            _ => unreachable!("block-scope static declarations can only ever be defined"),
         };
 
         ir_items.push(Item::Static {
@@ -384,7 +384,8 @@ pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &mut SymbolMap)
     IR { program: ir_items }
 }
 
-/// Generate an _IR_ function definition from the provided _AST_ function.
+/// Generate an _IR_ function definition from the provided _AST_ function
+/// definition.
 fn generate_ir_function<'a>(
     func: &'a ast::Function<'_>,
     builder: &mut TACBuilder<'a>,
@@ -413,7 +414,8 @@ fn generate_ir_function<'a>(
         } = decl
         {
             if specs.storage == Some(StorageClass::Extern) {
-                // Skip any `extern` _AST_ declarations at block-scope.
+                // Do not emit any instructions for `extern` declarations at
+                // block-scope.
                 return;
             }
 
@@ -427,12 +429,12 @@ fn generate_ir_function<'a>(
                 }
                 Some(StorageDuration::Automatic) => {
                     if let Some(init) = &init {
-                        // Generate and append any instructions needed to encode the
-                        // declaration's initializer.
+                        // Generate and append any instructions needed to encode
+                        // the declaration initializer.
                         let ir_val = generate_ir_value(init, builder);
 
-                        // Ensure the initializer expression result is copied to the
-                        // destination.
+                        // Ensure the initializer expression result is copied to
+                        // the destination.
                         builder.instructions.push(Instruction::Copy {
                             src: ir_val,
                             dst: Value::Var(Cow::Borrowed(ident.as_str())),
@@ -738,8 +740,6 @@ fn generate_ir_function<'a>(
         instructions: builder.instructions.drain(..).collect(),
         ident: label,
         params,
-        // File-scope declarations can either have external or internal linkage,
-        // never none.
         is_global: sym_info.linkage == Some(Linkage::External),
     }
 }
@@ -752,9 +752,9 @@ fn generate_ir_value<'a>(expr: &'a ast::Expression<'_>, builder: &mut TACBuilder
         ast::Expression::Unary {
             op, expr, prefix, ..
         } => {
-            // Recursively process the expression until the base case is reached.
-            // This ensures the inner expression is processed initially before
-            // unwinding.
+            // Recursively process the expression until the base case is
+            // reached. This ensures the inner expression is processed initially
+            // before unwinding.
             let src = generate_ir_value(expr, builder);
             let dst = Value::Var(Cow::Owned(builder.new_tmp()));
 

@@ -44,8 +44,9 @@ impl SymbolState {
         !matches!(self, SymbolState::Declared)
     }
 
-    /// Returns `true` if the new state promotes this existing state. Symbol
-    /// states may promote upward (e.g., declared -> tentative -> defined, etc.)
+    /// Returns `true` if the new state promotes the existing state.
+    ///
+    /// Symbol states may promote upward (e.g., declared -> tentative -> defined, etc.)
     /// and are never demoted.
     #[inline]
     #[must_use]
@@ -98,8 +99,8 @@ pub fn convert_bindings_map<S: std::hash::BuildHasher>(
                 }
 
                 existing.linkage = existing.linkage.or(bind_info.linkage);
-                existing.duration = existing.duration.or(bind_info.duration);
-                existing.ty = bind_info.ty;
+                // existing.duration = bind_info.duration;
+                // existing.ty = bind_info.ty;
             })
             .or_insert_with(|| SymbolInfo {
                 state: bind_info.state,

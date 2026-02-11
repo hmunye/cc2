@@ -17,10 +17,10 @@ use crate::fmt_token_err;
 pub fn resolve_types<'a>(
     ast: AST<'a, IdentPhase>,
     ctx: &Context<'_>,
-    symbol_map: &SymbolMap,
+    sym_map: &SymbolMap,
 ) -> Result<AST<'a, TypePhase>> {
     for decl in &ast.program {
-        type_check_declaration(decl, true, ctx, symbol_map)?;
+        type_check_declaration(decl, true, ctx, sym_map)?;
     }
 
     Ok(AST {
@@ -33,19 +33,15 @@ fn type_check_declaration(
     decl: &Declaration<'_>,
     is_file_scope: bool,
     ctx: &Context<'_>,
-    symbol_map: &SymbolMap,
+    sym_map: &SymbolMap,
 ) -> Result<()> {
     match decl {
-        var @ Declaration::Var { .. } => type_check_variable(var, is_file_scope, ctx, symbol_map),
-        Declaration::Func(func) => type_check_function(func, ctx, symbol_map),
+        var @ Declaration::Var { .. } => type_check_variable(var, is_file_scope, ctx, sym_map),
+        Declaration::Func(func) => type_check_function(func, ctx, sym_map),
     }
 }
 
-fn type_check_function(
-    func: &Function<'_>,
-    ctx: &Context<'_>,
-    symbol_map: &SymbolMap,
-) -> Result<()> {
+fn type_check_function(func: &Function<'_>, ctx: &Context<'_>, sym_map: &SymbolMap) -> Result<()> {
     let Function {
         specs,
         ident,
@@ -54,7 +50,7 @@ fn type_check_function(
         ..
     } = func;
 
-    if let Some(entry) = symbol_map.get(ident.as_str())
+    if let Some(entry) = sym_map.get(ident.as_str())
         && entry.ty != specs.ty
     {
         let tok_str = format!("{token:?}");
@@ -72,7 +68,7 @@ fn type_check_function(
     }
 
     if let Some(body) = body {
-        type_check_block(body, ctx, symbol_map)?;
+        type_check_block(body, ctx, sym_map)?;
     }
 
     Ok(())
@@ -82,7 +78,7 @@ fn type_check_variable(
     var: &Declaration<'_>,
     is_file_scope: bool,
     ctx: &Context<'_>,
-    symbol_map: &SymbolMap,
+    sym_map: &SymbolMap,
 ) -> Result<()> {
     if let Declaration::Var {
         specs,
@@ -106,7 +102,7 @@ fn type_check_variable(
             ));
         }
 
-        if let Some(entry) = symbol_map.get(ident.as_str())
+        if let Some(entry) = sym_map.get(ident.as_str())
             && entry.ty != specs.ty
         {
             let tok_str = format!("{token:?}");
@@ -124,18 +120,18 @@ fn type_check_variable(
         }
 
         if let Some(init) = init {
-            type_check_expression(init, ctx, symbol_map)?;
+            type_check_expression(init, ctx, sym_map)?;
         }
     }
 
     Ok(())
 }
 
-fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, symbol_map: &SymbolMap) -> Result<()> {
+fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, sym_map: &SymbolMap) -> Result<()> {
     for block_item in &block.0 {
         match block_item {
-            BlockItem::Stmt(stmt) => type_check_statement(stmt, ctx, symbol_map)?,
-            BlockItem::Decl(decl) => type_check_declaration(decl, false, ctx, symbol_map)?,
+            BlockItem::Stmt(stmt) => type_check_statement(stmt, ctx, sym_map)?,
+            BlockItem::Decl(decl) => type_check_declaration(decl, false, ctx, sym_map)?,
         }
     }
 
@@ -145,22 +141,22 @@ fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, symbol_map: &SymbolMap
 fn type_check_statement(
     stmt: &Statement<'_>,
     ctx: &Context<'_>,
-    symbol_map: &SymbolMap,
+    sym_map: &SymbolMap,
 ) -> Result<()> {
     match stmt {
         Statement::Return(expr) | Statement::Expression(expr) => {
-            type_check_expression(expr, ctx, symbol_map)
+            type_check_expression(expr, ctx, sym_map)
         }
         Statement::If {
             cond,
             then,
             opt_else,
         } => {
-            type_check_expression(cond, ctx, symbol_map)?;
-            type_check_statement(then, ctx, symbol_map)?;
+            type_check_expression(cond, ctx, sym_map)?;
+            type_check_statement(then, ctx, sym_map)?;
 
             if let Some(stmt) = opt_else {
-                type_check_statement(stmt, ctx, symbol_map)?;
+                type_check_statement(stmt, ctx, sym_map)?;
             }
 
             Ok(())
@@ -169,19 +165,19 @@ fn type_check_statement(
             let stmt = match labeled {
                 Labeled::Label { stmt, .. } | Labeled::Default { stmt, .. } => stmt,
                 Labeled::Case { expr, stmt, .. } => {
-                    type_check_expression(expr, ctx, symbol_map)?;
+                    type_check_expression(expr, ctx, sym_map)?;
                     stmt
                 }
             };
 
-            type_check_statement(stmt, ctx, symbol_map)
+            type_check_statement(stmt, ctx, sym_map)
         }
-        Statement::Compound(block) => type_check_block(block, ctx, symbol_map),
+        Statement::Compound(block) => type_check_block(block, ctx, sym_map),
         Statement::While { cond, stmt, .. }
         | Statement::Do { stmt, cond, .. }
         | Statement::Switch { cond, stmt, .. } => {
-            type_check_expression(cond, ctx, symbol_map)?;
-            type_check_statement(stmt, ctx, symbol_map)
+            type_check_expression(cond, ctx, sym_map)?;
+            type_check_statement(stmt, ctx, sym_map)
         }
         Statement::For {
             init,
@@ -208,28 +204,28 @@ fn type_check_statement(
                             ));
                         }
 
-                        type_check_variable(decl, false, ctx, symbol_map)?;
+                        type_check_variable(decl, false, ctx, sym_map)?;
                     }
                     Declaration::Func(_) => unreachable!(
-                        "'for' loop initial declaration should never contain a function declaration"
+                        "`for` loop initial declaration should never contain a function declaration"
                     ),
                 },
                 ForInit::Expr(opt_init) => {
                     if let Some(init) = opt_init {
-                        type_check_expression(init, ctx, symbol_map)?;
+                        type_check_expression(init, ctx, sym_map)?;
                     }
                 }
             }
 
             if let Some(cond) = opt_cond {
-                type_check_expression(cond, ctx, symbol_map)?;
+                type_check_expression(cond, ctx, sym_map)?;
             }
 
             if let Some(post) = opt_post {
-                type_check_expression(post, ctx, symbol_map)?;
+                type_check_expression(post, ctx, sym_map)?;
             }
 
-            type_check_statement(stmt, ctx, symbol_map)
+            type_check_statement(stmt, ctx, sym_map)
         }
         Statement::Goto { .. }
         | Statement::Break { .. }
@@ -241,29 +237,29 @@ fn type_check_statement(
 fn type_check_expression(
     expr: &Expression<'_>,
     ctx: &Context<'_>,
-    symbol_map: &SymbolMap,
+    sym_map: &SymbolMap,
 ) -> Result<()> {
     match expr {
         Expression::Assignment { lvalue, rvalue, .. } => {
-            type_check_expression(lvalue, ctx, symbol_map)?;
-            type_check_expression(rvalue, ctx, symbol_map)
+            type_check_expression(lvalue, ctx, sym_map)?;
+            type_check_expression(rvalue, ctx, sym_map)
         }
-        Expression::Unary { expr, .. } => type_check_expression(expr, ctx, symbol_map),
+        Expression::Unary { expr, .. } => type_check_expression(expr, ctx, sym_map),
         Expression::Binary { lhs, rhs, .. } => {
-            type_check_expression(lhs, ctx, symbol_map)?;
-            type_check_expression(rhs, ctx, symbol_map)
+            type_check_expression(lhs, ctx, sym_map)?;
+            type_check_expression(rhs, ctx, sym_map)
         }
         Expression::Conditional {
             cond,
             second,
             third,
         } => {
-            type_check_expression(cond, ctx, symbol_map)?;
-            type_check_expression(second, ctx, symbol_map)?;
-            type_check_expression(third, ctx, symbol_map)
+            type_check_expression(cond, ctx, sym_map)?;
+            type_check_expression(second, ctx, sym_map)?;
+            type_check_expression(third, ctx, sym_map)
         }
         Expression::Var { ident, token } => {
-            let entry = symbol_map
+            let entry = sym_map
                 .get(ident.as_str())
                 .expect("variable type should be available after symbol resolution");
 
@@ -285,7 +281,7 @@ fn type_check_expression(
             Ok(())
         }
         Expression::FuncCall { ident, args, token } => {
-            let f_type = symbol_map
+            let f_type = sym_map
                 .get(ident.as_str())
                 .expect("function type should be available after symbol resolution");
 
@@ -308,7 +304,7 @@ fn type_check_expression(
                 }
 
                 for expr in args {
-                    type_check_expression(expr, ctx, symbol_map)?;
+                    type_check_expression(expr, ctx, sym_map)?;
                 }
 
                 Ok(())

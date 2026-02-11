@@ -9,8 +9,7 @@ use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
 
 use crate::compiler::Context;
-use crate::compiler::mir::{self, MIRX86};
-use crate::compiler::mir::{BinaryOperator, UnaryOperator};
+use crate::compiler::mir::{self, BinaryOperator, MIRX86, UnaryOperator};
 
 /// Emits _gas-x86-64-linux_ assembly from a _x86-64_ machine intermediate
 /// representation (_MIR_) to the provided `writer`.
@@ -93,7 +92,7 @@ pub fn emit_gas_x86_64_linux(
 
                     if globl_emit.is_empty() {
                         // Declare a zero-initialized internal variable as a
-                        // common symbol. `.local` makes it private to this
+                        // common symbol. `.local` makes it private to the
                         // object file. `.comm` reserves `size` bytes with
                         // `align` alignment; the linker places it in the
                         // `.bss` section at runtime.
@@ -109,8 +108,8 @@ pub fn emit_gas_x86_64_linux(
                         //
                         // `.align` and `.balign` are interchangeable on Linux.
                         //
-                        // `.size` directive records the byte size of the object in
-                        // the _ELF_ symbol table.
+                        // `.size` directive records the byte size of the object
+                        // in the _ELF_ symbol table.
                         writeln!(
                             &mut writer,
                             "{globl_emit}{section_emit}\t.align\t{align}\n\t.type\t{label}, @object\n\t.size\t{label}, {size}\n{label}:\n\t.zero\t{size}",
@@ -333,8 +332,8 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8) -> String {
             .to_string(),
         },
         mir::Operand::Stack(i) => format!("{i}(%rbp)"),
-        // On _macOS_, label is prefixed with underscore (e.g., `_foo(%rip)`).
-        mir::Operand::Data(label) => format!("{label}(%rip)"),
+        // On _macOS_, symbol is prefixed with underscore (e.g., `_foo(%rip)`).
+        mir::Operand::Data(symbol) => format!("{symbol}(%rip)"),
         mir::Operand::Symbol(_) => panic!("pseudoregisters should not be emitted to assembly"),
     }
 }

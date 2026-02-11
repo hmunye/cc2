@@ -3,8 +3,8 @@
 set -uo pipefail
 
 if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 <file>" >&2
-  exit 1
+    echo "Usage: $0 <file>" >&2
+    exit 1
 fi
 
 src="${1:-example.c}"

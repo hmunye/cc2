@@ -26,8 +26,7 @@ Tiny C Compiler (subset of _C17_).
 - [x] Lexical block scoping
 - [x] Shadowing
 - [x] Internal and external linkage (`extern` and `static`)
-- [x] Static storage duration (file-scope variables and `static` locals)
-- [x] Automatic storage duration (local variables)
+- [x] Static/automatic storage duration (local/file-scope variables and `static` locals)
 
 ### Statements
 

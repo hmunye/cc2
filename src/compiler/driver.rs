@@ -34,7 +34,7 @@ impl Context<'_> {
     }
 }
 
-/// Executes the compilation pipeline for processing a _C_ source file.
+/// Executes the compilation pipeline for a _C_ translation unit.
 ///
 /// # Errors
 ///

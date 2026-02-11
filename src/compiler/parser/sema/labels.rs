@@ -157,8 +157,8 @@ pub fn resolve_labels<'a>(
         Ok(())
     }
 
-    // Labels live in a different namespace from ordinary identifiers (variables,
-    // functions, types, etc.) within the same function scope.
+    // Labels live in a different namespace from ordinary identifiers
+    // (variables, functions, types, etc.) within the same function scope.
     let mut lbl_resolver = LabelResolver::default();
 
     for decl in &mut ast.program {
@@ -200,8 +200,8 @@ pub fn resolve_labels<'a>(
     })
 }
 
-/// Updates original labels/`goto` target identifiers with their canonical
-/// form.
+/// Updates original labels/`goto` target identifiers within the provided
+/// function body, with their canonical form.
 fn update_labels(body: &mut Block<'_>, resolver: &LabelResolver<'_>) {
     fn resolve_block(block: &mut Block<'_>, resolver: &LabelResolver<'_>) {
         for block_item in &mut block.0 {

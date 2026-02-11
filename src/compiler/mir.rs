@@ -1,7 +1,7 @@
 //! Machine Intermediate Representation
 //!
-//! Compiler pass that lowers three-address code (_TAC_) intermediate
-//! representation (_IR_) into machine intermediate representation (_x86-64_).
+//! Compiler pass that lowers an intermediate representation (_IR_) into machine
+//! intermediate representation (_x86-64_).
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -32,7 +32,7 @@ impl fmt::Display for MIRX86<'_> {
     }
 }
 
-/// _MIR x86-64_ top-level construct
+/// _MIR x86-64_ top-level construct.
 #[derive(Debug)]
 pub enum Item<'a> {
     Func(Function<'a>),
@@ -193,7 +193,7 @@ impl fmt::Display for Instruction<'_> {
             Instruction::StackAlloc(i) => write!(f, "{:<15}{i}", "StackAlloc"),
             Instruction::StackDealloc(i) => write!(f, "{:<15}{i}", "StackDealloc"),
             Instruction::Push(op) => write!(f, "{:<15}{op}", "Push"),
-            Instruction::Call(label) => write!(f, "{:<15}{label:?}", "Call"),
+            Instruction::Call(ident) => write!(f, "{:<15}{ident:?}", "Call"),
             Instruction::Ret => write!(f, "Ret"),
         }
     }
@@ -210,7 +210,7 @@ pub enum Operand<'a> {
     Symbol(&'a str),
     /// Stack address with specified offset from `%rbp`.
     Stack(isize),
-    /// `%rip`-relative global/static data in `.data` or `.bss`.
+    /// Data located in the `.bss` / `.data` _ELF_ section.
     Data(&'a str),
 }
 
@@ -221,7 +221,7 @@ impl fmt::Display for Operand<'_> {
             Operand::Register(r) => write!(f, "%{r:?}"),
             Operand::Symbol(ident) => write!(f, "{ident:?}"),
             Operand::Stack(i) => write!(f, "stack({i})"),
-            Operand::Data(label) => write!(f, "{label:?} [static memory]"),
+            Operand::Data(ident) => write!(f, "{ident:?} [static memory]"),
         }
     }
 }
@@ -347,12 +347,11 @@ pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>, sym_map: &SymbolMap) -> MIRX86<'a
     }
 }
 
-/// Generate a _MIR_ function definition from the provided _IR_ function.
+/// Generate a _MIR x86-64_ function definition from the provided _IR_ function.
 fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) -> Function<'a> {
     let mut instructions = vec![];
 
-    // Lower any function parameters before processing the function
-    // instructions.
+    // Lower any function parameters before processing the function instructions.
     lower_ir_function_params(&func.params, &mut instructions);
 
     for inst in &func.instructions {
@@ -365,6 +364,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                     src: generate_mir_operand(v),
                     dst: Operand::Register(Reg::AX),
                 });
+
                 instructions.push(Instruction::Ret);
             }
             ir::Instruction::Unary { op, src, dst, .. } => {
@@ -391,7 +391,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                         ast::UnaryOperator::Complement => UnaryOperator::Not,
                         ast::UnaryOperator::Negate => UnaryOperator::Neg,
                         _ => unreachable!(
-                            "unary increment/decrement should already be lowered to add/sub"
+                            "unary increment/decrement should already be lowered to add/sub instruction"
                         ),
                     };
 
@@ -399,6 +399,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                         src: generate_mir_operand(src),
                         dst,
                     });
+
                     instructions.push(Instruction::Unary { unop, dst });
                 }
             }
@@ -419,6 +420,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                         });
 
                         instructions.push(Instruction::Cdq);
+
                         instructions.push(Instruction::Idiv(generate_mir_operand(rhs)));
 
                         let src = if matches!(op, ast::BinaryOperator::Divide) {
@@ -445,7 +447,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                             ast::BinaryOperator::Eq => CondCode::E,
                             ast::BinaryOperator::NotEq => CondCode::NE,
                             _ => unreachable!(
-                                "non-comparison binary operators should not reach this match arm"
+                                "non-relational/equality binary operators should not reach this match arm"
                             ),
                         };
 
@@ -474,7 +476,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                         } else {
                             ast_to_mir_binop(*op).unwrap_or_else(|| {
                                 panic!(
-                                    "invalid mir::BinaryOperator for ast::BinaryOperator '{op:?}'"
+                                    "ast::BinaryOperator '{op:?}' could not be converted to mir::BinaryOperator"
                                 )
                             })
                         };
@@ -525,21 +527,21 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                 //
                 // 64-bit: `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`
                 // 32-bit: `%edi`, `%esi`, `%edx`, `%ecx`, `%r8d`, `%r9d`
-                let registers = [Reg::DI, Reg::SI, Reg::DX, Reg::CX, Reg::R8, Reg::R9];
+                let regs = [Reg::DI, Reg::SI, Reg::DX, Reg::CX, Reg::R8, Reg::R9];
 
                 let stack_args = args.len().saturating_sub(6);
                 let needs_padding = (stack_args > 0) && ((stack_args % 2) == 1);
 
                 if needs_padding {
-                    // Ensure a 16-byte alignment of the stack, required by the
-                    // System-V ABI.
+                    // Ensure a 16-byte alignment of the stack frame, required
+                    // by System-V ABI.
                     instructions.push(Instruction::StackAlloc(8));
                 }
 
                 for (i, arg) in args.iter().take(6).enumerate() {
                     instructions.push(Instruction::Mov {
                         src: generate_mir_operand(arg),
-                        dst: Operand::Register(registers[i]),
+                        dst: Operand::Register(regs[i]),
                     });
                 }
 
@@ -555,16 +557,17 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                             Operand::Register(_) | Operand::Imm32(_) => {
                                 instructions.push(Instruction::Push(mir_arg));
                             }
-                            // `pushq` requires an 8-byte operand. Pushing a
-                            // 4-byte stack value directly would incorrectly
-                            // include the following 4 bytes from the stack
-                            // frame. Instead, we first move it into AX
-                            // (caller-saved) and push onto the stack.
+                            // `pushq` instruction requires an 8-byte operand.
+                            // Pushing a 4-byte stack value directly would
+                            // incorrectly include the following 4 bytes from
+                            // the stack frame. Instead, we first move it into
+                            // AX (caller-saved), then push onto the stack.
                             _ => {
                                 instructions.push(Instruction::Mov {
                                     src: mir_arg,
                                     dst: Operand::Register(Reg::AX),
                                 });
+
                                 instructions.push(Instruction::Push(Operand::Register(Reg::AX)));
                             }
                         }
@@ -618,15 +621,15 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
     func
 }
 
-/// Generate a _MIR_ operand from the provided _IR_ value.
+/// Generate a _MIR x86-64_ operand from the provided _IR_ value.
 fn generate_mir_operand<'a>(val: &'a ir::Value<'_>) -> Operand<'a> {
     match val {
-        ir::Value::IntConstant(v) => Operand::Imm32(*v),
-        ir::Value::Var(v) => Operand::Symbol(v),
+        ir::Value::IntConstant(i) => Operand::Imm32(*i),
+        ir::Value::Var(ident) => Operand::Symbol(ident),
     }
 }
 
-/// Lowers _IR_ function parameters into _MIR_ instructions, appending to
+/// Lowers _IR_ function parameters into _MIR x86-64_ instructions, appending to
 /// `out`.
 fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a>>) {
     if params.is_empty() {
@@ -641,10 +644,10 @@ fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a
     //
     // Copying parameters to the stack ensures no caller/callee-saved registers
     // are affected.
-    let registers = [Reg::DI, Reg::SI, Reg::DX, Reg::CX, Reg::R8, Reg::R9];
+    let regs = [Reg::DI, Reg::SI, Reg::DX, Reg::CX, Reg::R8, Reg::R9];
     for (i, param) in params.iter().take(6).enumerate() {
         out.push(Instruction::Mov {
-            src: Operand::Register(registers[i]),
+            src: Operand::Register(regs[i]),
             dst: Operand::Symbol(param),
         });
     }
@@ -661,7 +664,7 @@ fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a
 
         for param in remaining_params {
             out.push(Instruction::Mov {
-                // Positive offsets are used to refer to caller stack frame.
+                // Positive offsets are used to refer to the caller stack frame.
                 src: Operand::Stack(stack_offset),
                 dst: Operand::Symbol(param),
             });
@@ -671,9 +674,9 @@ fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a
     }
 }
 
-/// Replaces each symbolic operand with its corresponding location: either a
-/// stack offset from `%rbp` or an address in the `.bss` / `.data` section,
-/// returning the final stack offset used.
+/// Replaces each symbolic operand within the _MIR x86-64_ function with its
+/// corresponding location: either a stack offset from `%rbp` or an address in
+/// the `.bss` / `.data` _ELF_ section, returning the final stack offset used.
 fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
     let mut offset_map: HashMap<&str, isize> = HashMap::default();
 
@@ -685,15 +688,14 @@ fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
         {
             Operand::Data(ident)
         } else {
-            // Either we encountered an `automatic` storage-duration variable or
-            // an _IR_ temporary variable.
+            // Either we encountered an `automatic` or _IR_ temporary variable.
             let offset = match offset_map.entry(ident) {
                 Entry::Occupied(entry) => *entry.get(),
                 Entry::Vacant(entry) => {
                     // NOTE: Allocating in 4-byte offsets.
                     stack_offset += 4;
-                    // Negating the offset refers to a local variable on the \
-                    // stack relative to `%rbp`.
+                    // Negating the offset refers to a local variable in the
+                    // stack frame relative to `%rbp`.
                     entry.insert(-stack_offset);
                     -stack_offset
                 }
@@ -709,6 +711,7 @@ fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
                 if let Operand::Symbol(ident) = src {
                     *src = convert_symbol(ident);
                 }
+
                 if let Operand::Symbol(ident) = dst {
                     *dst = convert_symbol(ident);
                 }
@@ -722,6 +725,7 @@ fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
                 if let Operand::Symbol(ident) = rhs {
                     *rhs = convert_symbol(ident);
                 }
+
                 if let Operand::Symbol(ident) = dst {
                     *dst = convert_symbol(ident);
                 }
@@ -730,6 +734,7 @@ fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
                 if let Operand::Symbol(ident) = rhs {
                     *rhs = convert_symbol(ident);
                 }
+
                 if let Operand::Symbol(ident) = lhs {
                     *lhs = convert_symbol(ident);
                 }
@@ -751,7 +756,8 @@ fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
     stack_offset
 }
 
-/// Rewrite instructions with invalid operands to valid _x86-64_ equivalents.
+/// Rewrite instructions within the _MIR x86-64_ function containing invalid
+/// operands to valid _x86-64_ equivalents.
 fn rewrite_invalid_instructions(func: &mut Function<'_>) {
     /// Returns `true` if the operand refers to a memory location.
     #[inline]
