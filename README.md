@@ -55,6 +55,10 @@ Tiny C Compiler (subset of _C17_).
 - [x] Conditional (ternary) operator: `? :`
 - [x] Function calls
 
+### Optimizations
+
+- [x] Constant folding (literals only)
+
 ## Testing
 
 Compiler is tested using an external test suite: [`nlsandler/writing-a-c-compiler-tests/`](https://github.com/nlsandler/writing-a-c-compiler-tests/).

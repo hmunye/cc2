@@ -15,6 +15,8 @@ pub struct Args {
     /// Indicates whether the input file should be preprocessed before compiling
     /// (optional).
     pub preprocess: bool,
+    /// Optimization level (optional).
+    pub opt_level: u8,
     /// Input file path (required).
     pub in_path: &'static Path,
     /// Output file path (optional).
@@ -37,6 +39,7 @@ impl Args {
 
         let mut stage = String::new();
         let mut preprocess = false;
+        let mut opt_level = 0;
         let mut in_path = String::new();
         let mut out_path = PathBuf::new();
 
@@ -67,6 +70,24 @@ impl Args {
                             }
                         },
                         ["-p", "--preprocess"] => preprocess = true,
+                        ["-O", "--opt"] => {
+                            let level = match args
+                                .next()
+                                .expect("already peeked the next argument, should be present")
+                                .parse::<u8>()
+                            {
+                                Ok(i) if matches!(i, 0 | 1) => i,
+                                _ => {
+                                    report_err!(
+                                        &program,
+                                        "argument to '-O'|'--opt' should be '0' or '1'"
+                                    );
+                                    print_usage(&program);
+                                }
+                            };
+
+                            opt_level = level;
+                        }
                         ["-o", "--output"] => {
                             if let Some(path) = args.next() {
                                 out_path = PathBuf::from(&path);
@@ -118,6 +139,7 @@ impl Args {
             program,
             stage,
             preprocess,
+            opt_level,
             in_path: path,
             out_path,
         }
@@ -144,6 +166,11 @@ const PROGRAM_FLAGS: &[Flag] = &[
     Flag {
         names: ["-p", "--preprocess"],
         description: "     run the GCC preprocessor (cpp) on the input file prior to compiling.",
+        run: None,
+    },
+    Flag {
+        names: ["-O", "--opt"],
+        description: "            set optimization level ('0' or '1'). default to '0'.",
         run: None,
     },
     Flag {

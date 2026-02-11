@@ -6,6 +6,7 @@ pub mod emit;
 pub mod ir;
 pub mod lexer;
 pub mod mir;
+pub mod opt;
 pub mod parser;
 
 pub use driver::{Context, Result};

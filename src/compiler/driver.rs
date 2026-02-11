@@ -76,22 +76,42 @@ pub fn run_compiler(args: &args::Args) -> Result<()> {
             print!("{lexer}");
         }
         "parse" => {
-            let (ast, _) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (mut ast, _) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+
+            if args.opt_level != 0 {
+                compiler::opt::fold_constants(&mut ast);
+            }
+
             print!("{ast}");
         }
         "ir" => {
-            let (ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (mut ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+
+            if args.opt_level != 0 {
+                compiler::opt::fold_constants(&mut ast);
+            }
+
             let ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             print!("{ir}");
         }
         "mir" => {
-            let (ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (mut ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+
+            if args.opt_level != 0 {
+                compiler::opt::fold_constants(&mut ast);
+            }
+
             let ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             let mir = compiler::mir::generate_x86_64_mir(&ir, &sym_map);
             print!("{mir}");
         }
         stage => {
-            let (ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (mut ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+
+            if args.opt_level != 0 {
+                compiler::opt::fold_constants(&mut ast);
+            }
+
             let ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             let mir = compiler::mir::generate_x86_64_mir(&ir, &sym_map);
 
