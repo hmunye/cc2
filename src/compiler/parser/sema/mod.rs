@@ -3,8 +3,6 @@
 //! Compiler passes that checks the semantic correctness of an abstract syntax
 //! tree (_AST_).
 
-// TODO: Implement simple constant folding.
-
 pub mod ctrl_flow;
 pub mod labels;
 pub mod switches;

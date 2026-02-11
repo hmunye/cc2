@@ -1,3 +1,7 @@
+//! _C_ Types
+//!
+//! Primitive types that match _C_ type definitions (_C17_).
+
 use std::fmt;
 
 /// Equivalent to _C_ signed integer (`int`) type.

@@ -1,3 +1,9 @@
+//! Control-Flow Analysis
+//!
+//! Semantic analysis pass which resolves labels for escapable control-flow
+//! statements (loops/switches) and validates `break`/`continue` usage within
+//! each function scope.
+
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, CtrlFlowPhase, Declaration, LabelPhase, Labeled, Statement,
 };

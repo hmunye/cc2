@@ -1,3 +1,8 @@
+//! Label Analysis
+//!
+//! Semantic analysis pass which verifies labels and `goto` targets within each
+//! function scope, ensuring uniqueness across different function scopes.
+
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 

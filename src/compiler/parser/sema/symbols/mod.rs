@@ -1,6 +1,7 @@
 //! Symbol Resolution
 //!
-//! Semantic analysis pass for converting symbols to canonical forms.
+//! Performs symbol lookup, lexical scoping, and mapping identifiers to
+//! canonical forms.
 
 pub mod resolve;
 pub mod scope;

@@ -1,3 +1,8 @@
+//! Symbol Analysis
+//!
+//! Semantic analysis pass which converts each encountered symbol to its
+//! canonical form, enforcing semantic constraints.
+
 use std::collections::HashMap;
 
 use crate::compiler::parser::ast::{

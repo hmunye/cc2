@@ -1,5 +1,7 @@
-//! Compiler driver that orchestrates the multi-stage process of compiling a
-//! _C_ translation unit into assembly code.
+//! Compiler Driver
+//!
+//! Orchestrates the multi-stage process of compiling a _C_ translation unit
+//! into assembly code.
 
 use std::io::{self, Read, Write};
 use std::ops::Range;

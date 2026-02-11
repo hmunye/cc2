@@ -1,3 +1,8 @@
+//! Type Check Analysis
+//!
+//! Semantic analysis pass which performs type checking, enforcing semantic
+//! constraints on expressions and declarations within an _AST_.
+
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled,
     Statement, StorageClass, TypePhase,

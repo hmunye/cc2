@@ -1,3 +1,8 @@
+//! Switch Analysis
+//!
+//! Semantic analysis pass which resolves `switch` statements and their
+//! `case` / `default` labels.
+
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::parser::ast::{
