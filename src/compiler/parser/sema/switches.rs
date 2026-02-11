@@ -10,7 +10,7 @@ use crate::compiler::parser::ast::{
     SwitchCase,
 };
 use crate::compiler::parser::types::c_int;
-use crate::compiler::{Context, Result};
+use crate::compiler::{self, Context, Result};
 use crate::fmt_token_err;
 
 /// Kind of labeled statement within a `switch` statement.
@@ -70,11 +70,9 @@ impl<'a> SwitchResolver<'a> {
             expr: expr.clone(),
         });
 
-        // NOTE: Update when constant-expression eval is available to the
-        // compiler.
         let val = match expr {
             Expression::IntConstant(i) => *i,
-            _ => unreachable!("cases expressions should only be integer constants"),
+            _ => unreachable!("valid cases expressions should be folded to integer constants"),
         };
 
         if entry.0.insert(val) {
@@ -223,8 +221,25 @@ fn resolve_statement<'a>(
                 ..
             } => {
                 if let Some(ctx_label) = resolver.current_switch() {
-                    if let Some(case_label) = resolver.mark_case(ctx_label.as_str(), expr) {
-                        *label = case_label;
+                    if let Some(val) = compiler::opt::try_fold(expr) {
+                        *expr = Expression::IntConstant(val);
+
+                        if let Some(case_label) = resolver.mark_case(ctx_label.as_str(), expr) {
+                            *label = case_label;
+                        } else {
+                            let tok_str = format!("{token:?}");
+                            let line_content = ctx.src_slice(token.loc.line_span.clone());
+
+                            return Err(fmt_token_err!(
+                                token.loc.file_path.display(),
+                                token.loc.line,
+                                token.loc.col,
+                                tok_str,
+                                tok_str.len() - 1,
+                                line_content,
+                                "duplicate case value"
+                            ));
+                        }
                     } else {
                         let tok_str = format!("{token:?}");
                         let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -236,7 +251,7 @@ fn resolve_statement<'a>(
                             tok_str,
                             tok_str.len() - 1,
                             line_content,
-                            "duplicate case value"
+                            "case label does not reduce to an integer constant"
                         ));
                     }
                 } else {

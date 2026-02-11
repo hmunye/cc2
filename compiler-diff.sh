@@ -12,7 +12,7 @@ asm=example.s
 bin=a.out
 
 printf "\x1b[1;45m=== cc2 ===\x1b[0m\n"
-cargo r -q --release -- "$src" -p -o "$asm" &&
+cargo r -q --release -- "$src" -p -O 1 -o "$asm" &&
     (gcc "$asm" -o "$bin"; "./$bin"; echo "exit code: $?")
 
 echo

@@ -6,4 +6,4 @@
 
 pub mod const_folding;
 
-pub use const_folding::fold_constants;
+pub use const_folding::{fold_constants, try_fold};

@@ -10,7 +10,7 @@ use crate::compiler::parser::ast::{
     Parsed, Statement, StorageClass,
 };
 use crate::compiler::parser::types::Type;
-use crate::compiler::{Context, Result};
+use crate::compiler::{self, Context, Result};
 use crate::fmt_token_err;
 
 use super::{Linkage, Scope, StorageDuration, SymbolMap, SymbolState, convert_bindings_map};
@@ -452,10 +452,9 @@ fn resolve_variable(
 
         let state = if duration == Some(StorageDuration::Static) {
             if let Some(init) = init {
-                // NOTE: Update when constant-expression eval is available to
-                // the compiler.
-                if let Expression::IntConstant(value) = init {
-                    SymbolState::ConstDefined(*value)
+                if let Some(val) = compiler::opt::try_fold(init) {
+                    *init = Expression::IntConstant(val);
+                    SymbolState::ConstDefined(val)
                 } else {
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -467,7 +466,7 @@ fn resolve_variable(
                         tok_str,
                         tok_str.len() - 1,
                         line_content,
-                        "initializer element is not constant (currently only support integer literals)",
+                        "initializer element is not constant",
                     ));
                 }
             } else if specs.storage == Some(StorageClass::Extern) {

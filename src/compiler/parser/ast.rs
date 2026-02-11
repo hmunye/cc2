@@ -1331,35 +1331,18 @@ fn parse_statement<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
                 let expr = parse_expression(ctx, iter, 0)?;
 
-                // NOTE: Update when constant-expression eval is available to
-                // the compiler.
-                if let Expression::IntConstant(_) = expr {
-                    expect_token(ctx, iter, TokenType::Colon)?;
+                expect_token(ctx, iter, TokenType::Colon)?;
 
-                    let stmt = parse_statement(ctx, iter)?;
+                let stmt = parse_statement(ctx, iter)?;
 
-                    Ok(Statement::LabeledStatement(Labeled::Case {
-                        expr,
-                        token,
-                        stmt: Box::new(stmt),
-                        // Placeholder label allocated during parsing,
-                        // backpatched in semantic analysis.
-                        jmp_label: String::new(),
-                    }))
-                } else {
-                    let tok_str = format!("{token:?}");
-                    let line_content = ctx.src_slice(token.loc.line_span.clone());
-
-                    Err(fmt_token_err!(
-                        token.loc.file_path.display(),
-                        token.loc.line,
-                        token.loc.col,
-                        tok_str,
-                        tok_str.len() - 1,
-                        line_content,
-                        "case label does not reduce to an integer constant (currently only support integer literals)"
-                    ))
-                }
+                Ok(Statement::LabeledStatement(Labeled::Case {
+                    expr,
+                    token,
+                    stmt: Box::new(stmt),
+                    // Placeholder label allocated during parsing, backpatched
+                    // in semantic analysis.
+                    jmp_label: String::new(),
+                }))
             }
             TokenType::Keyword(Reserved::Default) => {
                 // Consume the "default" token.

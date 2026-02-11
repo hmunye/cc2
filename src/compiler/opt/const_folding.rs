@@ -133,7 +133,6 @@ pub fn try_fold(expr: &Expression<'_>) -> Option<c_int> {
             match op {
                 BinaryOperator::Divide | BinaryOperator::Modulo => {
                     if rhs == 0 {
-                        // NOTE: Should report warning diagnostic.
                         return None;
                     }
                 }
