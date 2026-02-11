@@ -137,7 +137,8 @@ pub fn try_fold(expr: &Expression<'_>) -> Option<c_int> {
                     }
                 }
                 BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight => {
-                    if rhs >= 32 {
+                    #[allow(clippy::cast_possible_wrap)]
+                    if rhs >= (std::mem::size_of::<c_int>() * 8) as i32 {
                         // NOTE: Should report warning diagnostic.
                         return None;
                     }
