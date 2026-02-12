@@ -452,7 +452,7 @@ fn resolve_variable(
 
         let state = if duration == Some(StorageDuration::Static) {
             if let Some(init) = init {
-                if let Some(val) = compiler::opt::try_fold(init) {
+                if let Some(val) = compiler::opt::passes::try_fold_ast(init) {
                     *init = Expression::IntConstant(val);
                     SymbolState::ConstDefined(val)
                 } else {

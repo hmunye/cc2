@@ -214,6 +214,14 @@ pub enum Operand<'a> {
     Data(&'a str),
 }
 
+impl Operand<'_> {
+    /// Returns `true` if the operand refers to a memory location.
+    #[inline]
+    const fn is_memory_operand(&self) -> bool {
+        matches!(self, Operand::Stack(_) | Operand::Data(_))
+    }
+}
+
 impl fmt::Display for Operand<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -759,19 +767,13 @@ fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
 /// Rewrite instructions within the _MIR x86-64_ function containing invalid
 /// operands to valid _x86-64_ equivalents.
 fn rewrite_invalid_instructions(func: &mut Function<'_>) {
-    /// Returns `true` if the operand refers to a memory location.
-    #[inline]
-    const fn is_memory_operand(op: &Operand<'_>) -> bool {
-        matches!(op, Operand::Stack(_) | Operand::Data(_))
-    }
-
     let mut i = 0;
 
     while i < func.instructions.len() {
         let inst = &mut func.instructions[i];
 
         match inst {
-            Instruction::Mov { src, dst } if is_memory_operand(src) && is_memory_operand(dst) => {
+            Instruction::Mov { src, dst } if src.is_memory_operand() && dst.is_memory_operand() => {
                 let src = *src;
                 let dst = *dst;
 
@@ -821,8 +823,8 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                         | BinaryOperator::And
                         | BinaryOperator::Or
                         | BinaryOperator::Xor
-                ) && is_memory_operand(rhs)
-                    && is_memory_operand(dst) =>
+                ) && rhs.is_memory_operand()
+                    && dst.is_memory_operand() =>
             {
                 let rhs = *rhs;
                 let dst = *dst;
@@ -850,7 +852,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                 binop: BinaryOperator::Imul,
                 rhs,
                 dst,
-            } if is_memory_operand(dst) => {
+            } if dst.is_memory_operand() => {
                 let rhs = *rhs;
                 let dst = *dst;
 
@@ -908,7 +910,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                 i += 1;
             }
             Instruction::Cmp { rhs, lhs }
-                if (is_memory_operand(rhs) && is_memory_operand(lhs))
+                if (rhs.is_memory_operand() && lhs.is_memory_operand())
                     || matches!(lhs, Operand::Imm32(_)) =>
             {
                 let rhs = *rhs;

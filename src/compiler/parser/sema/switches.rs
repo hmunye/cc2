@@ -221,7 +221,7 @@ fn resolve_statement<'a>(
                 ..
             } => {
                 if let Some(ctx_label) = resolver.current_switch() {
-                    if let Some(val) = compiler::opt::try_fold(expr) {
+                    if let Some(val) = compiler::opt::passes::try_fold_ast(expr) {
                         *expr = Expression::IntConstant(val);
 
                         if let Some(case_label) = resolver.mark_case(ctx_label.as_str(), expr) {

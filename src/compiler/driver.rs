@@ -1,7 +1,6 @@
 //! Compiler Driver
 //!
-//! Orchestrates the multi-stage process of compiling a _C_ translation unit
-//! into assembly code.
+//! Multi-stage process of compiling a _C_ translation unit into assembly code.
 
 use std::io::{self, Read, Write};
 use std::ops::Range;
@@ -76,43 +75,32 @@ pub fn run_compiler(args: &args::Args) -> Result<()> {
             print!("{lexer}");
         }
         "parse" => {
-            let (mut ast, _) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
-
-            if args.opt_level != 0 {
-                compiler::opt::fold_constants(&mut ast);
-            }
-
+            let (ast, _) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
             print!("{ast}");
         }
         "ir" => {
-            let (mut ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
 
-            if args.opt_level != 0 {
-                compiler::opt::fold_constants(&mut ast);
-            }
+            let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
+            compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
-            let ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             print!("{ir}");
         }
         "mir" => {
-            let (mut ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
 
-            if args.opt_level != 0 {
-                compiler::opt::fold_constants(&mut ast);
-            }
+            let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
+            compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
-            let ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             let mir = compiler::mir::generate_x86_64_mir(&ir, &sym_map);
             print!("{mir}");
         }
         stage => {
-            let (mut ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
 
-            if args.opt_level != 0 {
-                compiler::opt::fold_constants(&mut ast);
-            }
+            let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
+            compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
-            let ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             let mir = compiler::mir::generate_x86_64_mir(&ir, &sym_map);
 
             let writer: Box<dyn Write> = if stage == "asm" {

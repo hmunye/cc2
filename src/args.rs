@@ -5,6 +5,33 @@ use std::process;
 
 use crate::report_err;
 
+/// Optimization flags.
+#[derive(Debug)]
+pub struct Opts {
+    /// Constant folding optimization (can be enabled explicitly, overrides
+    /// `opt_level` preset).
+    pub fold: bool,
+    /// Copy propagation optimization (can be enabled explicitly, overrides
+    /// `opt_level` preset).
+    pub copy_prop: bool,
+    /// Unreachable code elimination optimization (can be enabled explicitly,
+    /// overrides `opt_level` preset).
+    pub uce: bool,
+    /// Dead-store elimination optimization (can be enabled explicitly,
+    /// overrides `opt_level` preset).
+    pub dse: bool,
+}
+
+impl Opts {
+    /// Returns `true` if any machine-independent optimization passes are
+    /// enabled.
+    #[inline]
+    #[must_use]
+    pub const fn any_passes_enabled(&self) -> bool {
+        self.fold || self.copy_prop || self.uce || self.dse
+    }
+}
+
 /// Compiler command-line arguments.
 #[derive(Debug)]
 pub struct Args {
@@ -15,8 +42,8 @@ pub struct Args {
     /// Indicates whether the input file should be preprocessed before compiling
     /// (optional).
     pub preprocess: bool,
-    /// Optimization level (optional).
-    pub opt_level: u8,
+    /// Optimizations available to the compiler.
+    pub opts: Opts,
     /// Input file path (required).
     pub in_path: &'static Path,
     /// Output file path (optional).
@@ -39,7 +66,12 @@ impl Args {
 
         let mut stage = String::new();
         let mut preprocess = false;
-        let mut opt_level = 0;
+        let mut opts = Opts {
+            fold: false,
+            copy_prop: false,
+            uce: false,
+            dse: false,
+        };
         let mut in_path = String::new();
         let mut out_path = PathBuf::new();
 
@@ -49,9 +81,43 @@ impl Args {
                     .next()
                     .expect("already peeked the next argument, should be present");
 
+                if let Some(level_str) = flag_name.strip_prefix("-O") {
+                    // '-O' implies '-O1': enable all optimizations.
+                    if level_str.is_empty() {
+                        opts.fold = true;
+                        opts.copy_prop = true;
+                        opts.uce = true;
+                        opts.dse = true;
+                    } else {
+                        match level_str.parse::<u8>() {
+                            Ok(0) => {
+                                opts.fold = false;
+                                opts.copy_prop = false;
+                                opts.uce = false;
+                                opts.dse = false;
+                            }
+                            Ok(1) => {
+                                opts.fold = true;
+                                opts.copy_prop = true;
+                                opts.uce = true;
+                                opts.dse = true;
+                            }
+                            _ => {
+                                report_err!(
+                                    &program,
+                                    "invalid argument to '-O': expected '-O', '-O0', or '-O1'"
+                                );
+                                print_usage(&program);
+                            }
+                        }
+                    }
+
+                    continue;
+                }
+
                 if let Some(flag) = PROGRAM_FLAGS
                     .iter()
-                    .find(|flag| flag.names.contains(&flag_name.as_str()))
+                    .find(|flag| !flag_name.is_empty() && flag.names.contains(&flag_name.as_str()))
                 {
                     match flag.names {
                         ["-s", "--stage"] => match args.peek().map(|s| &**s) {
@@ -70,24 +136,10 @@ impl Args {
                             }
                         },
                         ["-p", "--preprocess"] => preprocess = true,
-                        ["-O", "--opt"] => {
-                            let level = match args
-                                .next()
-                                .expect("already peeked the next argument, should be present")
-                                .parse::<u8>()
-                            {
-                                Ok(i) if matches!(i, 0 | 1) => i,
-                                _ => {
-                                    report_err!(
-                                        &program,
-                                        "argument to '-O'|'--opt' should be '0' or '1'"
-                                    );
-                                    print_usage(&program);
-                                }
-                            };
-
-                            opt_level = level;
-                        }
+                        ["", "--fold"] => opts.fold = true,
+                        ["", "--copy-prop"] => opts.copy_prop = true,
+                        ["", "--uce"] => opts.uce = true,
+                        ["", "--dse"] => opts.dse = true,
                         ["-o", "--output"] => {
                             if let Some(path) = args.next() {
                                 out_path = PathBuf::from(&path);
@@ -139,7 +191,7 @@ impl Args {
             program,
             stage,
             preprocess,
-            opt_level,
+            opts,
             in_path: path,
             out_path,
         }
@@ -160,7 +212,7 @@ const PROGRAM_FLAGS: &[Flag] = &[
     },
     Flag {
         names: ["-o", "--output"],
-        description: "         specify the output file. defaults to the input filename with '.s' extension.",
+        description: "         specify the output file. default is the input filename with '.s' extension.",
         run: None,
     },
     Flag {
@@ -169,8 +221,28 @@ const PROGRAM_FLAGS: &[Flag] = &[
         run: None,
     },
     Flag {
-        names: ["-O", "--opt"],
-        description: "            set optimization level ('0' or '1'). default to '0'.",
+        names: ["", "-O"],
+        description: "                   set optimization level preset ('-O0' = none, '-O' or '-O1' = all).",
+        run: None,
+    },
+    Flag {
+        names: ["", "--fold"],
+        description: "               enable constant folding optimization.",
+        run: None,
+    },
+    Flag {
+        names: ["", "--copy-prop"],
+        description: "          enable copy propagation optimization.",
+        run: None,
+    },
+    Flag {
+        names: ["", "--uce"],
+        description: "                enable unreachable code elimination optimization.",
+        run: None,
+    },
+    Flag {
+        names: ["", "--dse"],
+        description: "                enable dead-store elimination optimization.",
         run: None,
     },
     Flag {
@@ -198,7 +270,11 @@ fn print_usage(program: &str) -> ! {
     eprintln!("\x1b[1;1moptions:\x1b[0m");
 
     for flag in PROGRAM_FLAGS {
-        eprintln!("   {}{}", flag.names.join(", "), flag.description);
+        if flag.names[0].is_empty() {
+            eprintln!("   {}{}", flag.names[1], flag.description);
+        } else {
+            eprintln!("   {}{}", flag.names.join(", "), flag.description);
+        }
     }
 
     process::exit(1);

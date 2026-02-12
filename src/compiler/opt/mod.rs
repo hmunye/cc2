@@ -1,9 +1,9 @@
-//! Optimization Passes
+//! Compiler Optimization
 //!
-//! Compiler passes that transform a parsed _AST_ or _IR_ to improve
-//! performance, reduce redundancy, or otherwise optimize code without changing
-//! its observable behavior.
+//! Compiler's optimization logic, including passes over the intermediate
+//! representation (_IR_) and machine-specific transformations, which aim to
+//! improve performance, reduce redundancy, and generate more efficient code
+//! without changing observable behavior.
 
-pub mod const_folding;
-
-pub use const_folding::{fold_constants, try_fold};
+pub mod passes;
+pub mod target;

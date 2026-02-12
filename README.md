@@ -57,7 +57,7 @@ Tiny C Compiler (subset of _C17_).
 
 ### Optimizations
 
-- [x] Constant folding (literals only)
+- [x] Constant folding
 
 ## Testing
 
