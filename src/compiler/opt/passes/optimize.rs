@@ -31,12 +31,15 @@ fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
         return;
     }
 
+    let mut cfg = CFG::new();
+
     loop {
         if opts.fold {
             compiler::opt::passes::fold_ir_const(func);
         }
 
-        let mut cfg = CFG::new(func);
+        // Synchronize CFG with the current IR function state.
+        cfg.sync(func);
 
         if opts.uce {
             compiler::opt::passes::unreachable_code(&mut cfg);
@@ -50,6 +53,7 @@ fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
             compiler::opt::passes::dead_store(&mut cfg);
         }
 
+        // Apply optimizations, and stop if no changes are made.
         if !cfg.apply(func) {
             break;
         }

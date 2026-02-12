@@ -88,7 +88,7 @@ impl fmt::Display for Function<'_> {
 }
 
 /// _IR_ instruction.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction<'a> {
     /// Returns a value to the caller.
     Return(Value<'a>),
@@ -241,7 +241,7 @@ impl fmt::Display for Instruction<'_> {
 }
 
 /// _IR_ value.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<'a> {
     /// Integer constant.
     IntConstant(c_int),

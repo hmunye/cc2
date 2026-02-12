@@ -520,7 +520,7 @@ impl fmt::Display for Expression<'_> {
 }
 
 /// _AST_ unary operator.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
     /// `~` - unary operator.
     Complement,
@@ -549,7 +549,7 @@ impl fmt::Display for UnaryOperator {
 }
 
 /// _AST_ binary operator.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
     /// `+` - binary operator.
     Add,
@@ -701,7 +701,7 @@ impl fmt::Display for BinaryOperator {
 }
 
 /// NOTE: Temporary hack for arithmetic right shift.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signedness {
     Signed,
     Unsigned,

@@ -7,4 +7,4 @@ use crate::compiler::opt::passes::cfg::CFG;
 
 /// Transforms a control flow graph (_CFG_) by removing code that can never be
 /// executed.
-pub const fn unreachable_code(_cfg: &mut CFG) {}
+pub const fn unreachable_code(_cfg: &mut CFG<'_>) {}
