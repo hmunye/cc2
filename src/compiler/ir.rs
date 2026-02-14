@@ -214,23 +214,16 @@ impl fmt::Display for Instruction<'_> {
                     width = width
                 )
             }
-            Instruction::Call { ident, args, dst } => {
-                let args_str = args
-                    .iter()
-                    .map(|val| format!("{val}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let len = args_str.len();
+            Instruction::Call { ident, dst, .. } => {
+                let len = ident.len();
 
                 let max_width: usize = 32;
-                let width = max_width.saturating_sub(len);
-
-                let prefix = format!("Call({ident:?})");
+                let width = max_width.saturating_sub(len + 2);
 
                 write!(
                     f,
-                    "{:<17}{args_str} {:>width$}  {dst}",
-                    prefix,
+                    "{:<17}{ident:?} {:>width$}  {dst}",
+                    "Call",
                     "->",
                     width = width
                 )

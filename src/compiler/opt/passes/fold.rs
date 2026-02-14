@@ -9,8 +9,9 @@ use crate::compiler::parser::types::c_int;
 
 /// Transforms an intermediate representation (_IR_) function by folding
 /// all constant expressions.
-pub fn fold_ir_const(f: &mut Function<'_>) {
+pub fn fold_const(f: &mut Function<'_>) {
     let mut i = 0;
+
     while i < f.instructions.len() {
         let ist = &mut f.instructions[i];
 
@@ -69,11 +70,13 @@ pub fn fold_ir_const(f: &mut Function<'_>) {
                     if (matches!(ist, Instruction::JumpIfZero { .. }) && *x == 0)
                         || (matches!(ist, Instruction::JumpIfNotZero { .. }) && *x != 0)
                     {
+                        // We know the jump to `target` will always be taken.
                         *ist = Instruction::Jump(target.clone());
                     } else {
                         // NOTE: O(n) time complexity.
+                        //
+                        // We know the jump to `target` will never be taken.
                         f.instructions.remove(i);
-
                         continue;
                     }
                 }

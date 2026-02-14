@@ -38,7 +38,7 @@ Tiny C Compiler (subset of _C17_).
 - [x] `for` / `do` / `while`
 - [x] `break` / `continue`
 - [x] `switch`
-- [x] `default` / `case` (currently only support integer literal expressions)
+- [x] `default` / `case`
 - [x] Empty statements (`;`)
 
 ### Expressions
@@ -57,7 +57,8 @@ Tiny C Compiler (subset of _C17_).
 
 ### Optimizations
 
-- [x] Constant folding
+- [x] Constant Folding
+- [x] Unreachable Code Elimination
 
 ## Testing
 

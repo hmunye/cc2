@@ -3,7 +3,7 @@
 //! Transforms an intermediate representation (_IR_) by replacing variables with
 //! their assigned values where applicable, reducing redundant copies.
 
-use crate::compiler::opt::passes::cfg::CFG;
+use crate::compiler::opt::CFG;
 
 /// Transforms a control flow graph (_CFG_) by  replacing variables with their
 /// assigned values where applicable, reducing redundant copies.

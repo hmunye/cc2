@@ -30,6 +30,8 @@ pub fn emit_gas_x86_64_linux(
 
     // Track last emitted _ELF_ section.
     let mut curr_section = ".text";
+
+    #[allow(unused_variables)]
     let mut i = 0;
 
     for item in &mir.program {
@@ -49,27 +51,34 @@ pub fn emit_gas_x86_64_linux(
                 };
 
                 // `.L` is the local label prefix for Linux.
-                //
-                // `FB` - Function Begin
                 writeln!(
                     &mut writer,
-                    "{section_emit}{globl_emit}\t.type\t{label}, @function\n{label}:\n.LFB{i}:",
+                    "{section_emit}{globl_emit}\t.type\t{label}, @function\n{label}:",
                     label = &func.label
                 )?;
+
+                // `FB` - Function Begin
+                #[cfg(debug_assertions)]
+                writeln!(&mut writer, ".LFB{i}:")?;
 
                 write!(&mut writer, "{}", emit_asm_function(func, &mir.locales)?)?;
 
+                // `FE` - Function End
+                #[cfg(debug_assertions)]
+                writeln!(&mut writer, ".LFE{i}:")?;
+
                 // `.size` directive records the byte size of the function in
                 // the _ELF_ symbol table.
-                //
-                // `FE` - Function End
                 writeln!(
                     &mut writer,
-                    ".LFE{i}:\n\t.size\t{label}, .-{label}",
+                    "\t.size\t{label}, .-{label}",
                     label = &func.label
                 )?;
 
-                i += 1;
+                #[allow(unused_assignments)]
+                if cfg!(debug_assertions) {
+                    i += 1;
+                }
             }
             mir::Item::Static {
                 init,

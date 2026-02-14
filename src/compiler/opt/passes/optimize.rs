@@ -4,11 +4,8 @@
 //! representation (_IR_) based on user-specified options.
 
 use crate::args::Opts;
-use crate::compiler::opt::passes::cfg::CFG;
-use crate::compiler::{
-    self,
-    ir::{Function, IR, Item},
-};
+use crate::compiler::ir::{Function, IR, Item};
+use crate::compiler::{self, opt::CFG};
 
 /// Runs machine-independent intraprocedural optimization passes on the given
 /// intermediate representation (_IR_), according to the specified `opts`.
@@ -35,7 +32,7 @@ fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
 
     loop {
         if opts.fold {
-            compiler::opt::passes::fold_ir_const(func);
+            compiler::opt::passes::fold_const(func);
         }
 
         // Synchronize CFG with the current IR function state.

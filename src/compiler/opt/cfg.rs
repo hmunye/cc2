@@ -10,14 +10,16 @@ use crate::compiler::ir::{Function, Instruction};
 
 /// Types of blocks in a control flow graph (_CFG_).
 #[derive(Debug)]
-enum Block<'a> {
+pub enum Block<'a> {
     Entry {
+        id: usize,
         /// Single block that follows the entry block, as _C_ functions have
         /// only one entry point.
         successor: usize,
     },
     /// Sequences of straight-line code.
     Basic {
+        id: usize,
         instructions: Vec<Instruction<'a>>,
         /// Blocks that can execute after.
         successors: Vec<usize>,
@@ -25,17 +27,29 @@ enum Block<'a> {
         predecessors: Vec<usize>,
     },
     Exit {
+        id: usize,
         /// Blocks that can execute before the exit block.
         predecessors: Vec<usize>,
     },
 }
 
+impl Block<'_> {
+    /// Returns the `id` of the current block.
+    #[inline]
+    #[must_use]
+    pub const fn id(&self) -> usize {
+        match self {
+            Block::Entry { id, .. } | Block::Basic { id, .. } | Block::Exit { id, .. } => *id,
+        }
+    }
+}
+
 /// Control Flow Graph (_CFG_) for a given _IR_ function.
 #[derive(Debug)]
 pub struct CFG<'a> {
-    blocks: Vec<Block<'a>>,
+    pub blocks: Vec<Block<'a>>,
     /// Maps each label to its corresponding block ID.
-    label_map: HashMap<String, usize>,
+    pub label_map: HashMap<String, usize>,
 }
 
 impl Default for CFG<'_> {
@@ -59,8 +73,10 @@ impl<'a> CFG<'a> {
     /// the current state of the provided _IR_ function.
     #[inline]
     pub fn sync(&mut self, f: &Function<'a>) {
-        self.blocks.clear();
-        self.label_map.clear();
+        if !self.blocks.is_empty() {
+            self.blocks.clear();
+            self.label_map.clear();
+        }
 
         self.partition_ir(&f.instructions[..]);
         self.build_control_flow();
@@ -86,6 +102,7 @@ impl<'a> CFG<'a> {
     /// Partitions the provided _IR_ instructions into _CFG_ blocks.
     fn partition_ir(&mut self, instructions: &[Instruction<'a>]) {
         self.blocks.push(Block::Entry {
+            id: 0,
             // Sentinel value.
             successor: usize::MAX,
         });
@@ -102,6 +119,7 @@ impl<'a> CFG<'a> {
                     // before the label.
                     if i > chunk_start {
                         self.blocks.push(Block::Basic {
+                            id: self.blocks.len(),
                             instructions: instructions[chunk_start..i].to_vec(),
                             successors: vec![],
                             predecessors: vec![],
@@ -120,6 +138,7 @@ impl<'a> CFG<'a> {
                 | Instruction::JumpIfNotZero { .. }
                 | Instruction::Return(_) => {
                     self.blocks.push(Block::Basic {
+                        id: self.blocks.len(),
                         instructions: instructions[chunk_start..=i].to_vec(),
                         successors: vec![],
                         predecessors: vec![],
@@ -138,6 +157,7 @@ impl<'a> CFG<'a> {
 
         if chunk_start < instructions.len() {
             self.blocks.push(Block::Basic {
+                id: self.blocks.len(),
                 instructions: instructions[chunk_start..].to_vec(),
                 successors: vec![],
                 predecessors: vec![],
@@ -145,6 +165,7 @@ impl<'a> CFG<'a> {
         }
 
         self.blocks.push(Block::Exit {
+            id: self.blocks.len(),
             predecessors: vec![],
         });
     }
@@ -156,7 +177,7 @@ impl<'a> CFG<'a> {
         fn add_edge(blocks: &mut [Block<'_>], from: usize, to: usize) {
             // Add `to` as a successor of `from`
             match &mut blocks[from] {
-                Block::Entry { successor } => *successor = to,
+                Block::Entry { successor, .. } => *successor = to,
                 Block::Basic { successors, .. } => {
                     successors.push(to);
                 }
@@ -165,7 +186,7 @@ impl<'a> CFG<'a> {
 
             // Add `from` as a predecessor of `to`
             match &mut blocks[to] {
-                Block::Exit { predecessors } | Block::Basic { predecessors, .. } => {
+                Block::Exit { predecessors, .. } | Block::Basic { predecessors, .. } => {
                     predecessors.push(from);
                 }
                 Block::Entry { .. } => (),
@@ -193,15 +214,19 @@ impl<'a> CFG<'a> {
                         Instruction::Jump(target)
                         | Instruction::JumpIfZero { target, .. }
                         | Instruction::JumpIfNotZero { target, .. } => {
-                            let target_id = self.label_map.get(target.as_str()).expect(
-                                "all labels should be mapped to a block ID during partitioning",
-                            );
-
                             let is_unconditional = matches!(last, Instruction::Jump(_));
 
-                            add_edge(&mut self.blocks, block_id, *target_id);
+                            if let Some(target_id) = self.label_map.get(target.as_str()) {
+                                add_edge(&mut self.blocks, block_id, *target_id);
 
-                            if !is_unconditional {
+                                if !is_unconditional {
+                                    add_edge(&mut self.blocks, block_id, next_block_id);
+                                }
+                            } else {
+                                // The `target` block was optimized away. Since
+                                // there is no edge to create to the target
+                                // block, just ensure control can fallthrough
+                                // to the next block.
                                 add_edge(&mut self.blocks, block_id, next_block_id);
                             }
                         }
@@ -215,13 +240,9 @@ impl<'a> CFG<'a> {
     /// Converts the control flow graph (_CFG_) back into a list of _IR_
     /// instructions, leaving each block's instructions empty.
     fn cfg_to_ir(&mut self) -> Vec<Instruction<'a>> {
-        let entry_id = 0;
-        let exit_id = self.blocks.len() - 1;
-
         let mut ir_instructions = vec![];
 
-        // Iterate over the blocks, excluding the entry and exit blocks.
-        for block in &mut self.blocks[entry_id + 1..exit_id] {
+        for block in self.basic_blocks_mut() {
             if let Block::Basic { instructions, .. } = block
                 && !instructions.is_empty()
             {
@@ -230,5 +251,16 @@ impl<'a> CFG<'a> {
         }
 
         ir_instructions
+    }
+
+    /// Returns a mutable slice of the basic blocks in the _CFG_ (excluding
+    /// entry and exit blocks).
+    #[inline]
+    #[must_use]
+    fn basic_blocks_mut(&mut self) -> &mut [Block<'a>] {
+        let entry_id = 0;
+        let exit_id = self.blocks.len() - 1;
+
+        &mut self.blocks[entry_id + 1..exit_id]
     }
 }
