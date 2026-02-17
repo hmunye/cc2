@@ -16,7 +16,6 @@ impl<'a> PostOrder<'a> {
     /// A block is considered reachable if it is a successor of any prior block.
     #[must_use]
     fn new(blocks: &'a [Block<'a>]) -> Self {
-        // TODO: Make the traversal iterative.
         let mut post_order = Self {
             post: vec![],
             index: 0,

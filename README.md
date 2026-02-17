@@ -59,6 +59,7 @@ Tiny C Compiler (subset of _C17_).
 
 - [x] Constant Folding
 - [x] Unreachable Code Elimination
+- [x] Copy Propagation
 
 ## Testing
 
