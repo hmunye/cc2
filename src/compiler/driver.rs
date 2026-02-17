@@ -7,9 +7,8 @@ use std::ops::Range;
 use std::path::Path;
 use std::{env, fs, process};
 
+use crate::error::Result;
 use crate::{args, compiler, fmt_err};
-
-pub type Result<T> = std::result::Result<T, String>;
 
 /// Information about the current program context.
 #[derive(Debug)]

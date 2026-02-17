@@ -1,4 +1,6 @@
-//! Macros for formatting and reporting compiler errors.
+//! Macros and result type for formatting and reporting compiler errors.
+
+pub type Result<T> = std::result::Result<T, String>;
 
 /// Report a generic error message, printing to `stderr`.
 #[macro_export]

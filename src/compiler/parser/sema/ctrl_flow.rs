@@ -4,10 +4,11 @@
 //! statements (loops/switches) and validates `break`/`continue` usage within
 //! each function scope.
 
+use crate::compiler::Context;
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, CtrlFlowPhase, Declaration, LabelPhase, Labeled, Statement,
 };
-use crate::compiler::{Context, Result};
+use crate::error::Result;
 use crate::fmt_token_err;
 
 /// Kind of escapable control-flow statement.

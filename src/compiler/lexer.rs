@@ -7,8 +7,9 @@ use std::fmt;
 use std::ops::Range;
 use std::path::Path;
 
+use crate::compiler::Context;
 use crate::compiler::parser::types::c_int;
-use crate::compiler::{Context, Result};
+use crate::error::Result;
 use crate::fmt_token_err;
 
 /// Reserved tokens defined by the _C_ language standard (_C17_).
@@ -471,7 +472,7 @@ impl<'a> Lexer<'a> {
 
         let line_token = self.consume_constant()?;
         let TokenType::IntConstant(line) = line_token.ty else {
-            unreachable!("line should be  parsed as an integer constant");
+            panic!("decimal-line should be parsed as an integer constant");
         };
 
         debug_assert!(line >= 0);

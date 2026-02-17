@@ -8,56 +8,36 @@ use std::collections::HashSet;
 use crate::compiler::ir::Instruction;
 use crate::compiler::opt::{Block, CFG};
 
-/// Transforms a control flow graph (_CFG_) by removing code that can never be
+/// Transforms the provided control-flow graph, removing code that can never be
 /// executed.
 pub fn unreachable_code(cfg: &mut CFG<'_>) {
-    let entry_id = 0;
-    let exit_id = cfg.blocks.len() - 1;
+    let mut reachable: HashSet<_> = cfg.basic_blocks().post_order().map(Block::id).collect();
 
-    let mut seen = HashSet::new();
+    // Ensure entry and exit blocks are not removed.
+    reachable.insert(Block::ENTRY_ID);
+    reachable.insert(cfg.exit_block_id());
 
-    seen.insert(entry_id);
-    seen.insert(exit_id);
+    // Remove all unreachable basic blocks from the graph while preserving their
+    // relative order.
+    cfg.blocks.retain(|block| reachable.contains(&block.id()));
 
-    if let Some(Block::Entry { successor, .. }) = &cfg.blocks.first() {
-        // NOTE: Make DFS iterative if any issues occur.
-        //
-        // Start traversal from the successor of the `entry` block.
-        mark_reachable_blocks(cfg, *successor, &mut seen);
-    }
-
-    // Remove all unreachable basic blocks from the `CFG`.
-    cfg.blocks.retain(|block| seen.contains(&block.id()));
-
-    clean_cfg(cfg, &seen);
-}
-
-/// Traverses the successors of a basic block given it's `id`, marking all
-/// reachable blocks.
-fn mark_reachable_blocks(cfg: &CFG<'_>, id: usize, seen: &mut HashSet<usize>) {
-    if let Block::Basic { successors, .. } = &cfg.blocks[id]
-        && seen.insert(id)
-    {
-        for block_id in successors {
-            mark_reachable_blocks(cfg, *block_id, seen);
-        }
-    }
+    clean_cfg(cfg, &reachable);
 }
 
 /// Removes redundant jump instructions, useless label instructions, and
-/// unreachable blocks from the control flow graph (_CFG_).
+/// unreachable predecessors from the control-flow graph.
 ///
 /// Redundant jumps are those that only jump to the next block in sequence.
 /// Useless labels are those that are not targeted by any block but the
 /// previous.
-fn clean_cfg(cfg: &mut CFG<'_>, seen: &HashSet<usize>) {
-    let entry_id = 0;
-    let exit_id = cfg.blocks.len() - 1;
+fn clean_cfg(cfg: &mut CFG<'_>, reachable: &HashSet<usize>) {
+    let len = cfg.blocks.len();
+    let exit_id = cfg.exit_block_id();
 
     // Iterate over the blocks, excluding the entry and exit blocks.
-    for i in entry_id + 1..exit_id {
-        let prev_id = cfg.blocks[i - 1].id();
-        let next_id = cfg.blocks[i + 1].id();
+    for i in Block::ENTRY_ID + 1..len - 1 {
+        let prev_block_id = cfg.blocks[i - 1].id();
+        let next_block_id = cfg.blocks[i + 1].id();
         let block = &mut cfg.blocks[i];
 
         if let Block::Basic {
@@ -67,8 +47,8 @@ fn clean_cfg(cfg: &mut CFG<'_>, seen: &HashSet<usize>) {
             ..
         } = block
         {
-            // Retain only the reachable predecessors in the `CFG`.
-            predecessors.retain(|id| seen.contains(id));
+            // Retain only the reachable predecessors.
+            predecessors.retain(|id| reachable.contains(id));
 
             if let Some(
                 Instruction::Jump(_)
@@ -76,19 +56,18 @@ fn clean_cfg(cfg: &mut CFG<'_>, seen: &HashSet<usize>) {
                 | Instruction::JumpIfNotZero { .. },
             ) = instructions.last()
             {
-                // Exclude the last basic block since a `jump` instruction at
-                // the  end of the graph is never redundant since it targets the
-                // `exit` block.
-                if next_id == exit_id {
+                // Skip the last basic block since a `jump` instruction at
+                // the end of the graph targets the exit block.
+                if next_block_id == exit_id {
                     continue;
                 }
 
                 let mut keep = false;
 
                 for id in successors {
-                    // There is a successor block other than the next
-                    // block where control can flow to.
-                    if *id != next_id {
+                    // There is a successor other than the next block where
+                    // control can flow to.
+                    if *id != next_block_id {
                         keep = true;
                         break;
                     }
@@ -103,9 +82,9 @@ fn clean_cfg(cfg: &mut CFG<'_>, seen: &HashSet<usize>) {
                 let mut keep = false;
 
                 for id in predecessors {
-                    // There is a predecessor block other than the previous
-                    // block which targets this label.
-                    if *id != prev_id {
+                    // There is a predecessor other than the previous block
+                    // which targets this label.
+                    if *id != prev_block_id {
                         keep = true;
                         break;
                     }
@@ -119,10 +98,8 @@ fn clean_cfg(cfg: &mut CFG<'_>, seen: &HashSet<usize>) {
         }
     }
 
-    // Update the predecessors of the exit block, removing references to
-    // blocks that have been removed.
-    if let Block::Exit { predecessors, .. } = &mut cfg.blocks[exit_id] {
-        // Retain only the reachable predecessors in the `CFG`.
-        predecessors.retain(|id| seen.contains(id));
+    if let Some(Block::Exit { predecessors, .. }) = cfg.blocks.last_mut() {
+        // Retain only the reachable predecessors.
+        predecessors.retain(|id| reachable.contains(id));
     }
 }

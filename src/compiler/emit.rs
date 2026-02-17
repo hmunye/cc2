@@ -5,8 +5,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::fmt::Write;
-use std::io::{self, Write as IoWrite};
+use std::io::{self, BufWriter, Write};
 
 use crate::compiler::Context;
 use crate::compiler::mir::{self, BinaryOperator, MIRX86, UnaryOperator};
@@ -20,8 +19,10 @@ use crate::compiler::mir::{self, BinaryOperator, MIRX86, UnaryOperator};
 pub fn emit_gas_x86_64_linux(
     ctx: &Context<'_>,
     mir: &MIRX86<'_>,
-    mut writer: Box<dyn IoWrite>,
+    writer: Box<dyn Write>,
 ) -> io::Result<()> {
+    let mut writer = BufWriter::new(writer);
+
     writeln!(
         &mut writer,
         "\t.file\t\"{}\"\n\t.text",
@@ -61,7 +62,7 @@ pub fn emit_gas_x86_64_linux(
                 #[cfg(debug_assertions)]
                 writeln!(&mut writer, ".LFB{i}:")?;
 
-                write!(&mut writer, "{}", emit_asm_function(func, &mir.locales)?)?;
+                emit_asm_function(func, &mir.locales, &mut writer)?;
 
                 // `FE` - Function End
                 #[cfg(debug_assertions)]
@@ -153,10 +154,13 @@ pub fn emit_gas_x86_64_linux(
     )
 }
 
-/// Return a string assembly representation of the given _MIR x86-64_ function.
-fn emit_asm_function(func: &mir::Function<'_>, locales: &HashSet<&str>) -> io::Result<String> {
-    let mut asm = String::new();
-
+/// Emit assembly representation of the given _MIR x86-64_ function to the
+/// provided `writer`.
+fn emit_asm_function(
+    func: &mir::Function<'_>,
+    locales: &HashSet<&str>,
+    writer: &mut BufWriter<Box<dyn Write>>,
+) -> io::Result<()> {
     // Generate the function prologue:
     //
     // 1. Push the current base pointer (`%rbp`) onto the stack to save the
@@ -164,19 +168,18 @@ fn emit_asm_function(func: &mir::Function<'_>, locales: &HashSet<&str>) -> io::R
     //
     // 2. Move the current stack pointer (`%rsp`) into the base pointer (`%rbp`)
     // to establish the start of the callee's stack frame.
-    writeln!(&mut asm, "\tpushq\t%rbp\n\tmovq\t%rsp, %rbp").map_err(io::Error::other)?;
+    writeln!(writer, "\tpushq\t%rbp\n\tmovq\t%rsp, %rbp")?;
 
     for inst in &func.instructions {
         if let mir::Instruction::Label(label) = inst {
-            writeln!(&mut asm, ".L{label}:").map_err(io::Error::other)?;
+            writeln!(writer, ".L{label}:")?;
             continue;
         }
 
-        writeln!(&mut asm, "\t{}", emit_asm_instruction(inst, locales))
-            .map_err(io::Error::other)?;
+        writeln!(writer, "\t{}", emit_asm_instruction(inst, locales))?;
     }
 
-    Ok(asm)
+    Ok(())
 }
 
 /// Return a string assembly representation of the given _MIR x86-64_

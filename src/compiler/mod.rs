@@ -1,5 +1,4 @@
-//! Multi-stage pipeline for compiling a _C_ translation unit into textual
-//! assembly.
+//! Multi-stage pipeline for compiling a _C_ translation unit into assembly.
 
 pub mod driver;
 pub mod emit;
@@ -9,4 +8,4 @@ pub mod mir;
 pub mod opt;
 pub mod parser;
 
-pub use driver::{Context, Result};
+pub use driver::Context;

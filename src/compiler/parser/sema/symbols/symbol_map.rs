@@ -70,7 +70,7 @@ pub struct SymbolInfo {
     pub linkage: Option<Linkage>,
     pub ty: Type,
     pub duration: Option<StorageDuration>,
-    /// Has this symbol been emitted into _IR_ instructions.
+    /// Has this symbol been emitted to _IR_.
     pub emitted: bool,
 }
 
@@ -99,8 +99,6 @@ pub fn convert_bindings_map<S: std::hash::BuildHasher>(
                 }
 
                 existing.linkage = existing.linkage.or(bind_info.linkage);
-                // existing.duration = bind_info.duration;
-                // existing.ty = bind_info.ty;
             })
             .or_insert_with(|| SymbolInfo {
                 state: bind_info.state,

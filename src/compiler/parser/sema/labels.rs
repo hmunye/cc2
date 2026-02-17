@@ -6,11 +6,12 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
+use crate::compiler::Context;
 use crate::compiler::lexer::Token;
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, Declaration, LabelPhase, Labeled, Statement, TypePhase,
 };
-use crate::compiler::{Context, Result};
+use crate::error::Result;
 use crate::fmt_token_err;
 
 /// Helper to perform semantic analysis on label/`goto` statements within an
@@ -30,8 +31,8 @@ impl<'a> LabelResolver<'a> {
     /// Returns a new label using the provided suffix.
     #[inline]
     fn new_label(&self, suffix: &str) -> String {
-        // `.` guarantees it won’t conflict with user-defined identifiers, since
-        // the _C_ standard forbids using `.` in identifiers.
+        // The `.` in labels guarantees they won’t conflict with user-defined
+        // identifiers.
         format!("{}.{suffix}", self.fn_ident)
     }
 

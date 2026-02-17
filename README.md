@@ -103,7 +103,7 @@ gcc hello_world.s -o hello_world
 
 # 3b. Or manually invoke assembler and linker:
 as hello_world.s -o hello_world.o   # assemble to object file
-ld hello_world.s -o hello_world     # link to produce executable
+ld hello_world.o -o hello_world     # link to produce executable
 
 # -----------------------------
 # Shortcut: Use the -p flag
@@ -113,7 +113,7 @@ ld hello_world.s -o hello_world     # link to produce executable
 # This is just a convenience; no separate preprocessed file is needed.
 ./target/release/cc2 -p hello_world.c
 
-# Link as usual:
+# Assemble and link as usual:
 gcc hello_world.s -o hello_world
 ```
 

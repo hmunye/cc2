@@ -10,7 +10,8 @@ use crate::compiler::parser::ast::{
     SwitchCase,
 };
 use crate::compiler::parser::types::c_int;
-use crate::compiler::{self, Context, Result};
+use crate::compiler::{self, Context};
+use crate::error::Result;
 use crate::fmt_token_err;
 
 /// Kind of labeled statement within a `switch` statement.

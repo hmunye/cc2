@@ -10,7 +10,8 @@ use crate::compiler::parser::ast::{
     Parsed, Statement, StorageClass,
 };
 use crate::compiler::parser::types::Type;
-use crate::compiler::{self, Context, Result};
+use crate::compiler::{self, Context};
+use crate::error::Result;
 use crate::fmt_token_err;
 
 use super::{Linkage, Scope, StorageDuration, SymbolMap, SymbolState, convert_bindings_map};
@@ -61,10 +62,8 @@ impl SymbolResolver {
     /// Returns a new temporary identifier using the provided prefix.
     #[inline]
     fn new_tmp(&self, prefix: &str) -> String {
-        // `.` guarantees it won’t conflict with user-defined identifiers, since
-        // the _C_ standard forbids using `.` in identifiers.
-        //
-        // `@` is not allowed in GNU `as` assembly syntax.
+        // The `.` in temporary identifiers guarantees they won’t conflict
+        // with user-defined identifiers.
         format!("{prefix}.{}", self.scope.current_scope())
     }
 

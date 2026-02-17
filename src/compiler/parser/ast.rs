@@ -5,10 +5,11 @@
 
 use std::fmt;
 
+use crate::compiler::Context;
 use crate::compiler::lexer::{OperatorKind, Reserved, Token, TokenType};
 use crate::compiler::parser::sema::symbols::SymbolMap;
 use crate::compiler::parser::types::{Type, c_int};
-use crate::compiler::{Context, Result};
+use crate::error::Result;
 use crate::{fmt_err, fmt_token_err};
 
 use super::sema;
@@ -76,14 +77,14 @@ impl fmt::Display for DeclSpecs {
     }
 }
 
-/// _AST_ storage-class specifier.
+/// _AST_ storage-class specifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageClass {
     Static,
     Extern,
 }
 
-/// _AST_ declaration.
+/// _AST_ declarations.
 #[derive(Debug)]
 pub enum Declaration<'a> {
     Var {
@@ -138,7 +139,7 @@ pub struct Param<'a> {
     pub token: Token<'a>,
 }
 
-/// _AST_ function declaration/definition.
+/// _AST_ function declarations/definitions.
 #[derive(Debug)]
 pub struct Function<'a> {
     pub specs: DeclSpecs,
@@ -187,7 +188,7 @@ impl Block<'_> {
     }
 }
 
-/// _AST_ block item.
+/// _AST_ block items.
 #[derive(Debug)]
 pub enum BlockItem<'a> {
     Stmt(Statement<'a>),
@@ -207,14 +208,14 @@ impl BlockItem<'_> {
     }
 }
 
-/// _AST_ `for` statement initial clause.
+/// _AST_ `for` statement initial clauses.
 #[derive(Debug)]
 pub enum ForInit<'a> {
     Decl(Declaration<'a>),
     Expr(Option<Expression<'a>>),
 }
 
-/// _AST_ labeled statement.
+/// _AST_ labeled statements.
 #[derive(Debug)]
 pub enum Labeled<'a> {
     Label {
@@ -245,7 +246,7 @@ pub struct SwitchCase<'a> {
     pub expr: Expression<'a>,
 }
 
-/// _AST_ statement.
+/// _AST_ statements.
 #[derive(Debug)]
 pub enum Statement<'a> {
     Return(Expression<'a>),
@@ -431,7 +432,7 @@ impl Statement<'_> {
     }
 }
 
-/// _AST_ expression.
+/// _AST_ expressions.
 #[derive(Debug, Clone)]
 pub enum Expression<'a> {
     /// Integer constant (32-bit signed).
@@ -513,13 +514,13 @@ impl fmt::Display for Expression<'_> {
                     .collect::<Vec<_>>()
                     .join(", ");
 
-                write!(f, "{ident:?}({args_str})")
+                write!(f, "{ident:?} ({args_str})")
             }
         }
     }
 }
 
-/// _AST_ unary operator.
+/// _AST_ unary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
     /// `~` - unary operator.
@@ -548,7 +549,7 @@ impl fmt::Display for UnaryOperator {
     }
 }
 
-/// _AST_ binary operator.
+/// _AST_ binary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
     /// `+` - binary operator.

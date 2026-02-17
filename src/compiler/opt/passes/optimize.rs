@@ -7,8 +7,9 @@ use crate::args::Opts;
 use crate::compiler::ir::{Function, IR, Item};
 use crate::compiler::{self, opt::CFG};
 
-/// Runs machine-independent intraprocedural optimization passes on the given
-/// intermediate representation (_IR_), according to the specified `opts`.
+/// Runs machine-independent, intraprocedural optimization passes, on the given
+/// intermediate representation (_IR_), according to the optimizations
+/// specified.
 pub fn optimize_ir(ir: &mut IR<'_>, opts: &Opts) {
     if !opts.any_passes_enabled() {
         return;
@@ -21,8 +22,7 @@ pub fn optimize_ir(ir: &mut IR<'_>, opts: &Opts) {
     }
 }
 
-/// Optimizes a single _IR_ function, applying the specified optimization
-/// passes.
+/// Optimizes the provided _IR_ function, applying the specified optimization.
 fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
     if func.instructions.is_empty() {
         return;
@@ -35,7 +35,6 @@ fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
             compiler::opt::passes::fold_const(func);
         }
 
-        // Synchronize CFG with the current IR function state.
         cfg.sync(func);
 
         if opts.uce {
@@ -50,7 +49,6 @@ fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
             compiler::opt::passes::dead_store(&mut cfg);
         }
 
-        // Apply optimizations, and stop if no changes are made.
         if !cfg.apply(func) {
             break;
         }

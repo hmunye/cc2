@@ -3,13 +3,14 @@
 //! Semantic analysis pass which performs type checking, enforcing semantic
 //! constraints on expressions and declarations within an _AST_.
 
+use crate::compiler::Context;
 use crate::compiler::parser::ast::{
     AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled,
     Statement, StorageClass, TypePhase,
 };
 use crate::compiler::parser::sema::symbols::SymbolMap;
 use crate::compiler::parser::types::Type;
-use crate::compiler::{Context, Result};
+use crate::error::Result;
 use crate::fmt_token_err;
 
 /// Performs type checking using the provided `symbol_map`, enforcing semantic
@@ -55,9 +56,11 @@ fn type_check_function(func: &Function<'_>, ctx: &Context<'_>, sym_map: &SymbolM
         ..
     } = func;
 
-    if let Some(entry) = sym_map.get(ident.as_str())
-        && entry.ty != specs.ty
-    {
+    let entry = sym_map
+        .get(ident.as_str())
+        .expect("function should be available after symbol resolution");
+
+    if entry.ty != specs.ty {
         let tok_str = format!("{token:?}");
         let line_content = ctx.src_slice(token.loc.line_span.clone());
 
@@ -107,9 +110,11 @@ fn type_check_variable(
             ));
         }
 
-        if let Some(entry) = sym_map.get(ident.as_str())
-            && entry.ty != specs.ty
-        {
+        let entry = sym_map
+            .get(ident.as_str())
+            .expect("variable should be available after symbol resolution");
+
+        if entry.ty != specs.ty {
             let tok_str = format!("{token:?}");
             let line_content = ctx.src_slice(token.loc.line_span.clone());
 
@@ -266,7 +271,7 @@ fn type_check_expression(
         Expression::Var { ident, token } => {
             let entry = sym_map
                 .get(ident.as_str())
-                .expect("variable type should be available after symbol resolution");
+                .expect("variable should be available after symbol resolution");
 
             if entry.ty != Type::Int {
                 let tok_str = format!("{token:?}");
@@ -286,11 +291,11 @@ fn type_check_expression(
             Ok(())
         }
         Expression::FuncCall { ident, args, token } => {
-            let f_type = sym_map
+            let entry = sym_map
                 .get(ident.as_str())
-                .expect("function type should be available after symbol resolution");
+                .expect("function should be available after symbol resolution");
 
-            if let Type::Func { params } = f_type.ty {
+            if let Type::Func { params } = entry.ty {
                 let args_len = args.len();
 
                 if params != args_len {

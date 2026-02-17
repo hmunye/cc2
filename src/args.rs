@@ -6,7 +6,7 @@ use std::process;
 use crate::report_err;
 
 /// Optimization flags.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Opts {
     /// Constant folding optimization (can be enabled explicitly, overrides
     /// `opt_level` preset).
@@ -66,12 +66,7 @@ impl Args {
 
         let mut stage = String::new();
         let mut preprocess = false;
-        let mut opts = Opts {
-            fold: false,
-            copy_prop: false,
-            uce: false,
-            dse: false,
-        };
+        let mut opts = Opts::default();
         let mut in_path = String::new();
         let mut out_path = PathBuf::new();
 
@@ -105,7 +100,7 @@ impl Args {
                             _ => {
                                 report_err!(
                                     &program,
-                                    "invalid argument to '-O': expected '-O', '-O0', or '-O1'"
+                                    "invalid optimization level: expected '-O0' or '-O1'"
                                 );
                                 print_usage(&program);
                             }

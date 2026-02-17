@@ -11,16 +11,15 @@ use crate::compiler::parser::types::c_int;
 /// all constant expressions.
 pub fn fold_const(f: &mut Function<'_>) {
     let mut i = 0;
-
     while i < f.instructions.len() {
-        let ist = &mut f.instructions[i];
+        let inst = &mut f.instructions[i];
 
-        match ist {
+        match inst {
             Instruction::Unary { op, src, dst, .. } => {
                 if let Value::IntConstant(x) = src {
                     let val = eval_unary(*op, *x);
 
-                    *ist = Instruction::Copy {
+                    *inst = Instruction::Copy {
                         src: Value::IntConstant(val),
                         dst: dst.clone(),
                     };
@@ -52,7 +51,7 @@ pub fn fold_const(f: &mut Function<'_>) {
 
                     let val = eval_binary(*op, *x, *y);
 
-                    *ist = Instruction::Copy {
+                    *inst = Instruction::Copy {
                         src: Value::IntConstant(val),
                         dst: dst.clone(),
                     };
@@ -67,11 +66,11 @@ pub fn fold_const(f: &mut Function<'_>) {
                 ref target,
             }) => {
                 if let Value::IntConstant(x) = cond {
-                    if (matches!(ist, Instruction::JumpIfZero { .. }) && *x == 0)
-                        || (matches!(ist, Instruction::JumpIfNotZero { .. }) && *x != 0)
+                    if (matches!(inst, Instruction::JumpIfZero { .. }) && *x == 0)
+                        || (matches!(inst, Instruction::JumpIfNotZero { .. }) && *x != 0)
                     {
                         // We know the jump to `target` will always be taken.
-                        *ist = Instruction::Jump(target.clone());
+                        *inst = Instruction::Jump(target.clone());
                     } else {
                         // NOTE: O(n) time complexity.
                         //

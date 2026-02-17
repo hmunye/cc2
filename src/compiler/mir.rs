@@ -12,12 +12,12 @@ use crate::compiler::parser::ast::{self, Signedness};
 use crate::compiler::parser::sema::symbols::{StorageDuration, SymbolMap};
 use crate::compiler::parser::types::c_int;
 
-/// Machine _IR_: structured _x86-64_ assembly representation.
+/// Structured _x86-64_ assembly representation.
 #[derive(Debug)]
 pub struct MIRX86<'a> {
     /// Items that represent the structure of the assembly program.
     pub program: Vec<Item<'a>>,
-    /// Tracks the set of functions defined within the current translation unit.
+    /// Set of functions defined within the translation unit.
     pub locales: HashSet<&'a str>,
 }
 
@@ -32,7 +32,7 @@ impl fmt::Display for MIRX86<'_> {
     }
 }
 
-/// _MIR x86-64_ top-level construct.
+/// _MIR x86-64_ top-level constructs.
 #[derive(Debug)]
 pub enum Item<'a> {
     Func(Function<'a>),
@@ -86,23 +86,27 @@ impl fmt::Display for Function<'_> {
     }
 }
 
-/// _MIR x86-64_ instruction.
+/// _MIR x86-64_ instructions.
 #[derive(Debug)]
 pub enum Instruction<'a> {
-    /// Moves `src` to `dst`.
+    /// Moves `src` -> `dst`.
     Mov { src: Operand<'a>, dst: Operand<'a> },
     /// Unary operator applied to `dst`.
+    ///
+    /// (`dst` = `<unop> dst`).
     Unary {
         unop: UnaryOperator,
         dst: Operand<'a>,
     },
-    /// Binary operator applied to `rhs` and `dst` (`dst` = `dst` binop `rhs`).
+    /// Binary operator applied to `rhs` and `dst`
+    ///
+    /// (`dst` = `dst <binop> rhs`).
     Binary {
         binop: BinaryOperator,
         rhs: Operand<'a>,
         dst: Operand<'a>,
     },
-    /// Compares both operands (`lhs` - `rhs`), and updates the relevant
+    /// Compares both operands (`lhs` - `rhs`), and updates the relevant CPU
     /// `RFLAGS`.
     Cmp { rhs: Operand<'a>, lhs: Operand<'a> },
     /// Performs signed division with a dividend of `%edx:%eax` and divisor as
@@ -111,21 +115,21 @@ pub enum Instruction<'a> {
     /// Sign-extend the 32-bit value in `%eax` to a 64-bit signed value across
     /// `%edx:%eax`.
     Cdq,
-    /// Unconditionally jump to the instruction after the label identifier.
+    /// Unconditionally jump to the instruction after the target label.
     Jmp(&'a str),
-    /// Conditionally jump to the instruction after the label identifier, based
-    /// on the conditional code.
+    /// Conditionally jump to the instruction after the target label, based on
+    /// the conditional code.
     JmpC { code: CondCode, label: &'a str },
-    /// Move the value of the bit in `RFLAGS` corresponding to `code` to the
-    /// `dst` (1-byte).
+    /// Move the value of the bit in CPU `RFLAGS` corresponding to `code` to the
+    /// `dst` (1-byte operand).
     SetC { code: CondCode, dst: Operand<'a> },
-    /// Defines a label identifier for one or more instructions.
+    /// Defines a label identifier.
     Label(&'a str),
     /// Subtract the specified number of bytes from `%rsp`.
     StackAlloc(isize),
     /// Add the specified number of bytes to `%rsp`.
     StackDealloc(usize),
-    /// Pushes the operand onto the call stack.
+    /// Pushes the operand onto the call-stack.
     Push(Operand<'a>),
     /// Calls the function specified by the identifier, transferring control.
     Call(&'a str),
@@ -184,9 +188,12 @@ impl fmt::Display for Instruction<'_> {
             }
             Instruction::Idiv(div) => write!(f, "{:<15}{div}", "Idiv"),
             Instruction::Cdq => write!(f, "Cdq"),
-            Instruction::Jmp(label) => write!(f, "{:<15}{label:?}", "Jmp"),
-            Instruction::JmpC { code, label } => {
-                write!(f, "{:<15}{label:?}", format!("Jmp{code:?}"))
+            Instruction::Jmp(target) => write!(f, "{:<15}{target:?}", "Jmp"),
+            Instruction::JmpC {
+                code,
+                label: target,
+            } => {
+                write!(f, "{:<15}{target:?}", format!("Jmp{code:?}"))
             }
             Instruction::SetC { code, dst } => write!(f, "{:<15}{dst}", format!("Set{code:?}")),
             Instruction::Label(label) => write!(f, "{:<15}{label:?}", "Label"),
@@ -199,10 +206,10 @@ impl fmt::Display for Instruction<'_> {
     }
 }
 
-/// _MIR x86-64_ operand.
+/// _MIR x86-64_ operands.
 #[derive(Debug, Clone, Copy)]
 pub enum Operand<'a> {
-    /// Immediate value.
+    /// Immediate value (32-bit).
     Imm32(c_int),
     /// Register name.
     Register(Reg),
@@ -210,7 +217,7 @@ pub enum Operand<'a> {
     Symbol(&'a str),
     /// Stack address with specified offset from `%rbp`.
     Stack(isize),
-    /// Data located in the `.bss` / `.data` _ELF_ section.
+    /// Identifier for data located in the `.bss` / `.data` _ELF_ section.
     Data(&'a str),
 }
 
@@ -326,7 +333,7 @@ pub enum BinaryOperator {
 /// intermediate representation (_IR_).
 #[must_use]
 pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>, sym_map: &SymbolMap) -> MIRX86<'a> {
-    let mut mir_items = vec![];
+    let mut mir_items = Vec::with_capacity(ir.program.len());
     let mut locales = HashSet::new();
 
     for item in &ir.program {
@@ -357,9 +364,9 @@ pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>, sym_map: &SymbolMap) -> MIRX86<'a
 
 /// Generate a _MIR x86-64_ function definition from the provided _IR_ function.
 fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) -> Function<'a> {
-    let mut instructions = vec![];
+    let mut instructions = Vec::with_capacity(func.params.len());
 
-    // Lower any function parameters before processing the function instructions.
+    // Lower function parameters before processing `IR` instructions.
     lower_ir_function_params(&func.params, &mut instructions);
 
     for inst in &func.instructions {
@@ -368,47 +375,49 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                 // According to the System-V ABI calling convention, the return
                 // value is always stored in `%rax` (for 64-bit) or `%eax`
                 // (for 32-bit).
-                instructions.push(Instruction::Mov {
-                    src: generate_mir_operand(v),
-                    dst: Operand::Register(Reg::AX),
-                });
-
-                instructions.push(Instruction::Ret);
+                instructions.extend([
+                    Instruction::Mov {
+                        src: generate_mir_operand(v),
+                        dst: Operand::Register(Reg::AX),
+                    },
+                    Instruction::Ret,
+                ]);
             }
             ir::Instruction::Unary { op, src, dst, .. } => {
                 let dst = generate_mir_operand(dst);
 
                 if matches!(op, ast::UnaryOperator::Not) {
-                    instructions.push(Instruction::Cmp {
-                        rhs: Operand::Imm32(0),
-                        lhs: generate_mir_operand(src),
-                    });
-
-                    // Zero-out the destination.
-                    instructions.push(Instruction::Mov {
-                        src: Operand::Imm32(0),
-                        dst,
-                    });
-
-                    instructions.push(Instruction::SetC {
-                        code: CondCode::E,
-                        dst,
-                    });
+                    instructions.extend([
+                        Instruction::Cmp {
+                            rhs: Operand::Imm32(0),
+                            lhs: generate_mir_operand(src),
+                        },
+                        // Zero-out the destination.
+                        Instruction::Mov {
+                            src: Operand::Imm32(0),
+                            dst,
+                        },
+                        Instruction::SetC {
+                            code: CondCode::E,
+                            dst,
+                        },
+                    ]);
                 } else {
                     let unop = match op {
                         ast::UnaryOperator::Complement => UnaryOperator::Not,
                         ast::UnaryOperator::Negate => UnaryOperator::Neg,
-                        _ => unreachable!(
-                            "unary increment/decrement should already be lowered to add/sub instruction"
+                        _ => panic!(
+                            "increment/decrement should already be lowered to an add/sub instruction"
                         ),
                     };
 
-                    instructions.push(Instruction::Mov {
-                        src: generate_mir_operand(src),
-                        dst,
-                    });
-
-                    instructions.push(Instruction::Unary { unop, dst });
+                    instructions.extend([
+                        Instruction::Mov {
+                            src: generate_mir_operand(src),
+                            dst,
+                        },
+                        Instruction::Unary { unop, dst },
+                    ]);
                 }
             }
             ir::Instruction::Binary {
@@ -422,15 +431,6 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
 
                 match op {
                     ast::BinaryOperator::Divide | ast::BinaryOperator::Modulo => {
-                        instructions.push(Instruction::Mov {
-                            src: generate_mir_operand(lhs),
-                            dst: Operand::Register(Reg::AX),
-                        });
-
-                        instructions.push(Instruction::Cdq);
-
-                        instructions.push(Instruction::Idiv(generate_mir_operand(rhs)));
-
                         let src = if matches!(op, ast::BinaryOperator::Divide) {
                             // Quotient is in `%eax`.
                             Operand::Register(Reg::AX)
@@ -439,7 +439,15 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                             Operand::Register(Reg::DX)
                         };
 
-                        instructions.push(Instruction::Mov { src, dst });
+                        instructions.extend([
+                            Instruction::Mov {
+                                src: generate_mir_operand(lhs),
+                                dst: Operand::Register(Reg::AX),
+                            },
+                            Instruction::Cdq,
+                            Instruction::Idiv(generate_mir_operand(rhs)),
+                            Instruction::Mov { src, dst },
+                        ]);
                     }
                     ast::BinaryOperator::OrdGreater
                     | ast::BinaryOperator::OrdLess
@@ -459,21 +467,21 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                             ),
                         };
 
-                        instructions.push(Instruction::Cmp {
-                            rhs: generate_mir_operand(rhs),
-                            lhs: generate_mir_operand(lhs),
-                        });
-
-                        // Zero-out the destination.
-                        instructions.push(Instruction::Mov {
-                            src: Operand::Imm32(0),
-                            dst,
-                        });
-
-                        instructions.push(Instruction::SetC {
-                            code: cond_code,
-                            dst,
-                        });
+                        instructions.extend([
+                            Instruction::Cmp {
+                                rhs: generate_mir_operand(rhs),
+                                lhs: generate_mir_operand(lhs),
+                            },
+                            // Zero-out the destination.
+                            Instruction::Mov {
+                                src: Operand::Imm32(0),
+                                dst,
+                            },
+                            Instruction::SetC {
+                                code: cond_code,
+                                dst,
+                            },
+                        ]);
                     }
                     _ => {
                         // NOTE: Temporary hack for arithmetic right shift.
@@ -489,16 +497,17 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                             })
                         };
 
-                        instructions.push(Instruction::Mov {
-                            src: generate_mir_operand(lhs),
-                            dst,
-                        });
-
-                        instructions.push(Instruction::Binary {
-                            binop,
-                            rhs: generate_mir_operand(rhs),
-                            dst,
-                        });
+                        instructions.extend([
+                            Instruction::Mov {
+                                src: generate_mir_operand(lhs),
+                                dst,
+                            },
+                            Instruction::Binary {
+                                binop,
+                                rhs: generate_mir_operand(rhs),
+                                dst,
+                            },
+                        ]);
                     }
                 }
             }
@@ -513,21 +522,22 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
             }
             ir::Instruction::JumpIfZero { cond, target }
             | ir::Instruction::JumpIfNotZero { cond, target } => {
-                instructions.push(Instruction::Cmp {
-                    rhs: Operand::Imm32(0),
-                    lhs: generate_mir_operand(cond),
-                });
-
                 let code = if let ir::Instruction::JumpIfZero { .. } = inst {
                     CondCode::E
                 } else {
                     CondCode::NE
                 };
 
-                instructions.push(Instruction::JmpC {
-                    code,
-                    label: target.as_str(),
-                });
+                instructions.extend([
+                    Instruction::Cmp {
+                        rhs: Operand::Imm32(0),
+                        lhs: generate_mir_operand(cond),
+                    },
+                    Instruction::JmpC {
+                        code,
+                        label: target.as_str(),
+                    },
+                ]);
             }
             ir::Instruction::Call { ident, args, dst } => {
                 // According to the System-V ABI calling convention, the first
@@ -546,18 +556,18 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                     instructions.push(Instruction::StackAlloc(8));
                 }
 
-                for (i, arg) in args.iter().take(6).enumerate() {
-                    instructions.push(Instruction::Mov {
+                instructions.extend(args.iter().take(6).enumerate().map(|(i, arg)| {
+                    Instruction::Mov {
                         src: generate_mir_operand(arg),
                         dst: Operand::Register(regs[i]),
-                    });
-                }
+                    }
+                }));
 
                 if stack_args > 0 {
                     let remaining_args = &args[6..];
 
-                    // Any remaining arguments are passed on the stack in
-                    // right-to-left order.
+                    // Any remaining arguments are passed on the stack in right
+                    // to left order.
                     for arg in remaining_args.iter().rev() {
                         let mir_arg = generate_mir_operand(arg);
 
@@ -571,12 +581,13 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                             // the stack frame. Instead, we first move it into
                             // AX (caller-saved), then push onto the stack.
                             _ => {
-                                instructions.push(Instruction::Mov {
-                                    src: mir_arg,
-                                    dst: Operand::Register(Reg::AX),
-                                });
-
-                                instructions.push(Instruction::Push(Operand::Register(Reg::AX)));
+                                instructions.extend([
+                                    Instruction::Mov {
+                                        src: mir_arg,
+                                        dst: Operand::Register(Reg::AX),
+                                    },
+                                    Instruction::Push(Operand::Register(Reg::AX)),
+                                ]);
                             }
                         }
                     }
@@ -630,10 +641,10 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
 }
 
 /// Generate a _MIR x86-64_ operand from the provided _IR_ value.
-fn generate_mir_operand<'a>(val: &'a ir::Value<'_>) -> Operand<'a> {
+const fn generate_mir_operand(val: &ir::Value) -> Operand<'_> {
     match val {
         ir::Value::IntConstant(i) => Operand::Imm32(*i),
-        ir::Value::Var(ident) => Operand::Symbol(ident),
+        ir::Value::Var { ident, .. } => Operand::Symbol(ident.as_str()),
     }
 }
 
@@ -660,7 +671,7 @@ fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a
         });
     }
 
-    // Any remaining parameters are accessed from the stack in right-to-left
+    // Any remaining parameters are accessed from the stack in right to left
     // order.
     if params.len().saturating_sub(6) > 0 {
         let remaining_params = &params[6..];
@@ -696,7 +707,7 @@ fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
         {
             Operand::Data(ident)
         } else {
-            // Either we encountered an `automatic` or _IR_ temporary variable.
+            // Either we encountered an `automatic` or `IR` temporary variable.
             let offset = match offset_map.entry(ident) {
                 Entry::Occupied(entry) => *entry.get(),
                 Entry::Vacant(entry) => {
@@ -795,7 +806,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                     ],
                 );
 
-                // Ensures the two new instructions are skipped when processing.
+                // Ensures the two new instructions are skipped.
                 i += 1;
             }
             Instruction::Idiv(div) if matches!(div, Operand::Imm32(_)) => {
@@ -812,7 +823,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                     ],
                 );
 
-                // Ensures the two new instructions are skipped when processing.
+                // Ensures the two new instructions are skipped.
                 i += 1;
             }
             Instruction::Binary { binop, rhs, dst }
@@ -845,7 +856,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                     ],
                 );
 
-                // Ensures the two new instructions are skipped when processing.
+                // Ensures the two new instructions are skipped.
                 i += 1;
             }
             Instruction::Binary {
@@ -877,8 +888,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                     ],
                 );
 
-                // Ensures the three new instructions are skipped when
-                // processing.
+                // Ensures the three new instructions are skipped.
                 i += 2;
             }
             Instruction::Binary { binop, rhs, dst }
@@ -906,7 +916,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                     ],
                 );
 
-                // Ensures the two new instructions are skipped when processing.
+                // Ensures the two new instructions are skipped.
                 i += 1;
             }
             Instruction::Cmp { rhs, lhs }
@@ -946,7 +956,7 @@ fn rewrite_invalid_instructions(func: &mut Function<'_>) {
                     );
                 }
 
-                // Ensures the two new instructions are skipped when processing.
+                // Ensures the two new instructions are skipped.
                 i += 1;
             }
             _ => {}
