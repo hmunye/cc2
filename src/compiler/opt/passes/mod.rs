@@ -3,7 +3,6 @@
 //! Optimization passes that transform an intermediate representation (_IR_) in
 //! a target-agnostic way.
 
-pub mod analysis;
 pub mod copy_prop;
 pub mod dse;
 pub mod fold;

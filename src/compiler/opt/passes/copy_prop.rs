@@ -7,7 +7,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::ir::{Instruction, Value};
-use crate::compiler::opt::passes::analysis::{DataFlowAnalysis, run_analysis};
+use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
 use crate::compiler::opt::{Block, CFG};
 
 /// Tracks copies from `dst` -> `src` (`dst` receives value from `src`).
@@ -92,7 +92,7 @@ impl<'a> DataFlowAnalysis<'a> for CopyProp {
                         //
                         // Interprocedural analysis is not performed, so also
                         // conservatively remove copies using static variables
-                        // that are used across function boundaries.
+                        // that may be used across function boundaries.
                         incoming.retain(|copy| {
                             (!copy.0.is_static() && copy.0 != *dst)
                                 && (!copy.1.is_static() && copy.1 != *dst)
@@ -120,13 +120,13 @@ impl<'a> DataFlowAnalysis<'a> for CopyProp {
                     // return an empty set. The intersection of any set with
                     // the empty set is still the empty set.
                     id if Block::ENTRY_ID == id => return Self::Fact::default(),
-                    _ => {
+                    id => {
                         assert!(
-                            self.exit_id != *id,
+                            self.exit_id != id,
                             "malformed control-flow graph: basic block should not have exit as it's predecessor"
                         );
 
-                        if let Some(pred_outgoing) = self.get_block_fact(*id) {
+                        if let Some(pred_outgoing) = self.get_block_fact(id) {
                             // Retain those copies that intersect with the
                             // predecessors copies.
                             incoming.retain(|copy| pred_outgoing.contains(copy));
@@ -164,7 +164,7 @@ impl<'a> DataFlowAnalysis<'a> for CopyProp {
                 exit_fact.clone_from(fact);
             }
             Entry::Vacant(entry) => {
-                entry.insert((fact.clone(), vec![ReachingCopies::default(); num_insts]));
+                entry.insert((fact.clone(), vec![Self::Fact::default(); num_insts]));
             }
         }
     }
@@ -191,8 +191,8 @@ pub fn propagate_copy(cfg: &mut CFG<'_>) {
 
     run_analysis(cfg, &mut copy_prop);
 
-    // Rewrites each _IR_ instruction using the computed reaching copies
-    // per-instruction.
+    let mut to_remove = Vec::new();
+
     for block in cfg.basic_blocks_mut() {
         if let Block::Basic {
             id: block_id,
@@ -200,10 +200,8 @@ pub fn propagate_copy(cfg: &mut CFG<'_>) {
             ..
         } = block
         {
-            let mut i = 0;
-            while i < instructions.len() {
+            for (i, inst) in instructions.iter_mut().enumerate() {
                 let reaching_copies = copy_prop.get_instruction_fact(*block_id, i);
-                let inst = &mut instructions[i];
 
                 match inst {
                     Instruction::Copy { src, dst } => {
@@ -213,8 +211,7 @@ pub fn propagate_copy(cfg: &mut CFG<'_>) {
                         if reaching_copies.contains(&(dst.clone(), src.clone()))
                             || reaching_copies.contains(&(src.clone(), dst.clone()))
                         {
-                            // NOTE: O(n) time complexity.
-                            instructions.remove(i);
+                            to_remove.push(i);
                             continue;
                         }
 
@@ -238,8 +235,14 @@ pub fn propagate_copy(cfg: &mut CFG<'_>) {
                     }
                     _ => {}
                 }
+            }
 
-                i += 1;
+            // Removing instructions from right-left ensures indicies are not
+            // affected by shifting.
+            #[allow(clippy::iter_with_drain)]
+            for i in to_remove.drain(..).rev() {
+                // NOTE: O(n) time complexity.
+                instructions.remove(i);
             }
         }
     }

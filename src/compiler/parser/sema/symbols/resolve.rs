@@ -138,8 +138,7 @@ impl SymbolResolver {
                         _ => return Err(ConflictStatus::Var),
                     }
                 }
-                // NOTE: Type mismatch is handled during type checking semantic
-                // pass.
+                // Type mismatch is handled during type checking semantic pass.
                 _ => {}
             }
         } else if linkage.is_some() {

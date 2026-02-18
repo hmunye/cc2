@@ -246,13 +246,24 @@ pub enum Value {
 }
 
 impl Value {
-    /// Returns `true` if the variable has `static` storage duration.
+    /// Returns `true` if the value has `static` storage duration.
     #[inline]
     #[must_use]
     pub const fn is_static(&self) -> bool {
         match self {
             Value::IntConstant(_) => false,
             Value::Var { is_static, .. } => *is_static,
+        }
+    }
+
+    /// Returns the identifier of the value, or `None` if it is not a variable.
+    #[inline]
+    #[must_use]
+    pub const fn as_var(&self) -> Option<&str> {
+        if let Value::Var { ident, .. } = self {
+            Some(ident.as_str())
+        } else {
+            None
         }
     }
 }

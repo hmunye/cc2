@@ -633,9 +633,12 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
         0
     };
 
-    // NOTE: O(n) time complexity.
-    func.instructions
-        .insert(0, Instruction::StackAlloc(stack_offset + padding));
+    let alloc = stack_offset + padding;
+
+    if alloc > 0 {
+        // NOTE: O(n) time complexity.
+        func.instructions.insert(0, Instruction::StackAlloc(alloc));
+    }
 
     func
 }
@@ -711,7 +714,7 @@ fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
             let offset = match offset_map.entry(ident) {
                 Entry::Occupied(entry) => *entry.get(),
                 Entry::Vacant(entry) => {
-                    // NOTE: Allocating in 4-byte offsets.
+                    // NOTE: Allocating stack in 4-byte offsets.
                     stack_offset += 4;
                     // Negating the offset refers to a local variable in the
                     // stack frame relative to `%rbp`.
@@ -978,7 +981,7 @@ const fn ast_to_mir_binop(binop: ast::BinaryOperator) -> Option<BinaryOperator> 
         ast::BinaryOperator::BitOr => Some(BinaryOperator::Or),
         ast::BinaryOperator::BitXor => Some(BinaryOperator::Xor),
         ast::BinaryOperator::ShiftLeft => Some(BinaryOperator::Shl),
-        // NOTE: Defaults to `shr` instead of `sar`.
+        // Default to `shr` instead of `sar`. `sar` is handled separately.
         ast::BinaryOperator::ShiftRight => Some(BinaryOperator::Shr),
         _ => None,
     }

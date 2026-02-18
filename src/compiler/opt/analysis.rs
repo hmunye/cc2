@@ -13,9 +13,9 @@ pub trait DataFlowAnalysis<'a> {
     /// Information being tracked during analysis.
     type Fact: Clone + PartialEq;
 
-    /// Propagates the incoming fact through the block's instructions, updating
-    /// the fact for each instruction and the block's exit.
-    fn transfer(&mut self, block: &Block<'a>, incoming: Self::Fact);
+    /// Propagates the incoming/outgoing fact through the block's instructions,
+    /// updating the fact for each instruction and the block's exit.
+    fn transfer(&mut self, block: &Block<'a>, fact: Self::Fact);
 
     /// Merges facts from multiple execution paths (predecessors or successors),
     /// starting from the given block, returning the intersection of the initial
@@ -26,12 +26,12 @@ pub trait DataFlowAnalysis<'a> {
     /// `meet` function).
     fn initial(&self, cfg: &'a CFG<'a>) -> Self::Fact;
 
-    /// Stores the fact for the block identified by `id`, replacing any existing
+    /// Stores the fact for the block identified by `id`, replacing any prior
     /// fact.
     fn record_block_fact(&mut self, block_id: usize, num_inst: usize, fact: &Self::Fact);
 
     /// Returns the recorded fact for the block identified by `id`, or `None` if
-    /// no fact has been stored for the block.
+    /// no fact has been stored.
     fn get_block_fact(&self, block_id: usize) -> Option<&Self::Fact>;
 
     /// Returns `true` if this is a forward analysis.
