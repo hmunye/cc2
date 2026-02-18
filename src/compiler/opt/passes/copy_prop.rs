@@ -44,15 +44,12 @@ impl CopyProp {
     }
 
     /// Returns the set of copies reaching just before instruction `inst_id` in
-    /// block `block_id`.
+    /// block `block_id`, or `None` if the block containing the instruction has
+    /// not been initialized.
     #[inline]
-    fn get_instruction_fact(&self, block_id: usize, inst_id: usize) -> &ReachingCopies {
-        let entry = self
-            .reaching_copies
-            .get(&block_id)
-            .expect("block of instruction must be initialized before getting facts");
-
-        &entry.1[inst_id]
+    fn get_instruction_fact(&self, block_id: usize, inst_id: usize) -> Option<&ReachingCopies> {
+        let entry = self.reaching_copies.get(&block_id)?;
+        Some(&entry.1[inst_id])
     }
 }
 
@@ -201,39 +198,39 @@ pub fn propagate_copy(cfg: &mut CFG<'_>) {
         } = block
         {
             for (i, inst) in instructions.iter_mut().enumerate() {
-                let reaching_copies = copy_prop.get_instruction_fact(*block_id, i);
+                if let Some(reaching_copies) = copy_prop.get_instruction_fact(*block_id, i) {
+                    match inst {
+                        Instruction::Copy { src, dst } => {
+                            // Instruction has no affect if `src` and `dst`
+                            // already have the same value with copies that
+                            // reach this instruction.
+                            if reaching_copies.contains(&(dst.clone(), src.clone()))
+                                || reaching_copies.contains(&(src.clone(), dst.clone()))
+                            {
+                                to_remove.push(i);
+                                continue;
+                            }
 
-                match inst {
-                    Instruction::Copy { src, dst } => {
-                        // Instruction has no affect if `src` and `dst`
-                        // already have the same value with copies that
-                        // reach this instruction.
-                        if reaching_copies.contains(&(dst.clone(), src.clone()))
-                            || reaching_copies.contains(&(src.clone(), dst.clone()))
-                        {
-                            to_remove.push(i);
-                            continue;
+                            rewrite_operand(src, reaching_copies);
                         }
-
-                        rewrite_operand(src, reaching_copies);
-                    }
-                    Instruction::Unary { src, .. } | Instruction::Return(src) => {
-                        rewrite_operand(src, reaching_copies);
-                    }
-                    Instruction::Binary { lhs, rhs, .. } => {
-                        rewrite_operand(lhs, reaching_copies);
-                        rewrite_operand(rhs, reaching_copies);
-                    }
-                    Instruction::Call { args, .. } => {
-                        for arg in args {
-                            rewrite_operand(arg, reaching_copies);
+                        Instruction::Unary { src, .. } | Instruction::Return(src) => {
+                            rewrite_operand(src, reaching_copies);
                         }
+                        Instruction::Binary { lhs, rhs, .. } => {
+                            rewrite_operand(lhs, reaching_copies);
+                            rewrite_operand(rhs, reaching_copies);
+                        }
+                        Instruction::Call { args, .. } => {
+                            for arg in args {
+                                rewrite_operand(arg, reaching_copies);
+                            }
+                        }
+                        Instruction::JumpIfZero { cond, .. }
+                        | Instruction::JumpIfNotZero { cond, .. } => {
+                            rewrite_operand(cond, reaching_copies);
+                        }
+                        _ => {}
                     }
-                    Instruction::JumpIfZero { cond, .. }
-                    | Instruction::JumpIfNotZero { cond, .. } => {
-                        rewrite_operand(cond, reaching_copies);
-                    }
-                    _ => {}
                 }
             }
 

@@ -43,15 +43,12 @@ impl DeadStore {
     }
 
     /// Returns the set of live variables just after instruction `inst_id` in
-    /// block `block_id`.
+    /// block `block_id`, or `None` if the block containing the instruction has
+    /// not been initialized.
     #[inline]
-    fn get_instruction_fact(&self, block_id: usize, inst_id: usize) -> &Stores {
-        let entry = self
-            .stores
-            .get(&block_id)
-            .expect("block of instruction must be initialized before getting facts");
-
-        &entry.1[inst_id]
+    fn get_instruction_fact(&self, block_id: usize, inst_id: usize) -> Option<&Stores> {
+        let entry = self.stores.get(&block_id)?;
+        Some(&entry.1[inst_id])
     }
 }
 
@@ -215,21 +212,21 @@ pub fn dead_store(cfg: &mut CFG<'_>) {
         } = block
         {
             for (i, inst) in instructions.iter().enumerate() {
-                let stores = dse.get_instruction_fact(*block_id, i);
-
-                // Since interprocedural analysis is not performed, function
-                // calls are ignored, as they may have side-effects.
-                match inst {
-                    Instruction::Copy { dst, .. }
-                    | Instruction::Unary { dst, .. }
-                    | Instruction::Binary { dst, .. } => {
-                        if let Some(ident) = dst.as_var()
-                            && !stores.contains(ident)
-                        {
-                            to_remove.push(i);
+                if let Some(stores) = dse.get_instruction_fact(*block_id, i) {
+                    // Since interprocedural analysis is not performed, function
+                    // calls are ignored, as they may have side-effects.
+                    match inst {
+                        Instruction::Copy { dst, .. }
+                        | Instruction::Unary { dst, .. }
+                        | Instruction::Binary { dst, .. } => {
+                            if let Some(ident) = dst.as_var()
+                                && !stores.contains(ident)
+                            {
+                                to_remove.push(i);
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
 
