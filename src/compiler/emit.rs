@@ -32,8 +32,7 @@ pub fn emit_gas_x86_64_linux(
     // Track last emitted _ELF_ section.
     let mut curr_section = ".text";
 
-    #[allow(unused_variables)]
-    let mut i = 0;
+    // let mut i = 0;
 
     for item in &mir.program {
         match item {
@@ -59,14 +58,12 @@ pub fn emit_gas_x86_64_linux(
                 )?;
 
                 // `FB` - Function Begin
-                #[cfg(debug_assertions)]
-                writeln!(&mut writer, ".LFB{i}:")?;
+                // writeln!(&mut writer, ".LFB{i}:")?;
 
                 emit_asm_function(func, &mir.locales, &mut writer)?;
 
                 // `FE` - Function End
-                #[cfg(debug_assertions)]
-                writeln!(&mut writer, ".LFE{i}:")?;
+                // writeln!(&mut writer, ".LFE{i}:")?;
 
                 // `.size` directive records the byte size of the function in
                 // the _ELF_ symbol table.
@@ -76,10 +73,7 @@ pub fn emit_gas_x86_64_linux(
                     label = &func.label
                 )?;
 
-                #[allow(unused_assignments)]
-                if cfg!(debug_assertions) {
-                    i += 1;
-                }
+                // i += 1;
             }
             mir::Item::Static {
                 init,

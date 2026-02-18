@@ -6,7 +6,7 @@ use crate::compiler::opt::Block;
 /// control-flow graph.
 #[derive(Debug)]
 pub struct PostOrder<'a> {
-    post: Vec<&'a Block<'a>>,
+    blocks: Vec<&'a Block<'a>>,
     index: usize,
 }
 
@@ -16,39 +16,43 @@ impl<'a> PostOrder<'a> {
     /// A block is considered reachable if it is a successor of any prior block.
     #[must_use]
     fn new(blocks: &'a [Block<'a>]) -> Self {
-        // TODO: Make the traversal iterative.
         let mut post_order = Self {
-            post: vec![],
+            blocks: vec![],
             index: 0,
         };
 
-        let mut visited = HashSet::new();
-
         if let Some(Block::Entry { successor }) = blocks.first() {
-            post_order.recursive_dfs(blocks, *successor, &mut visited);
+            post_order.iterative_post_order(blocks, *successor);
         }
+
+        debug_assert!(
+            !post_order.blocks.is_empty(),
+            "malformed control-flow graph: missing entry block"
+        );
 
         post_order
     }
 
-    /// Performs a depth-first search on the blocks, pushing them onto `self` in
-    /// post-order.
-    fn recursive_dfs(&mut self, blocks: &'a [Block<'a>], id: usize, visited: &mut HashSet<usize>) {
-        // NOTE: O(n) time complexity.
-        let block = &blocks
-            .iter()
-            .find(|block| block.id() == id)
-            .expect("all blocks should be present during traversal");
+    /// Performs an iterative depth-first search on the blocks, pushing blocks
+    /// onto `self` in post-order.
+    fn iterative_post_order(&mut self, blocks: &'a [Block<'a>], entry: usize) {
+        let mut visited = HashSet::new();
+        let mut stack = vec![(entry, false)];
 
-        // Only collect basic blocks during traversal.
-        if let Block::Basic { successors, .. } = block
-            && visited.insert(id)
-        {
-            for block_id in successors {
-                self.recursive_dfs(blocks, *block_id, visited);
+        while let Some((id, children_done)) = stack.pop() {
+            if children_done && let Some(block) = blocks.iter().find(|b| b.id() == id) {
+                self.blocks.push(block);
+            } else if let Some(Block::Basic { successors, .. }) =
+                blocks.iter().find(|b| b.id() == id)
+            {
+                stack.push((id, true));
+
+                for &succ_id in successors.iter().rev() {
+                    if visited.insert(succ_id) {
+                        stack.push((succ_id, false));
+                    }
+                }
             }
-
-            self.post.push(block);
         }
     }
 }
@@ -57,7 +61,7 @@ impl<'a> Iterator for PostOrder<'a> {
     type Item = &'a Block<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.post.get(self.index)?;
+        let result = self.blocks.get(self.index)?;
         self.index += 1;
         Some(result)
     }
