@@ -336,7 +336,7 @@ fn resolve_function(
     };
 
     let ty = Type::Func {
-        params: params.len(),
+        param_count: params.len(),
     };
 
     // Updates linkage only if `extern` adopts prior declaration linkage.

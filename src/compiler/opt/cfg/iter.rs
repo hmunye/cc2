@@ -5,17 +5,17 @@ use crate::compiler::opt::Block;
 /// Post-order, depth-first iterator, over *reachable* basic blocks in a
 /// control-flow graph.
 #[derive(Debug)]
-pub struct PostOrder<'a> {
-    blocks: Vec<&'a Block<'a>>,
+pub struct PostOrder<'a, I> {
+    blocks: Vec<&'a Block<I>>,
     index: usize,
 }
 
-impl<'a> PostOrder<'a> {
+impl<'a, I> PostOrder<'a, I> {
     /// Creates a new `PostOrder` iterator over *reachable* basic blocks.
     ///
     /// A block is considered reachable if it is a successor of any prior block.
     #[must_use]
-    fn new(blocks: &'a [Block<'a>]) -> Self {
+    fn new(blocks: &'a [Block<I>]) -> Self {
         let mut post_order = Self {
             blocks: vec![],
             index: 0,
@@ -35,7 +35,7 @@ impl<'a> PostOrder<'a> {
 
     /// Performs an iterative depth-first search on the blocks, pushing blocks
     /// onto `self` in post-order.
-    fn iterative_post_order(&mut self, blocks: &'a [Block<'a>], entry: usize) {
+    fn iterative_post_order(&mut self, blocks: &'a [Block<I>], entry: usize) {
         let mut visited = HashSet::new();
         let mut stack = vec![(entry, false)];
 
@@ -57,8 +57,8 @@ impl<'a> PostOrder<'a> {
     }
 }
 
-impl<'a> Iterator for PostOrder<'a> {
-    type Item = &'a Block<'a>;
+impl<'a, I> Iterator for PostOrder<'a, I> {
+    type Item = &'a Block<I>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let result = self.blocks.get(self.index)?;
@@ -70,30 +70,30 @@ impl<'a> Iterator for PostOrder<'a> {
 /// Immutable slice over the blocks of a control-flow graph (excluding entry
 /// and exit blocks).
 #[derive(Debug)]
-pub struct BasicBlocks<'a> {
-    blocks: &'a [Block<'a>],
+pub struct BasicBlocks<'a, I> {
+    blocks: &'a [Block<I>],
 }
 
-impl<'a> BasicBlocks<'a> {
+impl<'a, I> BasicBlocks<'a, I> {
     /// Returns a new `BasicBlocks`.
     #[inline]
     #[must_use]
-    pub const fn new(blocks: &'a [Block<'a>]) -> Self {
+    pub const fn new(blocks: &'a [Block<I>]) -> Self {
         Self { blocks }
     }
 
     /// Returns an iterator over basic blocks.
     #[inline]
-    pub fn iter(&self) -> std::slice::Iter<'a, Block<'a>> {
+    pub fn iter(&self) -> std::slice::Iter<'a, Block<I>> {
         let exit_block_idx = self.blocks.len() - 1;
-        self.blocks[Block::ENTRY_ID + 1..exit_block_idx].iter()
+        self.blocks[Block::<I>::ENTRY_ID + 1..exit_block_idx].iter()
     }
 
     /// Returns a post-order, depth-first iterator, over the *reachable* basic
     /// blocks.
     #[inline]
     #[must_use]
-    pub fn post_order(&self) -> PostOrder<'a> {
+    pub fn post_order(&self) -> PostOrder<'a, I> {
         PostOrder::new(self.blocks)
     }
 
@@ -114,9 +114,9 @@ impl<'a> BasicBlocks<'a> {
     }
 }
 
-impl<'a> IntoIterator for &BasicBlocks<'a> {
-    type Item = &'a Block<'a>;
-    type IntoIter = std::slice::Iter<'a, Block<'a>>;
+impl<'a, I> IntoIterator for &BasicBlocks<'a, I> {
+    type Item = &'a Block<I>;
+    type IntoIter = std::slice::Iter<'a, Block<I>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.blocks.iter()

@@ -10,4 +10,4 @@ pub mod cfg;
 pub mod passes;
 pub mod target;
 
-pub use cfg::{Block, CFG};
+pub use cfg::{Block, CFG, CFGInstruction};

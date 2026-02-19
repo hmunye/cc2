@@ -921,7 +921,7 @@ fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
     // NOTE: Include `specs.ty` as return type for function.
     let specs = DeclSpecs {
         ty: Type::Func {
-            params: params.len(),
+            param_count: params.len(),
         },
         storage: specs.storage,
     };

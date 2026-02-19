@@ -6,15 +6,18 @@
 use std::collections::HashSet;
 
 use crate::compiler::ir::Instruction;
-use crate::compiler::opt::{Block, CFG};
+use crate::compiler::opt::{Block, CFG, CFGInstruction};
 
 /// Transforms the provided control-flow graph, removing code that can never be
 /// executed.
-pub fn unreachable_code(cfg: &mut CFG<'_>) {
+pub fn unreachable_code<'a, I>(cfg: &mut CFG<I>)
+where
+    I: CFGInstruction<Instr = Instruction<'a>>,
+{
     let mut reachable: HashSet<_> = cfg.basic_blocks().post_order().map(Block::id).collect();
 
     // Ensure entry and exit blocks are not removed.
-    reachable.insert(Block::ENTRY_ID);
+    reachable.insert(Block::<I>::ENTRY_ID);
     reachable.insert(cfg.exit_block_id());
 
     // Remove all unreachable basic blocks from the graph while preserving their
@@ -30,12 +33,15 @@ pub fn unreachable_code(cfg: &mut CFG<'_>) {
 /// Redundant jumps are those that only jump to the next block in sequence.
 /// Useless labels are those that are not targeted by any block but the
 /// previous.
-fn clean_cfg(cfg: &mut CFG<'_>, reachable: &HashSet<usize>) {
+fn clean_cfg<'a, I>(cfg: &mut CFG<I>, reachable: &HashSet<usize>)
+where
+    I: CFGInstruction<Instr = Instruction<'a>>,
+{
     let len = cfg.blocks.len();
     let exit_id = cfg.exit_block_id();
 
     // Iterate over the blocks, excluding the entry and exit blocks.
-    for i in Block::ENTRY_ID + 1..len - 1 {
+    for i in Block::<I>::ENTRY_ID + 1..len - 1 {
         let prev_block_id = cfg.blocks[i - 1].id();
         let next_block_id = cfg.blocks[i + 1].id();
         let block = &mut cfg.blocks[i];
@@ -54,7 +60,7 @@ fn clean_cfg(cfg: &mut CFG<'_>, reachable: &HashSet<usize>) {
                 Instruction::Jump(_)
                 | Instruction::JumpIfZero { .. }
                 | Instruction::JumpIfNotZero { .. },
-            ) = instructions.last()
+            ) = instructions.last().map(CFGInstruction::concrete)
             {
                 // Skip the last basic block since a `jump` instruction at
                 // the end of the graph targets the exit block.
@@ -78,7 +84,8 @@ fn clean_cfg(cfg: &mut CFG<'_>, reachable: &HashSet<usize>) {
                 }
             }
 
-            if let Some(Instruction::Label(_)) = instructions.first() {
+            if let Some(Instruction::Label(_)) = instructions.first().map(CFGInstruction::concrete)
+            {
                 let mut keep = false;
 
                 for id in predecessors {

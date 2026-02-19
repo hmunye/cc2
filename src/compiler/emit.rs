@@ -183,51 +183,53 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
         mir::Instruction::Mov { src, dst } => {
             format!(
                 "movl\t{}, {}",
-                emit_asm_operand(src, 4),
-                emit_asm_operand(dst, 4)
+                emit_asm_operand(src, 4, false),
+                emit_asm_operand(dst, 4, false)
             )
         }
         mir::Instruction::Unary { unop, dst } => match unop {
-            UnaryOperator::Not => format!("notl\t{}", emit_asm_operand(dst, 4)),
-            UnaryOperator::Neg => format!("negl\t{}", emit_asm_operand(dst, 4)),
+            UnaryOperator::Not => format!("notl\t{}", emit_asm_operand(dst, 4, false)),
+            UnaryOperator::Neg => format!("negl\t{}", emit_asm_operand(dst, 4, false)),
         },
         mir::Instruction::Binary { binop, rhs, dst } => {
-            let (inst, size) = match binop {
-                BinaryOperator::Add => ("addl", 4),
-                BinaryOperator::Sub => ("subl", 4),
-                BinaryOperator::Imul => ("imull", 4),
-                BinaryOperator::And => ("andl", 4),
-                BinaryOperator::Or => ("orl", 4),
-                BinaryOperator::Xor => ("xorl", 4),
+            let (inst, size, use_high_byte) = match binop {
+                BinaryOperator::Add => ("addl", 4, false),
+                BinaryOperator::Sub => ("subl", 4, false),
+                BinaryOperator::Imul => ("imull", 4, false),
+                BinaryOperator::And => ("andl", 4, false),
+                BinaryOperator::Or => ("orl", 4, false),
+                BinaryOperator::Xor => ("xorl", 4, false),
                 // `l` suffix on shift mnemonics indicates the destination
                 // operand is 32-bit. 1 indicates the source operand is the
                 // 8-bit "%cl" register or an immediate value.
-                BinaryOperator::Shl => ("shll", 1),
-                BinaryOperator::Shr => ("shrl", 1),
-                BinaryOperator::Sar => ("sarl", 1),
+                BinaryOperator::Shl => ("shll", 1, false),
+                BinaryOperator::Shr => ("shrl", 1, false),
+                BinaryOperator::Sar => ("sarl", 1, false),
             };
 
             format!(
                 "{}\t{}, {}",
                 inst,
-                emit_asm_operand(rhs, size),
-                emit_asm_operand(dst, size)
+                emit_asm_operand(rhs, size, use_high_byte),
+                emit_asm_operand(dst, size, use_high_byte)
             )
         }
-        mir::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div, 4)),
+        mir::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div, 4, false)),
         mir::Instruction::Cdq => "cdq".into(),
         mir::Instruction::Cmp { rhs, lhs } => format!(
             "cmpl\t{}, {}",
-            emit_asm_operand(rhs, 4),
-            emit_asm_operand(lhs, 4)
+            emit_asm_operand(rhs, 4, false),
+            emit_asm_operand(lhs, 4, false)
         ),
         // `.L` is the local label prefix for Linux.
         mir::Instruction::Jmp(label) => format!("jmp\t.L{label}"),
         mir::Instruction::JmpC { code, label } => format!("j{code}\t.L{label}"),
-        mir::Instruction::SetC { code, dst } => format!("set{code}\t{}", emit_asm_operand(dst, 1)),
+        mir::Instruction::SetC { code, dst } => {
+            format!("set{code}\t{}", emit_asm_operand(dst, 1, false))
+        }
         mir::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
         mir::Instruction::StackDealloc(v) => format!("addq\t${v}, %rsp"),
-        mir::Instruction::Push(src) => format!("pushq\t{}", emit_asm_operand(src, 8)),
+        mir::Instruction::Push(src) => format!("pushq\t{}", emit_asm_operand(src, 8, false)),
         // On _macOS_, function names are prefixed with underscore
         // (`call _puts`).
         //
@@ -260,12 +262,18 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
 
 /// Return a string assembly representation of the given _MIR_ operand. `size`
 /// formats register operands depending on the required size in bytes.
-fn emit_asm_operand(op: &mir::Operand<'_>, size: u8) -> String {
+fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> String {
     match op {
         mir::Operand::Imm32(i) => format!("${i}"),
         mir::Operand::Register(r) => match r {
             mir::Reg::AX => match size {
-                1 => "%al",
+                1 => {
+                    if use_high_byte {
+                        "%ah"
+                    } else {
+                        "%al"
+                    }
+                }
                 2 => "%ax",
                 4 => "%eax",
                 8 => "%rax",
@@ -273,7 +281,13 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8) -> String {
             }
             .to_string(),
             mir::Reg::CX => match size {
-                1 => "%cl",
+                1 => {
+                    if use_high_byte {
+                        "%ch"
+                    } else {
+                        "%cl"
+                    }
+                }
                 2 => "%cx",
                 4 => "%ecx",
                 8 => "%rcx",
@@ -281,7 +295,13 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8) -> String {
             }
             .to_string(),
             mir::Reg::DX => match size {
-                1 => "%dl",
+                1 => {
+                    if use_high_byte {
+                        "%dh"
+                    } else {
+                        "%dl"
+                    }
+                }
                 2 => "%dx",
                 4 => "%edx",
                 8 => "%rdx",
@@ -334,6 +354,52 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8) -> String {
                 4 => "%r11d",
                 8 => "%r11",
                 _ => panic!("invalid register size for R11: '{size}'"),
+            }
+            .to_string(),
+            mir::Reg::BX => match size {
+                1 => {
+                    if use_high_byte {
+                        "%bh"
+                    } else {
+                        "%bl"
+                    }
+                }
+                2 => "%bx",
+                4 => "%ebx",
+                8 => "%rbx",
+                _ => panic!("invalid register size for BX: '{size}'"),
+            }
+            .to_string(),
+            mir::Reg::R12 => match size {
+                1 => "%r12b",
+                2 => "%r12w",
+                4 => "%r12d",
+                8 => "%r12",
+                _ => panic!("invalid register size for R12: '{size}'"),
+            }
+            .to_string(),
+            mir::Reg::R13 => match size {
+                1 => "%r13b",
+                2 => "%r13w",
+                4 => "%r13d",
+                8 => "%r13",
+                _ => panic!("invalid register size for R13: '{size}'"),
+            }
+            .to_string(),
+            mir::Reg::R14 => match size {
+                1 => "%r14b",
+                2 => "%r14w",
+                4 => "%r14d",
+                8 => "%r14",
+                _ => panic!("invalid register size for R14: '{size}'"),
+            }
+            .to_string(),
+            mir::Reg::R15 => match size {
+                1 => "%r15b",
+                2 => "%r15w",
+                4 => "%r15d",
+                8 => "%r15",
+                _ => panic!("invalid register size for R15: '{size}'"),
             }
             .to_string(),
         },

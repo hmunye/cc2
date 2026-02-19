@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::compiler::ir::{Instruction, Value};
 use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
-use crate::compiler::opt::{Block, CFG};
+use crate::compiler::opt::{Block, CFG, CFGInstruction};
 
 /// Tracks copies from `dst` -> `src` (`dst` receives value from `src`).
 type ReachingCopies = HashSet<(Value, Value)>;
@@ -53,24 +53,27 @@ impl CopyProp {
     }
 }
 
-impl<'a> DataFlowAnalysis<'a> for CopyProp {
+impl<'a, 'b, I> DataFlowAnalysis<'a, I> for CopyProp
+where
+    I: CFGInstruction<Instr = Instruction<'b>>,
+{
     type Fact = ReachingCopies;
 
-    fn transfer(&mut self, block: &Block<'a>, mut incoming: Self::Fact) {
+    fn transfer(&mut self, block: &Block<I>, mut incoming: Self::Fact) {
         if let Block::Basic {
             id: block_id,
             instructions,
             ..
         } = block
         {
-            for (i, inst) in instructions.iter().enumerate() {
+            for (i, instr) in instructions.iter().enumerate() {
                 // Record the set of copies that reach the point before the
                 // current instruction.
                 self.record_instruction_fact(*block_id, i, &incoming);
 
                 // Compute the set of copies that reach the point after the
                 // current instruction.
-                match &inst {
+                match instr.concrete() {
                     Instruction::Copy { src, dst } => {
                         if incoming.contains(&(src.clone(), dst.clone())) {
                             // Skip trivial copy (e.g. `x = y` copy after prior
@@ -103,11 +106,16 @@ impl<'a> DataFlowAnalysis<'a> for CopyProp {
                 }
             }
 
-            self.record_block_fact(block.id(), instructions.len(), &incoming);
+            <CopyProp as DataFlowAnalysis<'_, I>>::record_block_fact(
+                self,
+                block.id(),
+                instructions.len(),
+                &incoming,
+            );
         }
     }
 
-    fn meet(&self, block: &Block<'_>, initial: &Self::Fact) -> Self::Fact {
+    fn meet(&self, block: &Block<I>, initial: &Self::Fact) -> Self::Fact {
         let mut incoming = initial.clone();
 
         if let Block::Basic { predecessors, .. } = block {
@@ -116,14 +124,16 @@ impl<'a> DataFlowAnalysis<'a> for CopyProp {
                     // Since no copies reach the start of the function (entry),
                     // return an empty set. The intersection of any set with
                     // the empty set is still the empty set.
-                    id if Block::ENTRY_ID == id => return Self::Fact::default(),
+                    id if Block::<I>::ENTRY_ID == id => return Self::Fact::default(),
                     id => {
                         assert!(
                             self.exit_id != id,
                             "malformed control-flow graph: basic block should not have exit as it's predecessor"
                         );
 
-                        if let Some(pred_outgoing) = self.get_block_fact(id) {
+                        if let Some(pred_outgoing) =
+                            <CopyProp as DataFlowAnalysis<'_, I>>::get_block_fact(self, id)
+                        {
                             // Retain those copies that intersect with the
                             // predecessors copies.
                             incoming.retain(|copy| pred_outgoing.contains(copy));
@@ -136,13 +146,13 @@ impl<'a> DataFlowAnalysis<'a> for CopyProp {
         incoming
     }
 
-    fn initial(&self, cfg: &'a CFG<'a>) -> Self::Fact {
+    fn initial(&self, cfg: &'a CFG<I>) -> Self::Fact {
         let mut initial = Self::Fact::default();
 
         for block in &cfg.basic_blocks() {
             if let Block::Basic { instructions, .. } = block {
                 for inst in instructions {
-                    if let Instruction::Copy { src, dst } = inst {
+                    if let Instruction::Copy { src, dst } = inst.concrete() {
                         initial.insert((dst.clone(), src.clone()));
                     }
                 }
@@ -180,7 +190,10 @@ impl<'a> DataFlowAnalysis<'a> for CopyProp {
 
 /// Transforms a control-flow graph (_CFG_) by replacing variables with their
 /// assigned values where applicable, reducing redundant copies.
-pub fn propagate_copy(cfg: &mut CFG<'_>) {
+pub fn propagate_copy<'a, 'b, I>(cfg: &'a mut CFG<I>)
+where
+    I: CFGInstruction<Instr = Instruction<'b>>,
+{
     let mut copy_prop = CopyProp {
         exit_id: cfg.exit_block_id(),
         reaching_copies: HashMap::default(),
@@ -199,7 +212,7 @@ pub fn propagate_copy(cfg: &mut CFG<'_>) {
         {
             for (i, inst) in instructions.iter_mut().enumerate() {
                 if let Some(reaching_copies) = copy_prop.get_instruction_fact(*block_id, i) {
-                    match inst {
+                    match inst.concrete_mut() {
                         Instruction::Copy { src, dst } => {
                             // Instruction has no affect if `src` and `dst`
                             // already have the same value with copies that

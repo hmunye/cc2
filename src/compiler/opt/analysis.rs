@@ -5,26 +5,26 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use crate::compiler::opt::{Block, CFG};
+use crate::compiler::opt::{Block, CFG, CFGInstruction};
 
 /// Trait for performing data-flow analysis over a control-flow graph
 /// (bi-directional).
-pub trait DataFlowAnalysis<'a> {
+pub trait DataFlowAnalysis<'a, I> {
     /// Information being tracked during analysis.
     type Fact: Clone + PartialEq;
 
     /// Propagates the incoming/outgoing fact through the block's instructions,
     /// updating the fact for each instruction and the block's exit.
-    fn transfer(&mut self, block: &Block<'a>, fact: Self::Fact);
+    fn transfer(&mut self, block: &Block<I>, fact: Self::Fact);
 
     /// Merges facts from multiple execution paths (predecessors or successors),
     /// starting from the given block, returning the intersection of the initial
     /// fact and the facts from neighboring blocks.
-    fn meet(&self, block: &Block<'_>, initial: &Self::Fact) -> Self::Fact;
+    fn meet(&self, block: &Block<I>, initial: &Self::Fact) -> Self::Fact;
 
     /// Returns the initial facts for analysis (e.g., identity element for
     /// `meet` function).
-    fn initial(&self, cfg: &'a CFG<'a>) -> Self::Fact;
+    fn initial(&self, cfg: &'a CFG<I>) -> Self::Fact;
 
     /// Stores the fact for the block identified by `id`, replacing any prior
     /// fact.
@@ -44,7 +44,7 @@ pub trait DataFlowAnalysis<'a> {
 /// # Panics
 ///
 /// Panics if the control-flow graph is malformed.
-pub fn run_analysis<'a, A: DataFlowAnalysis<'a>>(cfg: &'a CFG<'a>, a: &mut A) {
+pub fn run_analysis<'a, I: CFGInstruction, A: DataFlowAnalysis<'a, I>>(cfg: &'a CFG<I>, a: &mut A) {
     let init = a.initial(cfg);
 
     // Exclude the entry and exit block IDs from the set.
@@ -95,7 +95,7 @@ pub fn run_analysis<'a, A: DataFlowAnalysis<'a>>(cfg: &'a CFG<'a>, a: &mut A) {
 
             for id in next_blocks {
                 match *id {
-                    id if Block::ENTRY_ID == id => {
+                    id if Block::<I>::ENTRY_ID == id => {
                         assert!(
                             !a.is_forward(),
                             "malformed control-flow graph: basic block should not have entry as it's successor"

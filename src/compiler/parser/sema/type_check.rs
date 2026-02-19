@@ -295,7 +295,10 @@ fn type_check_expression(
                 .get(ident.as_str())
                 .expect("function should be available after symbol resolution");
 
-            if let Type::Func { params } = entry.ty {
+            if let Type::Func {
+                param_count: params,
+            } = entry.ty
+            {
                 let args_len = args.len();
 
                 if params != args_len {

@@ -129,7 +129,7 @@ pub enum Instruction<'a> {
     StackAlloc(isize),
     /// Add the specified number of bytes to `%rsp`.
     StackDealloc(usize),
-    /// Pushes the operand onto the call-stack.
+    /// Pushes the specified operand onto the call-stack.
     Push(Operand<'a>),
     /// Calls the function specified by the identifier, transferring control.
     Call(&'a str),
@@ -244,6 +244,9 @@ impl fmt::Display for Operand<'_> {
 /// _MIR x86-64_ registers (size agnostic).
 #[derive(Debug, Clone, Copy)]
 pub enum Reg {
+    // =====================================================================
+    // ====================== Caller-saved Registers =======================
+    // =====================================================================
     /// `%rax` (64-bit), `%eax` (32-bit), `%ax` (16-bit), `%al` (8-bit low),
     /// `%ah` (8-bit high).
     AX,
@@ -261,10 +264,30 @@ pub enum Reg {
     R8,
     /// `%r9` (64-bit), `%r9d` (32-bit), `%r9w` (16-bit), `%r9b` (8-bit low).
     R9,
-    /// `%r10` (64-bit), `%r10d` (32-bit), `%r10w` (16-bit), `%r10b` (8-bit low)
+    /// `%r10` (64-bit), `%r10d` (32-bit), `%r10w` (16-bit), `%r10b`
+    /// (8-bit low).
     R10,
-    /// `%r11` (64-bit), `%r11d` (32-bit), `%r11w` (16-bit), `%r11b` (8-bit low)
+    /// `%r11` (64-bit), `%r11d` (32-bit), `%r11w` (16-bit), `%r11b`
+    /// (8-bit low).
     R11,
+    // =====================================================================
+    // ====================== Callee-saved Registers =======================
+    // =====================================================================
+    /// `%rbx` (64-bit), `%ebx` (32-bit), `%bx` (16-bit), `%bl` (8-bit low),
+    /// `%bh` (8-bit high).
+    BX,
+    /// `%r12` (64-bit), `%r12d` (32-bit), `%r12w` (16-bit), `%r12b`
+    /// (8-bit low).
+    R12,
+    /// `%r13` (64-bit), `%r13d` (32-bit), `%r13w` (16-bit), `%r13b`
+    /// (8-bit low).
+    R13,
+    /// `%r14` (64-bit), `%r14d` (32-bit), `%r14w` (16-bit), `%r14b`
+    /// (8-bit low).
+    R14,
+    /// `%r15` (64-bit), `%r15d` (32-bit), `%r15w` (16-bit), `%r15b`
+    /// (8-bit low).
+    R15,
 }
 
 /// _MIR x86-64_ conditional codes.

@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::compiler::ir::{Instruction, Value};
 use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
-use crate::compiler::opt::{Block, CFG};
+use crate::compiler::opt::{Block, CFG, CFGInstruction};
 
 /// Tracks the set of live variables at a program point.
 type Stores = HashSet<String>;
@@ -52,24 +52,27 @@ impl DeadStore {
     }
 }
 
-impl<'a> DataFlowAnalysis<'a> for DeadStore {
+impl<'a, 'b, I> DataFlowAnalysis<'a, I> for DeadStore
+where
+    I: CFGInstruction<Instr = Instruction<'b>>,
+{
     type Fact = Stores;
 
-    fn transfer(&mut self, block: &Block<'a>, mut outgoing: Self::Fact) {
+    fn transfer(&mut self, block: &Block<I>, mut outgoing: Self::Fact) {
         if let Block::Basic {
             id: block_id,
             instructions,
             ..
         } = block
         {
-            for (i, inst) in instructions.iter().enumerate().rev() {
+            for (i, instr) in instructions.iter().enumerate().rev() {
                 // Record the set of live variables that reach the point after
                 // the current instruction.
                 self.record_instruction_fact(*block_id, i, &outgoing);
 
                 // Compute the set of live variables that reach the point before
                 // the current instruction.
-                match &inst {
+                match instr.concrete() {
                     Instruction::Binary { lhs, rhs, dst, .. } => {
                         if let Some(ident) = dst.as_var() {
                             // Remove `dst` from the live set because this
@@ -127,11 +130,16 @@ impl<'a> DataFlowAnalysis<'a> for DeadStore {
                 }
             }
 
-            self.record_block_fact(block.id(), instructions.len(), &outgoing);
+            <DeadStore as DataFlowAnalysis<'_, I>>::record_block_fact(
+                self,
+                block.id(),
+                instructions.len(),
+                &outgoing,
+            );
         }
     }
 
-    fn meet(&self, block: &Block<'_>, initial: &Self::Fact) -> Self::Fact {
+    fn meet(&self, block: &Block<I>, initial: &Self::Fact) -> Self::Fact {
         let mut outgoing = initial.clone();
 
         if let Block::Basic { successors, .. } = block {
@@ -144,11 +152,13 @@ impl<'a> DataFlowAnalysis<'a> for DeadStore {
                     }
                     id => {
                         assert!(
-                            Block::ENTRY_ID != id,
+                            Block::<I>::ENTRY_ID != id,
                             "malformed control-flow graph: basic block should not have entry as it's successor"
                         );
 
-                        if let Some(succ_incoming) = self.get_block_fact(id) {
+                        if let Some(succ_incoming) =
+                            <DeadStore as DataFlowAnalysis<'_, I>>::get_block_fact(self, id)
+                        {
                             outgoing.extend(succ_incoming.iter().cloned());
                         }
                     }
@@ -159,7 +169,7 @@ impl<'a> DataFlowAnalysis<'a> for DeadStore {
         outgoing
     }
 
-    fn initial(&self, _cfg: &'a CFG<'a>) -> Self::Fact {
+    fn initial(&self, _cfg: &'a CFG<I>) -> Self::Fact {
         // The identity element for the `meet` operator (union) is the empty set
         // (at the function exit, no local variables are live).
         Self::Fact::default()
@@ -193,7 +203,10 @@ impl<'a> DataFlowAnalysis<'a> for DeadStore {
 
 /// Transforms a control-flow graph by removing assignments to variables that
 /// are never used or updated.
-pub fn dead_store(cfg: &mut CFG<'_>) {
+pub fn dead_store<'a, 'b, I>(cfg: &mut CFG<I>)
+where
+    I: CFGInstruction<Instr = Instruction<'b>>,
+{
     let mut dse = DeadStore {
         exit_id: cfg.exit_block_id(),
         statics: collect_statics(cfg),
@@ -215,7 +228,7 @@ pub fn dead_store(cfg: &mut CFG<'_>) {
                 if let Some(stores) = dse.get_instruction_fact(*block_id, i) {
                     // Since interprocedural analysis is not performed, function
                     // calls are ignored, as they may have side-effects.
-                    match inst {
+                    match inst.concrete() {
                         Instruction::Copy { dst, .. }
                         | Instruction::Unary { dst, .. }
                         | Instruction::Binary { dst, .. } => {
@@ -241,13 +254,16 @@ pub fn dead_store(cfg: &mut CFG<'_>) {
     }
 }
 
-fn collect_statics(cfg: &CFG<'_>) -> Stores {
+fn collect_statics<'a, I>(cfg: &CFG<I>) -> Stores
+where
+    I: CFGInstruction<Instr = Instruction<'a>>,
+{
     let mut statics = HashSet::default();
 
     for block in &cfg.basic_blocks() {
         if let Block::Basic { instructions, .. } = block {
             for inst in instructions {
-                match inst {
+                match inst.concrete() {
                     Instruction::Binary { lhs, rhs, dst, .. } => {
                         insert_static(dst, &mut statics);
                         insert_static(lhs, &mut statics);

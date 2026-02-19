@@ -35,7 +35,7 @@ fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
             compiler::opt::passes::fold_const(func);
         }
 
-        cfg.sync(func);
+        cfg.sync(&func.instructions);
 
         if opts.uce {
             compiler::opt::passes::unreachable_code(&mut cfg);
@@ -49,7 +49,7 @@ fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
             compiler::opt::passes::dead_store(&mut cfg);
         }
 
-        if !cfg.apply(func) {
+        if !cfg.apply(&mut func.instructions) {
             break;
         }
     }

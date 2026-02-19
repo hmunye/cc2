@@ -12,7 +12,7 @@ pub type c_int = i32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     Int,
-    Func { params: usize },
+    Func { param_count: usize },
 }
 
 impl fmt::Display for Type {

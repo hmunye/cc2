@@ -7,4 +7,4 @@
 pub mod graph;
 pub mod iter;
 
-pub use graph::{Block, CFG};
+pub use graph::{Block, CFG, CFGInstruction};
