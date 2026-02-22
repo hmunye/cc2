@@ -91,7 +91,9 @@ pub fn run_compiler(args: &args::Args) -> Result<()> {
             let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
-            let mir = compiler::mir::generate_x86_64_mir(&ir, &sym_map);
+            let mut mir = compiler::mir::generate_x86_64_mir(&ir);
+            compiler::opt::targets::optimize_x86_64_mir(&mut mir, &args.opts, &sym_map);
+
             print!("{mir}");
         }
         stage => {
@@ -100,7 +102,8 @@ pub fn run_compiler(args: &args::Args) -> Result<()> {
             let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
-            let mir = compiler::mir::generate_x86_64_mir(&ir, &sym_map);
+            let mut mir = compiler::mir::generate_x86_64_mir(&ir);
+            compiler::opt::targets::optimize_x86_64_mir(&mut mir, &args.opts, &sym_map);
 
             let writer: Box<dyn Write> = if stage == "asm" {
                 Box::new(io::stdout().lock())

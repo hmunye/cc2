@@ -8,6 +8,6 @@
 pub mod analysis;
 pub mod cfg;
 pub mod passes;
-pub mod target;
+pub mod targets;
 
 pub use cfg::{Block, CFG, CFGInstruction};

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::compiler::ir;
 use crate::compiler::opt::cfg::iter::BasicBlocks;
+use crate::compiler::{ir, mir};
 
 /// Types of instructions that determine a basic block boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +48,31 @@ impl<'a> CFGInstruction for ir::Instruction<'a> {
             ir::Instruction::JumpIfZero { target, .. }
             | ir::Instruction::JumpIfNotZero { target, .. } => BlockBoundary::CondJump(target),
             ir::Instruction::Label(label) => BlockBoundary::Label(label),
+            _ => BlockBoundary::Other,
+        }
+    }
+
+    #[inline]
+    fn concrete(&self) -> &Self::Instr {
+        self
+    }
+
+    #[inline]
+    fn concrete_mut(&mut self) -> &mut Self::Instr {
+        self
+    }
+}
+
+impl<'a> CFGInstruction for mir::Instruction<'a> {
+    type Instr = mir::Instruction<'a>;
+
+    #[inline]
+    fn block_boundary(&self) -> BlockBoundary<'_> {
+        match self {
+            mir::Instruction::Ret => BlockBoundary::Return,
+            mir::Instruction::Jmp(target) => BlockBoundary::Jump(target),
+            mir::Instruction::JmpC { target, .. } => BlockBoundary::CondJump(target),
+            mir::Instruction::Label(label) => BlockBoundary::Label(label),
             _ => BlockBoundary::Other,
         }
     }
@@ -157,74 +182,6 @@ impl<I: CFGInstruction> CFG<I> {
             _ => panic!("malformed control-flow graph: missing exit block"),
         }
     }
-
-    /// Builds the control-flow of the graph, linking blocks according to their
-    /// instructions and resolving all successors and predecessors.
-    fn build_control_flow(&mut self) {
-        /// Adds a directed edge between two blocks in the control-flow graph.
-        fn add_edge<I: CFGInstruction>(blocks: &mut [Block<I>], from: usize, to: usize) {
-            // Add `to` as a successor of `from`
-            match &mut blocks[from] {
-                Block::Entry { successor, .. } => *successor = to,
-                Block::Basic { successors, .. } => {
-                    successors.push(to);
-                }
-                Block::Exit { .. } => panic!("exit block should not have successors"),
-            }
-
-            // Add `from` as a predecessor of `to`
-            match &mut blocks[to] {
-                Block::Exit { predecessors, .. } | Block::Basic { predecessors, .. } => {
-                    predecessors.push(from);
-                }
-                Block::Entry { .. } => panic!("entry block should not have predecessors"),
-            }
-        }
-
-        // When building control-flow, the ID of the exit block is the same as
-        // it's index.
-        let exit_id = self.exit_block_id();
-        let entry_id = Block::<I>::ENTRY_ID;
-
-        // Add an edge from `entry` to the first basic block.
-        //
-        // Assuming there is at least one basic block, since empty functions are
-        // not optimized.
-        add_edge(&mut self.blocks, entry_id, 1);
-
-        // Iterate over the blocks, excluding the entry and exit blocks.
-        for block_id in entry_id + 1..exit_id {
-            let next_block_id = block_id + 1;
-            let block = &mut self.blocks[block_id];
-
-            if let Block::Basic { instructions, .. } = block {
-                // Last instruction of the block determines the control flow.
-                if let Some(last) = instructions.last() {
-                    let boundary = last.block_boundary();
-                    match boundary {
-                        BlockBoundary::Return => add_edge(&mut self.blocks, block_id, exit_id),
-                        BlockBoundary::Jump(target) | BlockBoundary::CondJump(target) => {
-                            let is_unconditional = matches!(boundary, BlockBoundary::Jump(_));
-
-                            if let Some(target_id) = self.label_map.get(target) {
-                                add_edge(&mut self.blocks, block_id, *target_id);
-
-                                if !is_unconditional {
-                                    add_edge(&mut self.blocks, block_id, next_block_id);
-                                }
-                            } else {
-                                // The `target` block was optimized away. Since
-                                // there is no edge to create, ensure control
-                                // can fallthrough to the next block.
-                                add_edge(&mut self.blocks, block_id, next_block_id);
-                            }
-                        }
-                        _ => add_edge(&mut self.blocks, block_id, next_block_id),
-                    }
-                }
-            }
-        }
-    }
 }
 
 impl<I: CFGInstruction + Clone> CFG<I> {
@@ -306,6 +263,75 @@ impl<I: CFGInstruction + Clone> CFG<I> {
             id: self.blocks.len(),
             predecessors: vec![],
         });
+    }
+
+    /// Builds the control-flow of the graph, linking blocks according to their
+    /// instructions and resolving all successors and predecessors.
+    fn build_control_flow(&mut self) {
+        /// Adds a directed edge between two blocks in the control-flow graph.
+        fn add_edge<I: CFGInstruction>(blocks: &mut [Block<I>], from: usize, to: usize) {
+            // Add `to` as a successor of `from`
+            match &mut blocks[from] {
+                Block::Entry { successor, .. } => *successor = to,
+                Block::Basic { successors, .. } => {
+                    successors.push(to);
+                }
+                Block::Exit { .. } => panic!("exit block should not have successors"),
+            }
+
+            // Add `from` as a predecessor of `to`
+            match &mut blocks[to] {
+                Block::Exit { predecessors, .. } | Block::Basic { predecessors, .. } => {
+                    predecessors.push(from);
+                }
+                Block::Entry { .. } => panic!("entry block should not have predecessors"),
+            }
+        }
+
+        // When building control-flow, the ID of the exit block is the same as
+        // it's index.
+        let exit_id = self.exit_block_id();
+        let entry_id = Block::<I>::ENTRY_ID;
+
+        // Add an edge from `entry` to the first basic block.
+        //
+        // Assuming there is at least one basic block, since empty functions are
+        // not optimized.
+        add_edge(&mut self.blocks, entry_id, 1);
+
+        // Iterate over the blocks, excluding the entry and exit blocks.
+        for block_id in entry_id + 1..exit_id {
+            let next_block_id = block_id + 1;
+            let block = &mut self.blocks[block_id];
+
+            if let Block::Basic { instructions, .. } = block {
+                // Last instruction of the block determines the control flow.
+                if let Some(last) = instructions.last() {
+                    let boundary = last.block_boundary();
+
+                    match boundary {
+                        BlockBoundary::Return => add_edge(&mut self.blocks, block_id, exit_id),
+                        BlockBoundary::Jump(target) | BlockBoundary::CondJump(target) => {
+                            let is_unconditional = matches!(boundary, BlockBoundary::Jump(_));
+
+                            if let Some(target_id) = self.label_map.get(target) {
+                                add_edge(&mut self.blocks, block_id, *target_id);
+
+                                if !is_unconditional {
+                                    add_edge(&mut self.blocks, block_id, next_block_id);
+                                }
+                            } else {
+                                // The `target` block was optimized away. Since
+                                // there is no edge to create, ensure control
+                                // can fallthrough to the next block.
+                                add_edge(&mut self.blocks, block_id, next_block_id);
+                            }
+                        }
+                        _ => add_edge(&mut self.blocks, block_id, next_block_id),
+                    }
+                }
+            }
+        }
     }
 }
 

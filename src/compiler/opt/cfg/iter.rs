@@ -40,9 +40,11 @@ impl<'a, I> PostOrder<'a, I> {
         let mut stack = vec![(entry, false)];
 
         while let Some((id, children_done)) = stack.pop() {
+            // NOTE: O(n) time complexity.
             if children_done && let Some(block) = blocks.iter().find(|b| b.id() == id) {
                 self.blocks.push(block);
             } else if let Some(Block::Basic { successors, .. }) =
+                // NOTE: O(n) time complexity.
                 blocks.iter().find(|b| b.id() == id)
             {
                 stack.push((id, true));

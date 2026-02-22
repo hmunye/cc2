@@ -61,6 +61,7 @@ Tiny C Compiler (subset of _C17_).
 - [x] Unreachable Code Elimination
 - [x] Copy Propagation
 - [x] Dead Store Elimination
+- [x] Register Allocation
 
 ## Testing
 

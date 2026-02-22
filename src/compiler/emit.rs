@@ -211,7 +211,7 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
                 "{}\t{}, {}",
                 inst,
                 emit_asm_operand(rhs, size, use_high_byte),
-                emit_asm_operand(dst, size, use_high_byte)
+                emit_asm_operand(dst, 4, use_high_byte)
             )
         }
         mir::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div, 4, false)),
@@ -223,13 +223,17 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
         ),
         // `.L` is the local label prefix for Linux.
         mir::Instruction::Jmp(label) => format!("jmp\t.L{label}"),
-        mir::Instruction::JmpC { code, label } => format!("j{code}\t.L{label}"),
+        mir::Instruction::JmpC { code, target } => format!("j{code}\t.L{target}"),
         mir::Instruction::SetC { code, dst } => {
             format!("set{code}\t{}", emit_asm_operand(dst, 1, false))
         }
         mir::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
         mir::Instruction::StackDealloc(v) => format!("addq\t${v}, %rsp"),
         mir::Instruction::Push(src) => format!("pushq\t{}", emit_asm_operand(src, 8, false)),
+        mir::Instruction::Pop(reg) => format!(
+            "popq\t{}",
+            emit_asm_operand(&mir::Operand::Register(*reg), 8, false)
+        ),
         // On _macOS_, function names are prefixed with underscore
         // (`call _puts`).
         //
@@ -406,6 +410,6 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
         mir::Operand::Stack(i) => format!("{i}(%rbp)"),
         // On _macOS_, symbol is prefixed with underscore (e.g., `_foo(%rip)`).
         mir::Operand::Data(symbol) => format!("{symbol}(%rip)"),
-        mir::Operand::Symbol(_) => panic!("pseudoregisters should not be emitted to assembly"),
+        mir::Operand::Symbol { .. } => panic!("pseudoregisters should not be emitted to assembly"),
     }
 }

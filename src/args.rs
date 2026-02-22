@@ -20,6 +20,9 @@ pub struct Opts {
     /// Dead-store elimination optimization (can be enabled explicitly,
     /// overrides `opt_level` preset).
     pub dse: bool,
+    /// Register allocation optimization (can be enabled explicitly, overrides
+    /// `opt_level` preset).
+    pub reg_alloc: bool,
 }
 
 impl Opts {
@@ -29,6 +32,26 @@ impl Opts {
     #[must_use]
     pub const fn any_passes_enabled(&self) -> bool {
         self.fold || self.copy_prop || self.uce || self.dse
+    }
+
+    /// Enables all optimizations.
+    #[inline]
+    const fn enable(&mut self) {
+        self.fold = true;
+        self.copy_prop = true;
+        self.uce = true;
+        self.dse = true;
+        self.reg_alloc = true;
+    }
+
+    /// Disables all optimizations.
+    #[inline]
+    const fn disable(&mut self) {
+        self.fold = false;
+        self.copy_prop = false;
+        self.uce = false;
+        self.dse = false;
+        self.reg_alloc = false;
     }
 }
 
@@ -79,23 +102,14 @@ impl Args {
                 if let Some(level_str) = flag_name.strip_prefix("-O") {
                     // '-O' implies '-O1': enable all optimizations.
                     if level_str.is_empty() {
-                        opts.fold = true;
-                        opts.copy_prop = true;
-                        opts.uce = true;
-                        opts.dse = true;
+                        opts.enable();
                     } else {
                         match level_str.parse::<u8>() {
                             Ok(0) => {
-                                opts.fold = false;
-                                opts.copy_prop = false;
-                                opts.uce = false;
-                                opts.dse = false;
+                                opts.disable();
                             }
                             Ok(1) => {
-                                opts.fold = true;
-                                opts.copy_prop = true;
-                                opts.uce = true;
-                                opts.dse = true;
+                                opts.enable();
                             }
                             _ => {
                                 report_err!(
@@ -135,6 +149,7 @@ impl Args {
                         ["", "--copy-prop"] => opts.copy_prop = true,
                         ["", "--uce"] => opts.uce = true,
                         ["", "--dse"] => opts.dse = true,
+                        ["", "--reg-alloc"] => opts.reg_alloc = true,
                         ["-o", "--output"] => {
                             if let Some(path) = args.next() {
                                 out_path = PathBuf::from(&path);
@@ -238,6 +253,11 @@ const PROGRAM_FLAGS: &[Flag] = &[
     Flag {
         names: ["", "--dse"],
         description: "                enable dead-store elimination optimization.",
+        run: None,
+    },
+    Flag {
+        names: ["", "--reg-alloc"],
+        description: "          enable register allocation optimization.",
         run: None,
     },
     Flag {

@@ -1,4 +1,4 @@
-//! Optimization Pipeline
+//! Optimization Pipeline (_IR_)
 //!
 //! Executes machine-independent optimization passes on an intermediate
 //! representation (_IR_) based on user-specified options.
@@ -22,7 +22,7 @@ pub fn optimize_ir(ir: &mut IR<'_>, opts: &Opts) {
     }
 }
 
-/// Optimizes the provided _IR_ function, applying the specified optimization.
+/// Optimizes the provided _IR_ function, applying the specified optimizations.
 fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
     if func.instructions.is_empty() {
         return;

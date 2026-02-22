@@ -3,14 +3,13 @@
 //! Compiler pass that lowers an intermediate representation (_IR_) into machine
 //! intermediate representation (_x86-64_).
 
-use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 
 use crate::compiler::ir::{self, IR};
 use crate::compiler::parser::ast::{self, Signedness};
-use crate::compiler::parser::sema::symbols::{StorageDuration, SymbolMap};
-use crate::compiler::parser::types::c_int;
+use crate::compiler::parser::sema::symbols::SymbolMap;
+use crate::compiler::parser::types::{Type, c_int};
 
 /// Structured _x86-64_ assembly representation.
 #[derive(Debug)]
@@ -87,7 +86,7 @@ impl fmt::Display for Function<'_> {
 }
 
 /// _MIR x86-64_ instructions.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction<'a> {
     /// Moves `src` -> `dst`.
     Mov { src: Operand<'a>, dst: Operand<'a> },
@@ -119,7 +118,7 @@ pub enum Instruction<'a> {
     Jmp(&'a str),
     /// Conditionally jump to the instruction after the target label, based on
     /// the conditional code.
-    JmpC { code: CondCode, label: &'a str },
+    JmpC { code: CondCode, target: &'a str },
     /// Move the value of the bit in CPU `RFLAGS` corresponding to `code` to the
     /// `dst` (1-byte operand).
     SetC { code: CondCode, dst: Operand<'a> },
@@ -128,13 +127,116 @@ pub enum Instruction<'a> {
     /// Subtract the specified number of bytes from `%rsp`.
     StackAlloc(isize),
     /// Add the specified number of bytes to `%rsp`.
-    StackDealloc(usize),
+    StackDealloc(isize),
     /// Pushes the specified operand onto the call-stack.
     Push(Operand<'a>),
+    /// Pops the top value from the call-stack into the specified register.
+    Pop(Reg),
     /// Calls the function specified by the identifier, transferring control.
     Call(&'a str),
     /// Yields control back to the caller.
     Ret,
+}
+
+impl<'a> Instruction<'a> {
+    /// Appends operands used by this instruction to `used`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a function call label is missing from the symbol map.
+    #[inline]
+    pub fn find_used(&self, used: &mut Vec<Operand<'a>>, sym_map: &SymbolMap) {
+        match self {
+            Instruction::Mov { src: val, .. }
+            | Instruction::Unary { dst: val, .. }
+            | Instruction::Push(val) => {
+                used.push(*val);
+            }
+            Instruction::Binary { rhs, dst: val, .. } | Instruction::Cmp { rhs, lhs: val } => {
+                used.extend([*rhs, *val]);
+            }
+            Instruction::Idiv(divisor) => {
+                used.extend([
+                    *divisor,
+                    Operand::Register(Reg::AX),
+                    Operand::Register(Reg::DX),
+                ]);
+            }
+            Instruction::Cdq => {
+                used.push(Operand::Register(Reg::AX));
+            }
+            Instruction::Call(label) => {
+                let sym_info = sym_map.get(*label).expect(
+                    "semantic analysis ensures every identifier is registered in the symbol map",
+                );
+
+                if let Type::Func { param_count } = sym_info.ty {
+                    used.extend(
+                        // According to the System-V ABI calling convention, the
+                        // first six function parameters are accessed from the
+                        // following registers:
+                        //
+                        // 64-bit: `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`
+                        // 32-bit: `%edi`, `%esi`, `%edx`, `%ecx`, `%r8d`, `%r9d`
+                        [Reg::DI, Reg::SI, Reg::DX, Reg::CX, Reg::R8, Reg::R9]
+                            .into_iter()
+                            .take(param_count.min(6))
+                            .map(Operand::Register),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Appends operands updated by this instruction to `updated`.
+    #[inline]
+    pub fn find_updated(&self, updated: &mut Vec<Operand<'a>>) {
+        match self {
+            Instruction::Mov { dst, .. }
+            | Instruction::Unary { dst, .. }
+            | Instruction::Binary { dst, .. }
+            | Instruction::SetC { dst, .. } => {
+                updated.push(*dst);
+            }
+            Instruction::Idiv(_) => {
+                updated.extend([Operand::Register(Reg::AX), Operand::Register(Reg::DX)]);
+            }
+            Instruction::Cdq => {
+                updated.push(Operand::Register(Reg::DX));
+            }
+            Instruction::Call(_) => {
+                updated.extend(
+                    [
+                        Reg::DI,
+                        Reg::SI,
+                        Reg::DX,
+                        Reg::CX,
+                        Reg::R8,
+                        Reg::R9,
+                        Reg::AX,
+                    ]
+                    .into_iter()
+                    .map(Operand::Register),
+                );
+            }
+            Instruction::Pop(reg) => updated.push(Operand::Register(*reg)),
+            _ => {}
+        }
+    }
+
+    /// Updates the two provided containers: one for the operands used and one
+    /// for the operands updated by this instruction.
+    #[inline]
+    pub fn find_used_and_updated(
+        &self,
+        used: &mut Vec<Operand<'a>>,
+        updated: &mut Vec<Operand<'a>>,
+        sym_map: &SymbolMap,
+    ) {
+        self.find_used(used, sym_map);
+        self.find_updated(updated);
+    }
 }
 
 impl fmt::Display for Instruction<'_> {
@@ -189,10 +291,7 @@ impl fmt::Display for Instruction<'_> {
             Instruction::Idiv(div) => write!(f, "{:<15}{div}", "Idiv"),
             Instruction::Cdq => write!(f, "Cdq"),
             Instruction::Jmp(target) => write!(f, "{:<15}{target:?}", "Jmp"),
-            Instruction::JmpC {
-                code,
-                label: target,
-            } => {
+            Instruction::JmpC { code, target } => {
                 write!(f, "{:<15}{target:?}", format!("Jmp{code:?}"))
             }
             Instruction::SetC { code, dst } => write!(f, "{:<15}{dst}", format!("Set{code:?}")),
@@ -200,6 +299,7 @@ impl fmt::Display for Instruction<'_> {
             Instruction::StackAlloc(i) => write!(f, "{:<15}{i}", "StackAlloc"),
             Instruction::StackDealloc(i) => write!(f, "{:<15}{i}", "StackDealloc"),
             Instruction::Push(op) => write!(f, "{:<15}{op}", "Push"),
+            Instruction::Pop(reg) => write!(f, "{:<15}{reg:?}", "Pop"),
             Instruction::Call(ident) => write!(f, "{:<15}{ident:?}", "Call"),
             Instruction::Ret => write!(f, "Ret"),
         }
@@ -207,14 +307,14 @@ impl fmt::Display for Instruction<'_> {
 }
 
 /// _MIR x86-64_ operands.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operand<'a> {
     /// Immediate value (32-bit).
     Imm32(c_int),
     /// Register name.
     Register(Reg),
     /// Symbolic operand (e.g., global, static, temporary variable).
-    Symbol(&'a str),
+    Symbol { ident: &'a str, is_static: bool },
     /// Stack address with specified offset from `%rbp`.
     Stack(isize),
     /// Identifier for data located in the `.bss` / `.data` _ELF_ section.
@@ -224,7 +324,8 @@ pub enum Operand<'a> {
 impl Operand<'_> {
     /// Returns `true` if the operand refers to a memory location.
     #[inline]
-    const fn is_memory_operand(&self) -> bool {
+    #[must_use]
+    pub const fn is_memory_operand(&self) -> bool {
         matches!(self, Operand::Stack(_) | Operand::Data(_))
     }
 }
@@ -234,7 +335,7 @@ impl fmt::Display for Operand<'_> {
         match self {
             Operand::Imm32(i) => write!(f, "{i}"),
             Operand::Register(r) => write!(f, "%{r:?}"),
-            Operand::Symbol(ident) => write!(f, "{ident:?}"),
+            Operand::Symbol { ident, .. } => write!(f, "{ident:?}"),
             Operand::Stack(i) => write!(f, "stack({i})"),
             Operand::Data(ident) => write!(f, "{ident:?} [static memory]"),
         }
@@ -242,7 +343,7 @@ impl fmt::Display for Operand<'_> {
 }
 
 /// _MIR x86-64_ registers (size agnostic).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum Reg {
     // =====================================================================
     // ====================== Caller-saved Registers =======================
@@ -290,8 +391,56 @@ pub enum Reg {
     R15,
 }
 
+impl Reg {
+    /// Number of available hardware registers for allocation.
+    pub const ALLOCATABLE_REGS: [Reg; 12] = [
+        Reg::AX,
+        Reg::BX,
+        Reg::CX,
+        Reg::DX,
+        Reg::DI,
+        Reg::SI,
+        Reg::R8,
+        Reg::R9,
+        Reg::R12,
+        Reg::R13,
+        Reg::R14,
+        Reg::R15,
+        // `Reg::R10` and `Reg::R11` are used in instruction fix-up.
+        //
+        // `RSP` and `RBP` are used in stack-frame management.
+    ];
+
+    /// Returns `true` if the register is caller-saved according to the
+    /// System-V AMD64 ABI.
+    #[inline]
+    #[must_use]
+    pub const fn is_caller_saved(&self) -> bool {
+        matches!(
+            self,
+            Reg::AX
+                | Reg::CX
+                | Reg::DX
+                | Reg::DI
+                | Reg::SI
+                | Reg::R8
+                | Reg::R9
+                | Reg::R10
+                | Reg::R11
+        )
+    }
+
+    /// Returns `true` if the register is callee-saved according to the
+    /// System-V AMD64 ABI.
+    #[inline]
+    #[must_use]
+    pub const fn is_callee_saved(&self) -> bool {
+        matches!(self, Reg::BX | Reg::R12 | Reg::R13 | Reg::R14 | Reg::R15)
+    }
+}
+
 /// _MIR x86-64_ conditional codes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CondCode {
     /// Equal.
     E,
@@ -321,7 +470,7 @@ impl fmt::Display for CondCode {
 }
 
 /// _MIR x86-64_ unary operators.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
     /// Instruction for one's complement negation.
     Not,
@@ -330,7 +479,7 @@ pub enum UnaryOperator {
 }
 
 /// _MIR x86-64_ binary operators.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
     /// Instruction for addition.
     Add,
@@ -355,7 +504,7 @@ pub enum BinaryOperator {
 /// Generate _x86-64_ machine intermediate representation (_MIR_), given an
 /// intermediate representation (_IR_).
 #[must_use]
-pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>, sym_map: &SymbolMap) -> MIRX86<'a> {
+pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>) -> MIRX86<'a> {
     let mut mir_items = Vec::with_capacity(ir.program.len());
     let mut locales = HashSet::new();
 
@@ -374,7 +523,7 @@ pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>, sym_map: &SymbolMap) -> MIRX86<'a
             }
             ir::Item::Func(func) => {
                 locales.insert(func.ident);
-                mir_items.push(Item::Func(generate_mir_function(func, sym_map)));
+                mir_items.push(Item::Func(generate_mir_function(func)));
             }
         }
     }
@@ -386,7 +535,7 @@ pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>, sym_map: &SymbolMap) -> MIRX86<'a
 }
 
 /// Generate a _MIR x86-64_ function definition from the provided _IR_ function.
-fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) -> Function<'a> {
+fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
     let mut instructions = Vec::with_capacity(func.params.len());
 
     // Lower function parameters before processing `IR` instructions.
@@ -558,7 +707,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                     },
                     Instruction::JmpC {
                         code,
-                        label: target.as_str(),
+                        target: target.as_str(),
                     },
                 ]);
             }
@@ -623,7 +772,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
                 // instructions before the function epilogue.
                 let bytes_dealloc = 8 * stack_args + (if needs_padding { 8 } else { 0 });
                 if bytes_dealloc != 0 {
-                    instructions.push(Instruction::StackDealloc(bytes_dealloc));
+                    instructions.push(Instruction::StackDealloc(bytes_dealloc.cast_signed()));
                 }
 
                 instructions.push(Instruction::Mov {
@@ -637,40 +786,21 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>, sym_map: &SymbolMap) ->
         }
     }
 
-    let mut func = Function {
+    Function {
         label: func.ident,
         instructions,
         is_global: func.is_global,
-    };
-
-    let stack_offset = replace_symbols(&mut func, sym_map);
-
-    rewrite_invalid_instructions(&mut func);
-
-    // System-V x86-64 ABI requires the stack to be 16-byte aligned at every
-    // `call` instruction. A length that is a multiple of 16 will always have
-    // the last four bits set to `0000`.
-    let padding = if stack_offset & 0xF != 0 {
-        16 - (stack_offset & 0xF)
-    } else {
-        0
-    };
-
-    let alloc = stack_offset + padding;
-
-    if alloc > 0 {
-        // NOTE: O(n) time complexity.
-        func.instructions.insert(0, Instruction::StackAlloc(alloc));
     }
-
-    func
 }
 
 /// Generate a _MIR x86-64_ operand from the provided _IR_ value.
 const fn generate_mir_operand(val: &ir::Value) -> Operand<'_> {
     match val {
         ir::Value::IntConstant(i) => Operand::Imm32(*i),
-        ir::Value::Var { ident, .. } => Operand::Symbol(ident.as_str()),
+        ir::Value::Var { ident, is_static } => Operand::Symbol {
+            ident: ident.as_str(),
+            is_static: *is_static,
+        },
     }
 }
 
@@ -693,7 +823,10 @@ fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a
     for (i, param) in params.iter().take(6).enumerate() {
         out.push(Instruction::Mov {
             src: Operand::Register(regs[i]),
-            dst: Operand::Symbol(param),
+            dst: Operand::Symbol {
+                ident: param,
+                is_static: false,
+            },
         });
     }
 
@@ -711,284 +844,14 @@ fn lower_ir_function_params<'a>(params: &'a [&str], out: &mut Vec<Instruction<'a
             out.push(Instruction::Mov {
                 // Positive offsets are used to refer to the caller stack frame.
                 src: Operand::Stack(stack_offset),
-                dst: Operand::Symbol(param),
+                dst: Operand::Symbol {
+                    ident: param,
+                    is_static: false,
+                },
             });
 
             stack_offset += 8; // 8 bytes per parameter.
         }
-    }
-}
-
-/// Replaces each symbolic operand within the _MIR x86-64_ function with its
-/// corresponding location: either a stack offset from `%rbp` or an address in
-/// the `.bss` / `.data` _ELF_ section, returning the final stack offset used.
-fn replace_symbols(func: &mut Function<'_>, sym_map: &SymbolMap) -> isize {
-    let mut offset_map: HashMap<&str, isize> = HashMap::default();
-
-    let mut stack_offset = 0;
-
-    let mut convert_symbol = |ident| {
-        if let Some(sym_info) = sym_map.get(ident)
-            && sym_info.duration == Some(StorageDuration::Static)
-        {
-            Operand::Data(ident)
-        } else {
-            // Either we encountered an `automatic` or `IR` temporary variable.
-            let offset = match offset_map.entry(ident) {
-                Entry::Occupied(entry) => *entry.get(),
-                Entry::Vacant(entry) => {
-                    // NOTE: Allocating stack in 4-byte offsets.
-                    stack_offset += 4;
-                    // Negating the offset refers to a local variable in the
-                    // stack frame relative to `%rbp`.
-                    entry.insert(-stack_offset);
-                    -stack_offset
-                }
-            };
-
-            Operand::Stack(offset)
-        }
-    };
-
-    for inst in &mut func.instructions {
-        match inst {
-            Instruction::Mov { src, dst } => {
-                if let Operand::Symbol(ident) = src {
-                    *src = convert_symbol(ident);
-                }
-
-                if let Operand::Symbol(ident) = dst {
-                    *dst = convert_symbol(ident);
-                }
-            }
-            Instruction::Unary { dst, .. } | Instruction::SetC { dst, .. } => {
-                if let Operand::Symbol(ident) = dst {
-                    *dst = convert_symbol(ident);
-                }
-            }
-            Instruction::Binary { rhs, dst, .. } => {
-                if let Operand::Symbol(ident) = rhs {
-                    *rhs = convert_symbol(ident);
-                }
-
-                if let Operand::Symbol(ident) = dst {
-                    *dst = convert_symbol(ident);
-                }
-            }
-            Instruction::Cmp { rhs, lhs } => {
-                if let Operand::Symbol(ident) = rhs {
-                    *rhs = convert_symbol(ident);
-                }
-
-                if let Operand::Symbol(ident) = lhs {
-                    *lhs = convert_symbol(ident);
-                }
-            }
-            Instruction::Idiv(div) => {
-                if let Operand::Symbol(ident) = div {
-                    *div = convert_symbol(ident);
-                }
-            }
-            Instruction::Push(op) => {
-                if let Operand::Symbol(ident) = op {
-                    *op = convert_symbol(ident);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    stack_offset
-}
-
-/// Rewrite instructions within the _MIR x86-64_ function containing invalid
-/// operands to valid _x86-64_ equivalents.
-fn rewrite_invalid_instructions(func: &mut Function<'_>) {
-    let mut i = 0;
-
-    while i < func.instructions.len() {
-        let inst = &mut func.instructions[i];
-
-        match inst {
-            Instruction::Mov { src, dst } if src.is_memory_operand() && dst.is_memory_operand() => {
-                let src = *src;
-                let dst = *dst;
-
-                // `%r10d` used as temporary storage for intermediate values in
-                // new instructions. `%r10d`, unlike other hardware registers,
-                // serves no special purpose, so we are less likely to encounter
-                // a conflict.
-                func.instructions.splice(
-                    i..=i,
-                    [
-                        Instruction::Mov {
-                            src,
-                            dst: Operand::Register(Reg::R10),
-                        },
-                        Instruction::Mov {
-                            src: Operand::Register(Reg::R10),
-                            dst,
-                        },
-                    ],
-                );
-
-                // Ensures the two new instructions are skipped.
-                i += 1;
-            }
-            Instruction::Idiv(div) if matches!(div, Operand::Imm32(_)) => {
-                let div = *div;
-
-                func.instructions.splice(
-                    i..=i,
-                    [
-                        Instruction::Mov {
-                            src: div,
-                            dst: Operand::Register(Reg::R10),
-                        },
-                        Instruction::Idiv(Operand::Register(Reg::R10)),
-                    ],
-                );
-
-                // Ensures the two new instructions are skipped.
-                i += 1;
-            }
-            Instruction::Binary { binop, rhs, dst }
-                if matches!(
-                    binop,
-                    BinaryOperator::Add
-                        | BinaryOperator::Sub
-                        | BinaryOperator::And
-                        | BinaryOperator::Or
-                        | BinaryOperator::Xor
-                ) && rhs.is_memory_operand()
-                    && dst.is_memory_operand() =>
-            {
-                let rhs = *rhs;
-                let dst = *dst;
-                let binop = *binop;
-
-                func.instructions.splice(
-                    i..=i,
-                    [
-                        Instruction::Mov {
-                            src: rhs,
-                            dst: Operand::Register(Reg::R10),
-                        },
-                        Instruction::Binary {
-                            binop,
-                            rhs: Operand::Register(Reg::R10),
-                            dst,
-                        },
-                    ],
-                );
-
-                // Ensures the two new instructions are skipped.
-                i += 1;
-            }
-            Instruction::Binary {
-                binop: BinaryOperator::Imul,
-                rhs,
-                dst,
-            } if dst.is_memory_operand() => {
-                let rhs = *rhs;
-                let dst = *dst;
-
-                // `%r11d` used as temporary storage for intermediate values in
-                // the new instructions.
-                func.instructions.splice(
-                    i..=i,
-                    [
-                        Instruction::Mov {
-                            src: dst,
-                            dst: Operand::Register(Reg::R11),
-                        },
-                        Instruction::Binary {
-                            binop: BinaryOperator::Imul,
-                            rhs,
-                            dst: Operand::Register(Reg::R11),
-                        },
-                        Instruction::Mov {
-                            src: Operand::Register(Reg::R11),
-                            dst,
-                        },
-                    ],
-                );
-
-                // Ensures the three new instructions are skipped.
-                i += 2;
-            }
-            Instruction::Binary { binop, rhs, dst }
-                if matches!(
-                    binop,
-                    BinaryOperator::Shl | BinaryOperator::Shr | BinaryOperator::Sar
-                ) && !matches!(rhs, Operand::Imm32(_) | Operand::Register(Reg::CX)) =>
-            {
-                let rhs = *rhs;
-                let dst = *dst;
-                let binop = *binop;
-
-                func.instructions.splice(
-                    i..=i,
-                    [
-                        Instruction::Mov {
-                            src: rhs,
-                            dst: Operand::Register(Reg::CX),
-                        },
-                        Instruction::Binary {
-                            binop,
-                            rhs: Operand::Register(Reg::CX),
-                            dst,
-                        },
-                    ],
-                );
-
-                // Ensures the two new instructions are skipped.
-                i += 1;
-            }
-            Instruction::Cmp { rhs, lhs }
-                if (rhs.is_memory_operand() && lhs.is_memory_operand())
-                    || matches!(lhs, Operand::Imm32(_)) =>
-            {
-                let rhs = *rhs;
-                let lhs = *lhs;
-
-                if let Operand::Imm32(_) = lhs {
-                    func.instructions.splice(
-                        i..=i,
-                        [
-                            Instruction::Mov {
-                                src: lhs,
-                                dst: Operand::Register(Reg::R11),
-                            },
-                            Instruction::Cmp {
-                                rhs,
-                                lhs: Operand::Register(Reg::R11),
-                            },
-                        ],
-                    );
-                } else {
-                    func.instructions.splice(
-                        i..=i,
-                        [
-                            Instruction::Mov {
-                                src: rhs,
-                                dst: Operand::Register(Reg::R10),
-                            },
-                            Instruction::Cmp {
-                                rhs: Operand::Register(Reg::R10),
-                                lhs,
-                            },
-                        ],
-                    );
-                }
-
-                // Ensures the two new instructions are skipped.
-                i += 1;
-            }
-            _ => {}
-        }
-
-        i += 1;
     }
 }
 

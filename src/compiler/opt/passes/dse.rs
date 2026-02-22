@@ -169,6 +169,7 @@ where
         outgoing
     }
 
+    #[inline]
     fn initial(&self, _cfg: &'a CFG<I>) -> Self::Fact {
         // The identity element for the `meet` operator (union) is the empty set
         // (at the function exit, no local variables are live).
@@ -245,7 +246,6 @@ where
 
             // Removing instructions from right-left ensures indicies are not
             // affected by shifting.
-            #[allow(clippy::iter_with_drain)]
             for i in to_remove.drain(..).rev() {
                 // NOTE: O(n) time complexity.
                 instructions.remove(i);

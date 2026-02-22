@@ -12,6 +12,7 @@
 #![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::iter_with_drain)]
 
 pub mod args;
 pub mod compiler;
