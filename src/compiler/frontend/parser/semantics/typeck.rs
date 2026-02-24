@@ -4,14 +4,13 @@
 //! constraints on expressions and declarations within an _AST_.
 
 use crate::compiler::Context;
-use crate::compiler::parser::ast::{
+use crate::compiler::frontend::SymbolTable;
+use crate::compiler::frontend::ast::{
     AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled,
     Statement, StorageClass, TypePhase,
 };
-use crate::compiler::parser::sema::symbols::SymbolMap;
-use crate::compiler::parser::types::Type;
-use crate::error::Result;
-use crate::fmt_token_err;
+use crate::compiler::frontend::types::Type;
+use crate::{diag::Result, fmt_token_err};
 
 /// Performs type checking using the provided `symbol_map`, enforcing semantic
 /// constraints on expressions and declarations within the given _AST_.
@@ -23,7 +22,7 @@ use crate::fmt_token_err;
 pub fn resolve_types<'a>(
     ast: AST<'a, IdentPhase>,
     ctx: &Context<'_>,
-    sym_map: &SymbolMap,
+    sym_map: &SymbolTable,
 ) -> Result<AST<'a, TypePhase>> {
     for decl in &ast.program {
         type_check_declaration(decl, true, ctx, sym_map)?;
@@ -39,7 +38,7 @@ fn type_check_declaration(
     decl: &Declaration<'_>,
     is_file_scope: bool,
     ctx: &Context<'_>,
-    sym_map: &SymbolMap,
+    sym_map: &SymbolTable,
 ) -> Result<()> {
     match decl {
         var @ Declaration::Var { .. } => type_check_variable(var, is_file_scope, ctx, sym_map),
@@ -47,7 +46,11 @@ fn type_check_declaration(
     }
 }
 
-fn type_check_function(func: &Function<'_>, ctx: &Context<'_>, sym_map: &SymbolMap) -> Result<()> {
+fn type_check_function(
+    func: &Function<'_>,
+    ctx: &Context<'_>,
+    sym_map: &SymbolTable,
+) -> Result<()> {
     let Function {
         specs,
         ident,
@@ -86,7 +89,7 @@ fn type_check_variable(
     var: &Declaration<'_>,
     is_file_scope: bool,
     ctx: &Context<'_>,
-    sym_map: &SymbolMap,
+    sym_map: &SymbolTable,
 ) -> Result<()> {
     if let Declaration::Var {
         specs,
@@ -137,7 +140,7 @@ fn type_check_variable(
     Ok(())
 }
 
-fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, sym_map: &SymbolMap) -> Result<()> {
+fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, sym_map: &SymbolTable) -> Result<()> {
     for block_item in &block.0 {
         match block_item {
             BlockItem::Stmt(stmt) => type_check_statement(stmt, ctx, sym_map)?,
@@ -151,7 +154,7 @@ fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, sym_map: &SymbolMap) -
 fn type_check_statement(
     stmt: &Statement<'_>,
     ctx: &Context<'_>,
-    sym_map: &SymbolMap,
+    sym_map: &SymbolTable,
 ) -> Result<()> {
     match stmt {
         Statement::Return(expr) | Statement::Expression(expr) => {
@@ -247,7 +250,7 @@ fn type_check_statement(
 fn type_check_expression(
     expr: &Expression<'_>,
     ctx: &Context<'_>,
-    sym_map: &SymbolMap,
+    sym_map: &SymbolTable,
 ) -> Result<()> {
     match expr {
         Expression::Assignment { lvalue, rvalue, .. } => {

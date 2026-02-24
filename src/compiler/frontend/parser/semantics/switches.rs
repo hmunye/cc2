@@ -5,14 +5,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::compiler::parser::ast::{
+use crate::compiler::frontend::ast::{
     AST, Analyzed, Block, BlockItem, CtrlFlowPhase, Declaration, Expression, Labeled, Statement,
     SwitchCase,
 };
-use crate::compiler::parser::types::c_int;
+use crate::compiler::frontend::types::c_int;
 use crate::compiler::{self, Context};
-use crate::error::Result;
-use crate::fmt_token_err;
+use crate::{diag::Result, fmt_token_err};
 
 /// Kind of labeled statement within a `switch` statement.
 #[derive(Debug, Clone, Copy)]

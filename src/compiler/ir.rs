@@ -1,15 +1,16 @@
 //! Intermediate Representation
 //!
-//! Compiler pass that lowers an abstract syntax tree (_AST_) into three-address
-//! code (_TAC_) intermediate representation (_IR_).
+//! Compiler pass that lowers an abstract syntax tree (_AST_) into an
+//! intermediate representation (_IR_).
 
 use std::fmt;
 
-use crate::compiler::parser::ast::{
+use crate::compiler::frontend::SymbolTable;
+use crate::compiler::frontend::ast::{
     self, Analyzed, BinaryOperator, Signedness, StorageClass, UnaryOperator,
 };
-use crate::compiler::parser::sema::symbols::{Linkage, StorageDuration, SymbolMap, SymbolState};
-use crate::compiler::parser::types::c_int;
+use crate::compiler::frontend::parser::{Linkage, StorageDuration, SymbolState};
+use crate::compiler::frontend::types::c_int;
 
 /// Intermediate representation (_IR_).
 #[derive(Debug)]
@@ -329,7 +330,7 @@ impl<'a> TACBuilder<'a> {
 ///
 /// Panics if an identifier could not be found in the symbol map.
 #[must_use]
-pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &mut SymbolMap) -> IR<'a> {
+pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &mut SymbolTable) -> IR<'a> {
     let mut ir_items = vec![];
 
     let mut builder = TACBuilder::default();
@@ -403,12 +404,12 @@ pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_map: &mut SymbolMap)
 fn generate_ir_function<'a>(
     func: &'a ast::Function<'_>,
     builder: &mut TACBuilder<'a>,
-    sym_map: &SymbolMap,
+    sym_map: &SymbolTable,
 ) -> Function<'a> {
     fn process_ast_block<'a>(
         block: &'a ast::Block<'_>,
         builder: &mut TACBuilder<'a>,
-        sym_map: &SymbolMap,
+        sym_map: &SymbolTable,
     ) {
         for block_item in &block.0 {
             match block_item {
@@ -421,7 +422,7 @@ fn generate_ir_function<'a>(
     fn process_ast_declaration<'a>(
         decl: &'a ast::Declaration<'_>,
         builder: &mut TACBuilder<'a>,
-        sym_map: &SymbolMap,
+        sym_map: &SymbolTable,
     ) {
         if let ast::Declaration::Var {
             specs, ident, init, ..
@@ -468,7 +469,7 @@ fn generate_ir_function<'a>(
     fn process_ast_statement<'a>(
         stmt: &'a ast::Statement<'_>,
         builder: &mut TACBuilder<'a>,
-        sym_map: &SymbolMap,
+        sym_map: &SymbolTable,
     ) {
         match stmt {
             ast::Statement::Return(expr) => {
@@ -774,7 +775,7 @@ fn generate_ir_function<'a>(
 fn generate_ir_value<'a>(
     expr: &'a ast::Expression<'_>,
     builder: &mut TACBuilder<'a>,
-    sym_map: &SymbolMap,
+    sym_map: &SymbolTable,
 ) -> Value {
     match expr {
         ast::Expression::IntConstant(v) => Value::IntConstant(*v),

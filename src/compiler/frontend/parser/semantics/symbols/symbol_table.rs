@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::compiler::parser::types::{Type, c_int};
+use crate::compiler::frontend::types::{Type, c_int};
 
 use super::resolve::{BindingInfo, BindingKey};
 
@@ -75,15 +75,15 @@ pub struct SymbolInfo {
 }
 
 /// Mapping of canonical identifier to symbol information.
-pub type SymbolMap = HashMap<String, SymbolInfo>;
+pub type SymbolTable = HashMap<String, SymbolInfo>;
 
 /// Converts a map of scoped symbol bindings into a map of canonical symbols
 /// with their resolved information.
 #[must_use]
 pub fn convert_bindings_map<S: std::hash::BuildHasher>(
     binding_map: HashMap<BindingKey, BindingInfo, S>,
-) -> SymbolMap {
-    let mut sym_map = SymbolMap::new();
+) -> SymbolTable {
+    let mut sym_map = SymbolTable::new();
 
     for bind_info in binding_map.into_values() {
         sym_map

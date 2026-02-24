@@ -1,4 +1,4 @@
-//! Machine Intermediate Representation
+//! Machine Intermediate Representation (_x86-64_)
 //!
 //! Compiler pass that lowers an intermediate representation (_IR_) into machine
 //! intermediate representation (_x86-64_).
@@ -6,10 +6,10 @@
 use std::collections::HashSet;
 use std::fmt;
 
+use crate::compiler::frontend::SymbolTable;
+use crate::compiler::frontend::ast::{self, Signedness};
+use crate::compiler::frontend::types::{Type, c_int};
 use crate::compiler::ir::{self, IR};
-use crate::compiler::parser::ast::{self, Signedness};
-use crate::compiler::parser::sema::symbols::SymbolMap;
-use crate::compiler::parser::types::{Type, c_int};
 
 /// Structured _x86-64_ assembly representation.
 #[derive(Debug)]
@@ -145,7 +145,7 @@ impl<'a> Instruction<'a> {
     ///
     /// Panics if a function call label is missing from the symbol map.
     #[inline]
-    pub fn find_used(&self, used: &mut Vec<Operand<'a>>, sym_map: &SymbolMap) {
+    pub fn find_used(&self, used: &mut Vec<Operand<'a>>, sym_map: &SymbolTable) {
         match self {
             Instruction::Mov { src: val, .. }
             | Instruction::Unary { dst: val, .. }
@@ -232,7 +232,7 @@ impl<'a> Instruction<'a> {
         &self,
         used: &mut Vec<Operand<'a>>,
         updated: &mut Vec<Operand<'a>>,
-        sym_map: &SymbolMap,
+        sym_map: &SymbolTable,
     ) {
         self.find_used(used, sym_map);
         self.find_updated(updated);

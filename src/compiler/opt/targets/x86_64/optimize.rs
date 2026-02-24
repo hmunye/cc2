@@ -6,15 +6,15 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
-use crate::args::Opts;
-use crate::compiler;
-use crate::compiler::mir::{BinaryOperator, Instruction, Item, MIRX86, Operand, Reg};
-use crate::compiler::parser::sema::symbols::{StorageDuration, SymbolMap};
+use crate::cli::Opts;
+use crate::compiler::frontend::parser::StorageDuration;
+use crate::compiler::targets::x86_64::{BinaryOperator, Instruction, Item, MIRX86, Operand, Reg};
+use crate::compiler::{self, frontend::SymbolTable};
 
 /// Runs machine-dependent, intraprocedural optimization passes, on the given
 /// _x86-64_ machine intermediate representation (_MIR_), according to the
 /// optimizations specified.
-pub fn optimize_x86_64_mir(mir: &mut MIRX86<'_>, opts: &Opts, sym_map: &SymbolMap) {
+pub fn optimize_x86_64_mir(mir: &mut MIRX86<'_>, opts: &Opts, sym_map: &SymbolTable) {
     for item in &mut mir.program {
         if let Item::Func(func) = item {
             optimize_mir_func(&mut func.instructions, opts, sym_map);
@@ -24,7 +24,7 @@ pub fn optimize_x86_64_mir(mir: &mut MIRX86<'_>, opts: &Opts, sym_map: &SymbolMa
 
 /// Optimizes the provided _MIR x86-64_ instructions, applying the specified
 /// optimizations.
-fn optimize_mir_func(instructions: &mut Vec<Instruction<'_>>, opts: &Opts, sym_map: &SymbolMap) {
+fn optimize_mir_func(instructions: &mut Vec<Instruction<'_>>, opts: &Opts, sym_map: &SymbolTable) {
     if instructions.is_empty() {
         return;
     }
@@ -65,7 +65,7 @@ fn optimize_mir_func(instructions: &mut Vec<Instruction<'_>>, opts: &Opts, sym_m
 /// Replaces each symbolic operand within the _MIR x86-64_ instructions with its
 /// corresponding location: either a stack offset from `%rbp` or an address in
 /// the `.bss` / `.data` _ELF_ section, returning the final stack offset used.
-fn replace_symbols(instructions: &mut Vec<Instruction<'_>>, sym_map: &SymbolMap) -> isize {
+fn replace_symbols(instructions: &mut Vec<Instruction<'_>>, sym_map: &SymbolTable) -> isize {
     let mut offset_map: HashMap<&str, isize> = HashMap::default();
 
     let mut stack_offset = 0;

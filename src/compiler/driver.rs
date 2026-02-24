@@ -1,32 +1,33 @@
 //! Compiler Driver
 //!
-//! Multi-stage process of compiling a _C_ translation unit into assembly code.
+//! Orchestrates the multi-stage process for compiling a _C_ translation unit
+//! into textual assembly.
 
 use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::Path;
 use std::{env, fs, process};
 
-use crate::error::Result;
-use crate::{args, compiler, fmt_err};
+use crate::{cli, compiler, diag::Result, fmt_err};
 
 /// Information about the current program context.
 #[derive(Debug)]
 pub struct Context<'a> {
     /// Name of the program.
     pub program: &'a str,
-    /// Path of the input _C_ file.
+    /// Path of the input file.
     pub in_path: &'static Path,
     /// Input file bytes.
     pub src: &'a [u8],
 }
 
 impl Context<'_> {
-    /// Returns the UTF-8 representation for the given `range` from source.
+    /// Returns the UTF-8 representation for the given range from the source
+    /// bytes.
     ///
     /// # Panics
     ///
-    /// Panics if `range` is not valid UTF-8.
+    /// Panics if the range is not valid UTF-8.
     #[inline]
     #[must_use]
     pub fn src_slice(&self, range: Range<usize>) -> &str {
@@ -40,7 +41,7 @@ impl Context<'_> {
 ///
 /// Returns an error if the provided input file cannot be opened or read, or if
 /// any compilation phase fails.
-pub fn run_compiler(args: &args::Args) -> Result<()> {
+pub fn run_compiler(args: &cli::Args) -> Result<()> {
     let mut f = if args.preprocess {
         preprocess_input(args)?
     } else {
@@ -67,18 +68,18 @@ pub fn run_compiler(args: &args::Args) -> Result<()> {
         src: &src,
     };
 
-    let lexer = compiler::lexer::Lexer::new(&ctx);
+    let lexer = compiler::frontend::Lexer::new(&ctx);
 
     match args.stage.as_str() {
         "lex" => {
             print!("{lexer}");
         }
         "parse" => {
-            let (ast, _) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, _) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
             print!("{ast}");
         }
         "ir" => {
-            let (ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, mut sym_map) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
 
             let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
@@ -86,23 +87,23 @@ pub fn run_compiler(args: &args::Args) -> Result<()> {
             print!("{ir}");
         }
         "mir" => {
-            let (ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, mut sym_map) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
 
             let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
-            let mut mir = compiler::mir::generate_x86_64_mir(&ir);
+            let mut mir = compiler::targets::x86_64::generate_x86_64_mir(&ir);
             compiler::opt::targets::optimize_x86_64_mir(&mut mir, &args.opts, &sym_map);
 
             print!("{mir}");
         }
         stage => {
-            let (ast, mut sym_map) = compiler::parser::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, mut sym_map) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
 
             let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
             compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
-            let mut mir = compiler::mir::generate_x86_64_mir(&ir);
+            let mut mir = compiler::targets::x86_64::generate_x86_64_mir(&ir);
             compiler::opt::targets::optimize_x86_64_mir(&mut mir, &args.opts, &sym_map);
 
             let writer: Box<dyn Write> = if stage == "asm" {
@@ -119,7 +120,7 @@ pub fn run_compiler(args: &args::Args) -> Result<()> {
                 Box::new(f)
             };
 
-            compiler::emit::emit_gas_x86_64_linux(&ctx, &mir, writer)
+            compiler::targets::x86_64::asm::emit_gas_x86_64_linux(&ctx, &mir, writer)
                 .map_err(|err| fmt_err!(args.program, "failed to emit assembly: {err}"))?;
         }
     }
@@ -134,7 +135,7 @@ pub fn run_compiler(args: &args::Args) -> Result<()> {
 ///
 /// Returns an error if a temporary file cannot be created/opened or
 /// preprocessing fails.
-fn preprocess_input(args: &args::Args) -> Result<fs::File> {
+fn preprocess_input(args: &cli::Args) -> Result<fs::File> {
     let tmp_dir = env::temp_dir();
     let tmp_path = tmp_dir
         .join(

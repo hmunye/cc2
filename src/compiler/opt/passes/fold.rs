@@ -3,9 +3,9 @@
 //! Transforms an intermediate representation (_IR_) by evaluating constant
 //! expressions at compile-time.
 
+use crate::compiler::frontend::ast::{self, BinaryOperator, UnaryOperator};
+use crate::compiler::frontend::types::c_int;
 use crate::compiler::ir::{Function, Instruction, Value};
-use crate::compiler::parser::ast::{self, BinaryOperator, UnaryOperator};
-use crate::compiler::parser::types::c_int;
 
 /// Transforms an intermediate representation (_IR_) function by folding
 /// all constant expressions.

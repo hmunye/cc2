@@ -7,12 +7,11 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
 use crate::compiler::Context;
-use crate::compiler::lexer::Token;
-use crate::compiler::parser::ast::{
+use crate::compiler::frontend::ast::{
     AST, Block, BlockItem, Declaration, LabelPhase, Labeled, Statement, TypePhase,
 };
-use crate::error::Result;
-use crate::fmt_token_err;
+use crate::compiler::frontend::lexer::Token;
+use crate::{diag::Result, fmt_token_err};
 
 /// Helper to perform semantic analysis on label/`goto` statements within an
 /// _AST_.

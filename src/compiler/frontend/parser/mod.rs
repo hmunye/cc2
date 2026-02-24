@@ -4,7 +4,7 @@
 //! abstract representation.
 
 pub mod ast;
-pub mod sema;
+pub mod semantics;
 pub mod types;
 
-pub use ast::parse_ast;
+pub use semantics::symbols::{self, Linkage, StorageDuration, SymbolState};

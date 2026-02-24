@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
+use crate::compiler::ir;
 use crate::compiler::opt::cfg::iter::BasicBlocks;
-use crate::compiler::{ir, mir};
+use crate::compiler::targets::x86_64::mir;
 
 /// Types of instructions that determine a basic block boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

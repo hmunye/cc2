@@ -1,11 +1,11 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use crate::compiler::mir::{Instruction, Reg};
+use crate::compiler::frontend::SymbolTable;
 use crate::compiler::opt::analysis::DataFlowAnalysis;
 use crate::compiler::opt::targets::x86_64::RegisterType;
 use crate::compiler::opt::{Block, CFG, CFGInstruction};
-use crate::compiler::parser::sema::symbols::SymbolMap;
+use crate::compiler::targets::x86_64::{Instruction, Reg};
 
 /// Tracks the set of live registers at a program point.
 type LiveRegs<'a> = HashSet<RegisterType<'a>>;
@@ -16,7 +16,7 @@ pub struct RegisterLiveness<'a> {
     /// Mapping from block ID to live registers at the block's exit and the
     /// per-instruction live registers by index.
     pub lives: HashMap<usize, (LiveRegs<'a>, Vec<LiveRegs<'a>>)>,
-    sym_map: &'a SymbolMap,
+    sym_map: &'a SymbolTable,
     exit_id: usize,
 }
 
@@ -24,7 +24,7 @@ impl<'a> RegisterLiveness<'a> {
     /// Returns a new `RegisterLiveness`.
     #[inline]
     #[must_use]
-    pub fn new(exit_id: usize, sym_map: &'a SymbolMap) -> Self {
+    pub fn new(exit_id: usize, sym_map: &'a SymbolTable) -> Self {
         Self {
             lives: HashMap::default(),
             sym_map,

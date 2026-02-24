@@ -1,4 +1,6 @@
-//! Macros and types for formatting and reporting compiler errors.
+//! Compiler Diagnostics
+//!
+//! Provides macros and types for reporting/formatting compiler diagnostics.
 
 pub type Result<T> = std::result::Result<T, String>;
 

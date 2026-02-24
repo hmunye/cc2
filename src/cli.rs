@@ -1,4 +1,6 @@
-//! Module for parsing command-line arguments.
+//! Command-line Interface
+//!
+//! Handles parsing and validation of command-line arguments and flags.
 
 use std::path::{Path, PathBuf};
 use std::process;

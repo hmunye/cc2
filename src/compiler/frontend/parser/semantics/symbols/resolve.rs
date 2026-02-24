@@ -5,16 +5,15 @@
 
 use std::collections::HashMap;
 
-use crate::compiler::parser::ast::{
+use crate::compiler::frontend::ast::{
     AST, Block, BlockItem, Declaration, Expression, ForInit, Function, IdentPhase, Labeled, Param,
     Parsed, Statement, StorageClass,
 };
-use crate::compiler::parser::types::Type;
+use crate::compiler::frontend::types::Type;
 use crate::compiler::{self, Context};
-use crate::error::Result;
-use crate::fmt_token_err;
+use crate::{diag::Result, fmt_token_err};
 
-use super::{Linkage, Scope, StorageDuration, SymbolMap, SymbolState, convert_bindings_map};
+use super::{Linkage, Scope, StorageDuration, SymbolState, SymbolTable, convert_bindings_map};
 
 /// Conflicts in the declaration/definition of a symbol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,7 +249,7 @@ impl SymbolResolver {
 pub fn resolve_symbols<'a>(
     mut ast: AST<'a, Parsed>,
     ctx: &Context<'_>,
-) -> Result<(AST<'a, IdentPhase>, SymbolMap)> {
+) -> Result<(AST<'a, IdentPhase>, SymbolTable)> {
     let mut ident_resolver = SymbolResolver::default();
 
     for decl in &mut ast.program {

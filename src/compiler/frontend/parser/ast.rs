@@ -6,13 +6,12 @@
 use std::fmt;
 
 use crate::compiler::Context;
-use crate::compiler::lexer::{OperatorKind, Reserved, Token, TokenType};
-use crate::compiler::parser::sema::symbols::SymbolMap;
-use crate::compiler::parser::types::{Type, c_int};
-use crate::error::Result;
-use crate::{fmt_err, fmt_token_err};
+use crate::compiler::frontend::SymbolTable;
+use crate::compiler::frontend::lexer::{OperatorKind, Reserved, Token, TokenType};
+use crate::compiler::frontend::types::{Type, c_int};
+use crate::{diag::Result, fmt_err, fmt_token_err};
 
-use super::sema;
+use super::semantics;
 
 /// Zero-sized marker indicating a parsed _AST_ (no semantic analysis).
 #[derive(Debug)]
@@ -718,18 +717,18 @@ pub enum Signedness {
 pub fn parse_ast<'a, I: Iterator<Item = Result<Token<'a>>>>(
     ctx: &Context<'_>,
     mut iter: std::iter::Peekable<I>,
-) -> Result<(AST<'a, Analyzed>, SymbolMap)> {
+) -> Result<(AST<'a, Analyzed>, SymbolTable)> {
     let ast = parse_program(ctx, &mut iter)?;
 
-    let (ast, sym_map) = sema::resolve_symbols(ast, ctx)?;
+    let (ast, sym_map) = semantics::resolve_symbols(ast, ctx)?;
 
-    let ast = sema::resolve_types(ast, ctx, &sym_map)?;
+    let ast = semantics::resolve_types(ast, ctx, &sym_map)?;
 
-    let ast = sema::resolve_labels(ast, ctx)?;
+    let ast = semantics::resolve_labels(ast, ctx)?;
 
-    let ast = sema::resolve_escapable_ctrl(ast, ctx)?;
+    let ast = semantics::resolve_escapable_ctrl(ast, ctx)?;
 
-    let ast = sema::resolve_switches(ast, ctx)?;
+    let ast = semantics::resolve_switches(ast, ctx)?;
 
     Ok((ast, sym_map))
 }

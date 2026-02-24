@@ -5,11 +5,10 @@
 //! each function scope.
 
 use crate::compiler::Context;
-use crate::compiler::parser::ast::{
+use crate::compiler::frontend::ast::{
     AST, Block, BlockItem, CtrlFlowPhase, Declaration, LabelPhase, Labeled, Statement,
 };
-use crate::error::Result;
-use crate::fmt_token_err;
+use crate::{diag::Result, fmt_token_err};
 
 /// Kind of escapable control-flow statement.
 #[derive(Debug, Clone, Copy)]

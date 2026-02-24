@@ -3,7 +3,7 @@
 //! Executes machine-independent optimization passes on an intermediate
 //! representation (_IR_) based on user-specified options.
 
-use crate::args::Opts;
+use crate::cli::Opts;
 use crate::compiler::ir::{Function, IR, Item};
 use crate::compiler::{self, opt::CFG};
 

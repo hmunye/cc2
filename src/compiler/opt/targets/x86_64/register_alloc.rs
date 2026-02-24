@@ -8,13 +8,13 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 
-use crate::args::Opts;
+use crate::cli::Opts;
 use crate::compiler;
-use crate::compiler::mir::{self, Instruction, Operand, Reg};
+use crate::compiler::frontend::SymbolTable;
 use crate::compiler::opt::analysis::run_analysis;
 use crate::compiler::opt::targets::x86_64::RegisterLiveness;
 use crate::compiler::opt::{Block, CFG, CFGInstruction};
-use crate::compiler::parser::sema::symbols::SymbolMap;
+use crate::compiler::targets::x86_64::{self, Instruction, Operand, Reg};
 
 /// Type of registers in interference graph.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -42,7 +42,7 @@ pub struct Color(usize);
 
 impl Color {
     /// The number of available hardware registers.
-    pub const K: usize = mir::Reg::ALLOCATABLE_REGS.len();
+    pub const K: usize = x86_64::Reg::ALLOCATABLE_REGS.len();
 
     /// Returns a new `Color`, or `None` if it does not fit within the range
     /// of available color values.
@@ -119,7 +119,7 @@ impl<'a> InterferenceGraph<'a> {
 
     /// Returns a new, initialized, interference graph from the provided
     /// instructions and symbol map.
-    fn from_instructions(instructions: &[Instruction<'a>], sym_map: &SymbolMap) -> Self {
+    fn from_instructions(instructions: &[Instruction<'a>], sym_map: &SymbolTable) -> Self {
         let mut base = Self::base();
 
         let mut seen = HashSet::new();
@@ -329,13 +329,13 @@ impl<'a> InterferenceGraph<'a> {
     /// allocatable hardware registers.
     fn base() -> Self {
         let mut graph = Self {
-            nodes: Vec::with_capacity(mir::Reg::ALLOCATABLE_REGS.len()),
+            nodes: Vec::with_capacity(x86_64::Reg::ALLOCATABLE_REGS.len()),
         };
 
-        let alloc_len = mir::Reg::ALLOCATABLE_REGS.len();
+        let alloc_len = x86_64::Reg::ALLOCATABLE_REGS.len();
 
         // Base graph includes all available hardware registers.
-        for reg in mir::Reg::ALLOCATABLE_REGS {
+        for reg in x86_64::Reg::ALLOCATABLE_REGS {
             graph.nodes.push(Some(RegisterNode {
                 id: graph.nodes.len(),
                 neighbors: Vec::with_capacity(alloc_len - 1),
@@ -360,7 +360,7 @@ impl<'a> InterferenceGraph<'a> {
 
     /// Adds edges to the graph based on the results of the liveness data-flow
     /// analysis.
-    fn apply_liveness(&mut self, instructions: &[Instruction<'a>], sym_map: &SymbolMap) {
+    fn apply_liveness(&mut self, instructions: &[Instruction<'a>], sym_map: &SymbolTable) {
         let mut cfg = CFG::new();
         cfg.sync(instructions);
 
@@ -516,7 +516,7 @@ impl<'a> RegisterMap<'a> {
 pub fn allocate_registers(
     instructions: &mut Vec<Instruction<'_>>,
     opts: &Opts,
-    sym_map: &SymbolMap,
+    sym_map: &SymbolTable,
 ) -> HashSet<Reg> {
     let mut ifg = InterferenceGraph::from_instructions(instructions, sym_map);
 

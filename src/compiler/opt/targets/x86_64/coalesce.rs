@@ -8,11 +8,11 @@
 
 use std::collections::HashMap;
 
-use crate::compiler::mir::{Instruction, Operand};
 use crate::compiler::opt::targets::x86_64::RegisterType;
 use crate::compiler::opt::targets::x86_64::register_alloc::{
     Color, InterferenceGraph, RegisterNode,
 };
+use crate::compiler::targets::x86_64::{Instruction, Operand};
 
 /// A disjoint set (union-find) data structure for managing a collection of
 /// disjoint sets of elements.

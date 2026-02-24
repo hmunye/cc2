@@ -1,14 +1,14 @@
-//! Code Emission
+//! Code Emission (_gas-x86-64-linux_)
 //!
 //! Compiler pass that emits _gas-x86-64-linux_ textual assembly from the
-//! an _MIR x86-64_ representation.
+//! an _x86-64_ machine intermediate representation (_MIR_).
 
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::{self, BufWriter, Write};
 
 use crate::compiler::Context;
-use crate::compiler::mir::{self, BinaryOperator, MIRX86, UnaryOperator};
+use crate::compiler::targets::x86_64::{self, BinaryOperator, MIRX86, UnaryOperator};
 
 /// Emits _gas-x86-64-linux_ assembly from a _x86-64_ machine intermediate
 /// representation (_MIR_) to the provided `writer`.
@@ -36,7 +36,7 @@ pub fn emit_gas_x86_64_linux(
 
     for item in &mir.program {
         match item {
-            mir::Item::Func(func) => {
+            x86_64::Item::Func(func) => {
                 let section_emit = if curr_section == ".text" {
                     ""
                 } else {
@@ -75,7 +75,7 @@ pub fn emit_gas_x86_64_linux(
 
                 // i += 1;
             }
-            mir::Item::Static {
+            x86_64::Item::Static {
                 init,
                 label,
                 is_global,
@@ -151,7 +151,7 @@ pub fn emit_gas_x86_64_linux(
 /// Emit assembly representation of the given _MIR x86-64_ function to the
 /// provided `writer`.
 fn emit_asm_function(
-    func: &mir::Function<'_>,
+    func: &x86_64::Function<'_>,
     locales: &HashSet<&str>,
     writer: &mut BufWriter<Box<dyn Write>>,
 ) -> io::Result<()> {
@@ -165,7 +165,7 @@ fn emit_asm_function(
     writeln!(writer, "\tpushq\t%rbp\n\tmovq\t%rsp, %rbp")?;
 
     for inst in &func.instructions {
-        if let mir::Instruction::Label(label) = inst {
+        if let x86_64::Instruction::Label(label) = inst {
             writeln!(writer, ".L{label}:")?;
             continue;
         }
@@ -178,20 +178,20 @@ fn emit_asm_function(
 
 /// Return a string assembly representation of the given _MIR x86-64_
 /// instruction.
-fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&str>) -> String {
+fn emit_asm_instruction(instruction: &x86_64::Instruction<'_>, locales: &HashSet<&str>) -> String {
     match instruction {
-        mir::Instruction::Mov { src, dst } => {
+        x86_64::Instruction::Mov { src, dst } => {
             format!(
                 "movl\t{}, {}",
                 emit_asm_operand(src, 4, false),
                 emit_asm_operand(dst, 4, false)
             )
         }
-        mir::Instruction::Unary { unop, dst } => match unop {
+        x86_64::Instruction::Unary { unop, dst } => match unop {
             UnaryOperator::Not => format!("notl\t{}", emit_asm_operand(dst, 4, false)),
             UnaryOperator::Neg => format!("negl\t{}", emit_asm_operand(dst, 4, false)),
         },
-        mir::Instruction::Binary { binop, rhs, dst } => {
+        x86_64::Instruction::Binary { binop, rhs, dst } => {
             let (inst, size, use_high_byte) = match binop {
                 BinaryOperator::Add => ("addl", 4, false),
                 BinaryOperator::Sub => ("subl", 4, false),
@@ -214,25 +214,25 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
                 emit_asm_operand(dst, 4, use_high_byte)
             )
         }
-        mir::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div, 4, false)),
-        mir::Instruction::Cdq => "cdq".into(),
-        mir::Instruction::Cmp { rhs, lhs } => format!(
+        x86_64::Instruction::Idiv(div) => format!("idivl\t{}", emit_asm_operand(div, 4, false)),
+        x86_64::Instruction::Cdq => "cdq".into(),
+        x86_64::Instruction::Cmp { rhs, lhs } => format!(
             "cmpl\t{}, {}",
             emit_asm_operand(rhs, 4, false),
             emit_asm_operand(lhs, 4, false)
         ),
         // `.L` is the local label prefix for Linux.
-        mir::Instruction::Jmp(label) => format!("jmp\t.L{label}"),
-        mir::Instruction::JmpC { code, target } => format!("j{code}\t.L{target}"),
-        mir::Instruction::SetC { code, dst } => {
+        x86_64::Instruction::Jmp(label) => format!("jmp\t.L{label}"),
+        x86_64::Instruction::JmpC { code, target } => format!("j{code}\t.L{target}"),
+        x86_64::Instruction::SetC { code, dst } => {
             format!("set{code}\t{}", emit_asm_operand(dst, 1, false))
         }
-        mir::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
-        mir::Instruction::StackDealloc(v) => format!("addq\t${v}, %rsp"),
-        mir::Instruction::Push(src) => format!("pushq\t{}", emit_asm_operand(src, 8, false)),
-        mir::Instruction::Pop(reg) => format!(
+        x86_64::Instruction::StackAlloc(v) => format!("subq\t${v}, %rsp"),
+        x86_64::Instruction::StackDealloc(v) => format!("addq\t${v}, %rsp"),
+        x86_64::Instruction::Push(src) => format!("pushq\t{}", emit_asm_operand(src, 8, false)),
+        x86_64::Instruction::Pop(reg) => format!(
             "popq\t{}",
-            emit_asm_operand(&mir::Operand::Register(*reg), 8, false)
+            emit_asm_operand(&x86_64::Operand::Register(*reg), 8, false)
         ),
         // On _macOS_, function names are prefixed with underscore
         // (`call _puts`).
@@ -243,7 +243,7 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
         //
         // `call` instruction pushes the address of the following instruction
         // onto the stack, then loads the label’s address into `%rip`.
-        mir::Instruction::Call(label) => {
+        x86_64::Instruction::Call(label) => {
             format!(
                 "call\t{label}{}",
                 if locales.contains(label) { "" } else { "@PLT" }
@@ -259,18 +259,18 @@ fn emit_asm_instruction(instruction: &mir::Instruction<'_>, locales: &HashSet<&s
         //
         // 3. Return control to the caller, moving the return address pushed by
         // the caller's `call` instruction into `%rip`.
-        mir::Instruction::Ret => "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into(),
-        mir::Instruction::Label(_) => panic!("label emission should not be handled here"),
+        x86_64::Instruction::Ret => "movq\t%rbp, %rsp\n\tpopq\t%rbp\n\tret".into(),
+        x86_64::Instruction::Label(_) => panic!("label emission should not be handled here"),
     }
 }
 
 /// Return a string assembly representation of the given _MIR_ operand. `size`
 /// formats register operands depending on the required size in bytes.
-fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> String {
+fn emit_asm_operand(op: &x86_64::Operand<'_>, size: u8, use_high_byte: bool) -> String {
     match op {
-        mir::Operand::Imm32(i) => format!("${i}"),
-        mir::Operand::Register(r) => match r {
-            mir::Reg::AX => match size {
+        x86_64::Operand::Imm32(i) => format!("${i}"),
+        x86_64::Operand::Register(r) => match r {
+            x86_64::Reg::AX => match size {
                 1 => {
                     if use_high_byte {
                         "%ah"
@@ -284,7 +284,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for AX: '{size}'"),
             }
             .to_string(),
-            mir::Reg::CX => match size {
+            x86_64::Reg::CX => match size {
                 1 => {
                     if use_high_byte {
                         "%ch"
@@ -298,7 +298,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for CX: '{size}'"),
             }
             .to_string(),
-            mir::Reg::DX => match size {
+            x86_64::Reg::DX => match size {
                 1 => {
                     if use_high_byte {
                         "%dh"
@@ -312,7 +312,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for DX: '{size}'"),
             }
             .to_string(),
-            mir::Reg::DI => match size {
+            x86_64::Reg::DI => match size {
                 1 => "%dil",
                 2 => "%di",
                 4 => "%edi",
@@ -320,7 +320,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for DI: '{size}'"),
             }
             .to_string(),
-            mir::Reg::SI => match size {
+            x86_64::Reg::SI => match size {
                 1 => "%sil",
                 2 => "%si",
                 4 => "%esi",
@@ -328,7 +328,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for SI: '{size}'"),
             }
             .to_string(),
-            mir::Reg::R8 => match size {
+            x86_64::Reg::R8 => match size {
                 1 => "%r8b",
                 2 => "%r8w",
                 4 => "%r8d",
@@ -336,7 +336,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for R8: '{size}'"),
             }
             .to_string(),
-            mir::Reg::R9 => match size {
+            x86_64::Reg::R9 => match size {
                 1 => "%r9b",
                 2 => "%r9w",
                 4 => "%r9d",
@@ -344,7 +344,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for R9: '{size}'"),
             }
             .to_string(),
-            mir::Reg::R10 => match size {
+            x86_64::Reg::R10 => match size {
                 1 => "%r10b",
                 2 => "%r10w",
                 4 => "%r10d",
@@ -352,7 +352,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for R10: '{size}'"),
             }
             .to_string(),
-            mir::Reg::R11 => match size {
+            x86_64::Reg::R11 => match size {
                 1 => "%r11b",
                 2 => "%r11w",
                 4 => "%r11d",
@@ -360,7 +360,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for R11: '{size}'"),
             }
             .to_string(),
-            mir::Reg::BX => match size {
+            x86_64::Reg::BX => match size {
                 1 => {
                     if use_high_byte {
                         "%bh"
@@ -374,7 +374,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for BX: '{size}'"),
             }
             .to_string(),
-            mir::Reg::R12 => match size {
+            x86_64::Reg::R12 => match size {
                 1 => "%r12b",
                 2 => "%r12w",
                 4 => "%r12d",
@@ -382,7 +382,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for R12: '{size}'"),
             }
             .to_string(),
-            mir::Reg::R13 => match size {
+            x86_64::Reg::R13 => match size {
                 1 => "%r13b",
                 2 => "%r13w",
                 4 => "%r13d",
@@ -390,7 +390,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for R13: '{size}'"),
             }
             .to_string(),
-            mir::Reg::R14 => match size {
+            x86_64::Reg::R14 => match size {
                 1 => "%r14b",
                 2 => "%r14w",
                 4 => "%r14d",
@@ -398,7 +398,7 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
                 _ => panic!("invalid register size for R14: '{size}'"),
             }
             .to_string(),
-            mir::Reg::R15 => match size {
+            x86_64::Reg::R15 => match size {
                 1 => "%r15b",
                 2 => "%r15w",
                 4 => "%r15d",
@@ -407,9 +407,11 @@ fn emit_asm_operand(op: &mir::Operand<'_>, size: u8, use_high_byte: bool) -> Str
             }
             .to_string(),
         },
-        mir::Operand::Stack(i) => format!("{i}(%rbp)"),
+        x86_64::Operand::Stack(i) => format!("{i}(%rbp)"),
         // On _macOS_, symbol is prefixed with underscore (e.g., `_foo(%rip)`).
-        mir::Operand::Data(symbol) => format!("{symbol}(%rip)"),
-        mir::Operand::Symbol { .. } => panic!("pseudoregisters should not be emitted to assembly"),
+        x86_64::Operand::Data(symbol) => format!("{symbol}(%rip)"),
+        x86_64::Operand::Symbol { .. } => {
+            panic!("pseudoregisters should not be emitted to assembly")
+        }
     }
 }

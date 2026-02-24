@@ -15,17 +15,15 @@
 #![allow(clippy::struct_excessive_bools)]
 #![allow(clippy::iter_with_drain)]
 
-pub mod args;
+pub mod cli;
 pub mod compiler;
-pub mod error;
-
-use std::process;
+pub mod diag;
 
 fn main() {
-    let args = args::Args::parse();
+    let args = cli::Args::parse();
 
     if let Err(err) = compiler::driver::run_compiler(&args) {
         eprintln!("{err}");
-        process::exit(1);
+        std::process::exit(1);
     }
 }
