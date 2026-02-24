@@ -5,27 +5,20 @@ use std::process;
 
 use crate::report_err;
 
-/// Optimization flags.
+/// Compiler optimization flags.
 #[derive(Debug, Default)]
 pub struct Opts {
-    /// Constant folding optimization (can be enabled explicitly, overrides
-    /// `opt_level` preset).
+    /// Constant folding optimization.
     pub fold: bool,
-    /// Copy propagation optimization (can be enabled explicitly, overrides
-    /// `opt_level` preset).
+    /// Copy propagation optimization.
     pub copy_prop: bool,
-    /// Unreachable code elimination optimization (can be enabled explicitly,
-    /// overrides `opt_level` preset).
+    /// Unreachable code elimination optimization.
     pub uce: bool,
-    /// Dead-store elimination optimization (can be enabled explicitly,
-    /// overrides `opt_level` preset).
+    /// Dead-store elimination optimization.
     pub dse: bool,
-
-    /// Register allocation optimization (can be enabled explicitly, overrides
-    /// `opt_level` preset).
+    /// Register allocation optimization.
     pub reg_alloc: bool,
-    /// Register coalescing optimization (can be enabled explicitly, overrides
-    /// `opt_level` preset).
+    /// Register coalescing optimization.
     pub coalesce: bool,
 }
 
@@ -38,7 +31,14 @@ impl Opts {
         self.fold || self.copy_prop || self.uce || self.dse
     }
 
-    /// Enables all optimizations.
+    /// Returns `true` if any machine-dependent optimization passes are enabled.
+    #[inline]
+    #[must_use]
+    pub const fn any_target_passes_enabled(&self) -> bool {
+        self.reg_alloc || self.coalesce
+    }
+
+    /// Enables all optimizations flags.
     #[inline]
     const fn enable(&mut self) {
         self.fold = true;
@@ -49,7 +49,7 @@ impl Opts {
         self.coalesce = true;
     }
 
-    /// Disables all optimizations.
+    /// Disables all optimizations flags.
     #[inline]
     const fn disable(&mut self) {
         self.fold = false;
@@ -66,17 +66,29 @@ impl Opts {
 pub struct Args {
     /// Name of the program.
     pub program: String,
-    /// Compilation phase to terminate at (optional).
+    /// Specified compilation phase to terminate at.
     pub stage: String,
-    /// Indicates whether the input file should be preprocessed before compiling
-    /// (optional).
+    /// If the input file should be preprocessed before compiling.
     pub preprocess: bool,
     /// Optimizations available to the compiler.
     pub opts: Opts,
     /// Input file path (required).
     pub in_path: &'static Path,
-    /// Output file path (optional).
+    /// Output file path.
     pub out_path: PathBuf,
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            program: String::default(),
+            stage: String::default(),
+            preprocess: Default::default(),
+            opts: Opts::default(),
+            in_path: Path::new(""),
+            out_path: PathBuf::default(),
+        }
+    }
 }
 
 impl Args {
@@ -90,39 +102,36 @@ impl Args {
     /// Panics if a peeked argument could not be consumed.
     #[must_use]
     pub fn parse() -> Self {
-        let mut args = std::env::args().peekable();
-        let program = args.next().unwrap_or_else(|| "cc2".into());
+        let mut args = Args::default();
 
-        let mut stage = String::new();
-        let mut preprocess = false;
-        let mut opts = Opts::default();
-        let mut in_path = String::new();
-        let mut out_path = PathBuf::new();
+        let mut cli_args = std::env::args().peekable();
 
-        while let Some(arg) = args.peek() {
+        args.program = cli_args.next().unwrap_or_else(|| "cc2".into());
+
+        while let Some(arg) = cli_args.peek() {
             if arg.starts_with('-') {
-                let flag_name = args
+                let flag_name = cli_args
                     .next()
                     .expect("already peeked the next argument, should be present");
 
-                if let Some(level_str) = flag_name.strip_prefix("-O") {
-                    // '-O' implies '-O1': enable all optimizations.
-                    if level_str.is_empty() {
-                        opts.enable();
+                if let Some(opt_level) = flag_name.strip_prefix("-O") {
+                    // '-O' implies '-O1'.
+                    if opt_level.is_empty() {
+                        args.opts.enable();
                     } else {
-                        match level_str.parse::<u8>() {
+                        match opt_level.parse::<u8>() {
                             Ok(0) => {
-                                opts.disable();
+                                args.opts.disable();
                             }
                             Ok(1) => {
-                                opts.enable();
+                                args.opts.enable();
                             }
                             _ => {
                                 report_err!(
-                                    &program,
+                                    &args.program,
                                     "invalid optimization level: expected '-O0' or '-O1'"
                                 );
-                                print_usage(&program);
+                                print_usage(&args.program);
                             }
                         }
                     }
@@ -135,83 +144,90 @@ impl Args {
                     .find(|flag| !flag_name.is_empty() && flag.names.contains(&flag_name.as_str()))
                 {
                     match flag.names {
-                        ["-s", "--stage"] => match args.peek().map(|s| &**s) {
+                        ["-s", "--stage"] => match cli_args.peek().map(|s| &**s) {
                             Some("lex" | "parse" | "ir" | "mir" | "asm") => {
-                                stage = args
+                                args.stage = cli_args
                                     .next()
                                     .expect("already peeked the next argument, should be present");
                             }
                             Some(s) => {
-                                report_err!(&program, "invalid stage: '{s}'");
-                                print_usage(&program);
+                                report_err!(&args.program, "invalid stage: '{s}'");
+                                print_usage(&args.program);
                             }
                             None => {
-                                report_err!(&program, "missing stage name after '-s'|'--stage'");
-                                print_usage(&program);
+                                report_err!(
+                                    &args.program,
+                                    "missing stage name after '-s'|'--stage'"
+                                );
+                                print_usage(&args.program);
                             }
                         },
-                        ["-p", "--preprocess"] => preprocess = true,
-                        ["", "--fold"] => opts.fold = true,
-                        ["", "--copy-prop"] => opts.copy_prop = true,
-                        ["", "--uce"] => opts.uce = true,
-                        ["", "--dse"] => opts.dse = true,
-                        ["", "--reg-alloc"] => opts.reg_alloc = true,
-                        ["", "--coalesce"] => opts.coalesce = true,
+                        ["-p", "--preprocess"] => args.preprocess = true,
+                        ["", "--fold"] => args.opts.fold = true,
+                        ["", "--copy-prop"] => args.opts.copy_prop = true,
+                        ["", "--uce"] => args.opts.uce = true,
+                        ["", "--dse"] => args.opts.dse = true,
+                        ["", "--reg-alloc"] => args.opts.reg_alloc = true,
+                        ["", "--coalesce"] => args.opts.coalesce = true,
                         ["-o", "--output"] => {
-                            if let Some(path) = args.next() {
-                                out_path = PathBuf::from(&path);
+                            if let Some(path) = cli_args.next() {
+                                args.out_path = PathBuf::from(path);
                             } else {
-                                report_err!(&program, "missing file path after '-o'|'--output'");
-                                print_usage(&program);
+                                report_err!(
+                                    &args.program,
+                                    "missing file path after '-o'|'--output'"
+                                );
+                                print_usage(&args.program);
                             }
                         }
                         _ => {
                             if let Some(run) = flag.run {
-                                run(&program);
+                                run(&args.program);
                             }
                         }
                     }
                 } else {
-                    report_err!(&program, "invalid flag: '{flag_name}'");
-                    print_usage(&program);
+                    report_err!(&args.program, "invalid flag: '{flag_name}'");
+                    print_usage(&args.program);
                 }
-            } else if in_path.is_empty() {
-                in_path = args
-                    .next()
-                    .expect("already peeked the next argument, should be present");
+            } else if args.in_path.to_str() == Some("") {
+                // NOTE: String argument is leaked since it is used throughout
+                // the compiler for diagnostics.
+                args.in_path = Path::new(
+                    cli_args
+                        .next()
+                        .expect("already peeked the next argument, should be present")
+                        .leak(),
+                );
             } else {
-                report_err!(&program, "invalid argument: '{arg}'");
-                print_usage(&program);
+                report_err!(&args.program, "invalid argument: '{arg}'");
+                print_usage(&args.program);
             }
         }
 
-        let path = Path::new(in_path.leak());
-        if !path.exists() {
-            report_err!(&program, "'{}': no such file or directory", path.display());
-            process::exit(1);
-        }
-
-        if path == out_path.as_path() {
+        if !args.in_path.exists() {
             report_err!(
-                &program,
-                "input file '{}' is the same as output file",
-                path.display()
+                &args.program,
+                "'{}': no such file or directory",
+                args.in_path.display()
             );
             process::exit(1);
         }
 
-        if out_path.capacity() == 0 {
-            out_path = path.with_extension("s");
+        if args.in_path == args.out_path.as_path() {
+            report_err!(
+                &args.program,
+                "input file '{}' is the same as output file",
+                args.in_path.display()
+            );
+            process::exit(1);
         }
 
-        Self {
-            program,
-            stage,
-            preprocess,
-            opts,
-            in_path: path,
-            out_path,
+        if args.out_path.capacity() == 0 {
+            args.out_path = args.in_path.with_extension("s");
         }
+
+        args
     }
 }
 

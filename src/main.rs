@@ -19,11 +19,13 @@ pub mod args;
 pub mod compiler;
 pub mod error;
 
+use std::process;
+
 fn main() {
     let args = args::Args::parse();
 
     if let Err(err) = compiler::driver::run_compiler(&args) {
         eprintln!("{err}");
-        std::process::exit(1);
+        process::exit(1);
     }
 }

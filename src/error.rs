@@ -1,4 +1,4 @@
-//! Macros and result type for formatting and reporting compiler errors.
+//! Macros and types for formatting and reporting compiler errors.
 
 pub type Result<T> = std::result::Result<T, String>;
 
