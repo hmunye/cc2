@@ -20,9 +20,13 @@ pub struct Opts {
     /// Dead-store elimination optimization (can be enabled explicitly,
     /// overrides `opt_level` preset).
     pub dse: bool,
+
     /// Register allocation optimization (can be enabled explicitly, overrides
     /// `opt_level` preset).
     pub reg_alloc: bool,
+    /// Register coalescing optimization (can be enabled explicitly, overrides
+    /// `opt_level` preset).
+    pub coalesce: bool,
 }
 
 impl Opts {
@@ -42,6 +46,7 @@ impl Opts {
         self.uce = true;
         self.dse = true;
         self.reg_alloc = true;
+        self.coalesce = true;
     }
 
     /// Disables all optimizations.
@@ -52,6 +57,7 @@ impl Opts {
         self.uce = false;
         self.dse = false;
         self.reg_alloc = false;
+        self.coalesce = false;
     }
 }
 
@@ -150,6 +156,7 @@ impl Args {
                         ["", "--uce"] => opts.uce = true,
                         ["", "--dse"] => opts.dse = true,
                         ["", "--reg-alloc"] => opts.reg_alloc = true,
+                        ["", "--coalesce"] => opts.coalesce = true,
                         ["-o", "--output"] => {
                             if let Some(path) = args.next() {
                                 out_path = PathBuf::from(&path);
@@ -258,6 +265,11 @@ const PROGRAM_FLAGS: &[Flag] = &[
     Flag {
         names: ["", "--reg-alloc"],
         description: "          enable register allocation optimization.",
+        run: None,
+    },
+    Flag {
+        names: ["", "--coalesce"],
+        description: "           enable register coalescing optimization.",
         run: None,
     },
     Flag {

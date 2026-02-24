@@ -30,7 +30,7 @@ fn optimize_mir_func(instructions: &mut Vec<Instruction<'_>>, opts: &Opts, sym_m
     }
 
     let callee_alloc = if opts.reg_alloc {
-        compiler::opt::targets::x86_64::allocate_registers(instructions, sym_map)
+        compiler::opt::targets::x86_64::allocate_registers(instructions, opts, sym_map)
             .into_iter()
             .collect()
     } else {

@@ -8,6 +8,8 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 
+use crate::args::Opts;
+use crate::compiler;
 use crate::compiler::mir::{self, Instruction, Operand, Reg};
 use crate::compiler::opt::analysis::run_analysis;
 use crate::compiler::opt::targets::x86_64::RegisterLiveness;
@@ -36,11 +38,11 @@ impl<'a> TryFrom<Operand<'a>> for RegisterType<'a> {
 /// Register colors (for physical register assignments).
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 #[repr(transparent)]
-struct Color(usize);
+pub struct Color(usize);
 
 impl Color {
     /// The number of available hardware registers.
-    const K: usize = mir::Reg::ALLOCATABLE_REGS.len();
+    pub const K: usize = mir::Reg::ALLOCATABLE_REGS.len();
 
     /// Returns a new `Color`, or `None` if it does not fit within the range
     /// of available color values.
@@ -65,10 +67,10 @@ impl Color {
 
 /// Node of an interference graph (either pseudo or hardware register).
 #[derive(Debug)]
-struct RegisterNode<'a> {
-    id: usize,
-    neighbors: Vec<usize>,
-    ty: RegisterType<'a>,
+pub struct RegisterNode<'a> {
+    pub id: usize,
+    pub neighbors: Vec<usize>,
+    pub ty: RegisterType<'a>,
     /// Cost of spilling the register to memory.
     spill_cost: f64,
     color: Option<Color>,
@@ -77,11 +79,44 @@ struct RegisterNode<'a> {
 
 /// Interference graph used in register allocation.
 #[derive(Debug)]
-struct InterferenceGraph<'a> {
-    nodes: Vec<RegisterNode<'a>>,
+pub struct InterferenceGraph<'a> {
+    pub nodes: Vec<Option<RegisterNode<'a>>>,
 }
 
 impl<'a> InterferenceGraph<'a> {
+    /// Returns `true` if the node at `to` interferes with the node at `from`,
+    /// or vice-versa.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
+    #[inline]
+    #[must_use]
+    pub fn are_neighbors(&self, to: usize, from: usize) -> bool {
+        if let (Some(src_node), Some(dst_node)) =
+            (self.nodes[from].as_ref(), self.nodes[to].as_ref())
+        {
+            src_node.neighbors.contains(&to) || dst_node.neighbors.contains(&from)
+        } else {
+            false
+        }
+    }
+
+    /// Removes the node at `remove` from the graph, adding all it's neighbors
+    /// to the node at `keep`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
+    pub fn remove_node(&mut self, remove: usize, keep: usize) {
+        if let Some(node) = self.nodes[remove].take() {
+            for id in node.neighbors {
+                self.add_interference(keep, id);
+                self.remove_interference(remove, id);
+            }
+        }
+    }
+
     /// Returns a new, initialized, interference graph from the provided
     /// instructions and symbol map.
     fn from_instructions(instructions: &[Instruction<'a>], sym_map: &SymbolMap) -> Self {
@@ -100,27 +135,27 @@ impl<'a> InterferenceGraph<'a> {
                     if let Ok(reg @ RegisterType::Virtual(ident)) = (*src).try_into()
                         && seen.insert(ident)
                     {
-                        base.nodes.push(RegisterNode {
+                        base.nodes.push(Some(RegisterNode {
                             id,
                             neighbors: vec![],
                             ty: reg,
                             spill_cost: 0.0,
                             color: None,
                             pruned: false,
-                        });
+                        }));
                     }
 
                     if let Ok(reg @ RegisterType::Virtual(ident)) = (*dst).try_into()
                         && seen.insert(ident)
                     {
-                        base.nodes.push(RegisterNode {
+                        base.nodes.push(Some(RegisterNode {
                             id,
                             neighbors: vec![],
                             ty: reg,
                             spill_cost: 0.0,
                             color: None,
                             pruned: false,
-                        });
+                        }));
                     }
                 }
                 Instruction::Unary { dst: op, .. }
@@ -130,14 +165,14 @@ impl<'a> InterferenceGraph<'a> {
                     if let Ok(reg @ RegisterType::Virtual(ident)) = (*op).try_into()
                         && seen.insert(ident)
                     {
-                        base.nodes.push(RegisterNode {
+                        base.nodes.push(Some(RegisterNode {
                             id,
                             neighbors: vec![],
                             ty: reg,
                             spill_cost: 0.0,
                             color: None,
                             pruned: false,
-                        });
+                        }));
                     }
                 }
                 _ => {}
@@ -157,7 +192,10 @@ impl<'a> InterferenceGraph<'a> {
         let mut update_spill = |op: Operand<'_>| {
             // NOTE: O(n) time complexity.
             if let Ok(reg @ RegisterType::Virtual(_)) = op.try_into()
-                && let Some(node) = self.nodes.iter_mut().find(|n| n.ty == reg)
+                && let Some(Some(node)) = self
+                    .nodes
+                    .iter_mut()
+                    .find(|node| node.as_ref().is_some_and(|n| n.ty == reg))
             {
                 node.spill_cost += 1.0;
             }
@@ -185,33 +223,16 @@ impl<'a> InterferenceGraph<'a> {
     /// Performs graph coloring to assign a physical register (represented by a
     /// color) to each pseudo-register.
     fn assign_registers(&mut self) {
-        if let Some(start) = self.nodes.iter().position(|node| !node.pruned) {
+        if let Some(start) = self
+            .nodes
+            .iter()
+            .position(|node| node.as_ref().is_some_and(|n| !n.pruned))
+        {
             // Index of the next node to prune.
             let mut candidate_idx = None;
 
             for i in start..self.nodes.len() {
-                let node = &self.nodes[i];
-                if node.pruned {
-                    continue;
-                }
-
-                let degree = node
-                    .neighbors
-                    .iter()
-                    .filter(|&&id| !self.nodes[id].pruned)
-                    .count();
-
-                if degree < Color::K {
-                    candidate_idx = Some(i);
-                    break;
-                }
-            }
-
-            if candidate_idx.is_none() {
-                let mut best_metric = f64::INFINITY;
-
-                for i in start..self.nodes.len() {
-                    let node = &self.nodes[i];
+                if let Some(node) = &self.nodes[i] {
                     if node.pruned {
                         continue;
                     }
@@ -219,16 +240,39 @@ impl<'a> InterferenceGraph<'a> {
                     let degree = node
                         .neighbors
                         .iter()
-                        .filter(|&&id| !self.nodes[id].pruned)
+                        .filter(|&&id| !self.nodes[id].as_ref().is_some_and(|n| n.pruned))
                         .count();
 
-                    if degree != 0 {
-                        #[allow(clippy::cast_precision_loss)]
-                        let spill_metric = node.spill_cost / degree as f64;
+                    if degree < Color::K {
+                        candidate_idx = Some(i);
+                        break;
+                    }
+                }
+            }
 
-                        if spill_metric < best_metric {
-                            best_metric = spill_metric;
-                            candidate_idx = Some(i);
+            if candidate_idx.is_none() {
+                let mut best_metric = f64::INFINITY;
+
+                for i in start..self.nodes.len() {
+                    if let Some(node) = &self.nodes[i] {
+                        if node.pruned {
+                            continue;
+                        }
+
+                        let degree = node
+                            .neighbors
+                            .iter()
+                            .filter(|&&id| !self.nodes[id].as_ref().is_some_and(|n| n.pruned))
+                            .count();
+
+                        if degree != 0 {
+                            #[allow(clippy::cast_precision_loss)]
+                            let spill_metric = node.spill_cost / degree as f64;
+
+                            if spill_metric < best_metric {
+                                best_metric = spill_metric;
+                                candidate_idx = Some(i);
+                            }
                         }
                     }
                 }
@@ -236,7 +280,9 @@ impl<'a> InterferenceGraph<'a> {
 
             let candidate_idx = candidate_idx.expect("candidate should have been found");
 
-            self.nodes[candidate_idx].pruned = true;
+            if let Some(candidate) = self.nodes[candidate_idx].as_mut() {
+                candidate.pruned = true;
+            }
 
             // Color the rest of the graph.
             self.assign_registers();
@@ -244,31 +290,35 @@ impl<'a> InterferenceGraph<'a> {
             // Sets the first `K` bits as available colors.
             let mut available: u32 = (1 << Color::K) - 1;
 
-            for &neighbor in &self.nodes[candidate_idx].neighbors {
-                if let Some(color) = &self.nodes[neighbor].color {
-                    // Clear the bit at `color.value()`: color is no longer
-                    // available.
-                    available &= !(1 << (color.value() - 1));
+            if let Some(neighbors) = self.nodes[candidate_idx].as_ref().map(|n| &n.neighbors) {
+                for &id in neighbors {
+                    if let Some(color) =
+                        self.nodes[id].as_ref().and_then(|node| node.color.as_ref())
+                    {
+                        // Clear the bit at `color.value()`: color is no longer
+                        // available.
+                        available &= !(1 << (color.value() - 1));
+                    }
                 }
             }
 
-            let candidate_node = &mut self.nodes[candidate_idx];
-
-            if available != 0 {
-                if let RegisterType::Hardware(reg) = candidate_node.ty
+            if let Some(candidate) = self.nodes[candidate_idx].as_mut()
+                && available != 0
+            {
+                if let RegisterType::Hardware(reg) = candidate.ty
                     && reg.is_callee_saved()
                 {
                     // Callee-saved hardware registers: pick the largest
                     // available color.
                     let leading = available.leading_zeros();
-                    candidate_node.color = Some(Color::new((u32::BITS - leading) as usize));
+                    candidate.color = Some(Color::new((u32::BITS - leading) as usize));
                 } else {
                     // Other: pick the smallest available color.
                     let trailing = available.trailing_zeros() as usize;
-                    candidate_node.color = Some(Color::new(trailing + 1));
+                    candidate.color = Some(Color::new(trailing + 1));
                 }
 
-                candidate_node.pruned = false;
+                candidate.pruned = false;
             }
         }
 
@@ -286,7 +336,7 @@ impl<'a> InterferenceGraph<'a> {
 
         // Base graph includes all available hardware registers.
         for reg in mir::Reg::ALLOCATABLE_REGS {
-            graph.nodes.push(RegisterNode {
+            graph.nodes.push(Some(RegisterNode {
                 id: graph.nodes.len(),
                 neighbors: Vec::with_capacity(alloc_len - 1),
                 ty: RegisterType::Hardware(reg),
@@ -294,7 +344,7 @@ impl<'a> InterferenceGraph<'a> {
                 spill_cost: f64::INFINITY,
                 color: None,
                 pruned: false,
-            });
+            }));
         }
 
         // Add interference edges (all hardware registers interfere with each
@@ -356,9 +406,13 @@ impl<'a> InterferenceGraph<'a> {
                             {
                                 // NOTE: O(n) time complexity.
                                 if lr != u
-                                    && let (Some(lr_node), Some(u_node)) = (
-                                        self.nodes.iter().find(|node| node.ty == lr),
-                                        self.nodes.iter().find(|node| node.ty == u),
+                                    && let (Some(Some(lr_node)), Some(Some(u_node))) = (
+                                        self.nodes
+                                            .iter()
+                                            .find(|node| node.as_ref().is_some_and(|n| n.ty == lr)),
+                                        self.nodes
+                                            .iter()
+                                            .find(|node| node.as_ref().is_some_and(|n| n.ty == u)),
                                     )
                                 {
                                     self.add_interference(lr_node.id, u_node.id);
@@ -374,16 +428,38 @@ impl<'a> InterferenceGraph<'a> {
     }
 
     /// Adds a undirected edge between two nodes in the interference graph.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
     #[inline]
     fn add_interference(&mut self, to: usize, from: usize) {
-        let node = &mut self.nodes[from];
-        if !node.neighbors.contains(&to) {
-            node.neighbors.push(to);
+        if let Some(node) = &mut self.nodes[to]
+            && !node.neighbors.contains(&from)
+        {
+            node.neighbors.push(from);
         }
 
-        let node = &mut self.nodes[to];
-        if !node.neighbors.contains(&from) {
-            node.neighbors.push(from);
+        if let Some(node) = &mut self.nodes[from]
+            && !node.neighbors.contains(&to)
+        {
+            node.neighbors.push(to);
+        }
+    }
+
+    /// Removes an undirected edge between two nodes in the interference graph.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
+    #[inline]
+    fn remove_interference(&mut self, to: usize, from: usize) {
+        if let Some(node) = &mut self.nodes[to] {
+            node.neighbors.retain(|&id| id != from);
+        }
+
+        if let Some(node) = &mut self.nodes[from] {
+            node.neighbors.retain(|&id| id != to);
         }
     }
 }
@@ -404,7 +480,9 @@ impl<'a> RegisterMap<'a> {
         let mut color_map: HashMap<Option<Color>, Reg> = HashMap::default();
 
         for node in &ifg.nodes {
-            if let RegisterType::Hardware(reg) = node.ty {
+            if let Some(node) = node
+                && let RegisterType::Hardware(reg) = node.ty
+            {
                 color_map.insert(node.color, reg);
             }
         }
@@ -413,7 +491,8 @@ impl<'a> RegisterMap<'a> {
         let mut callee_saved = HashSet::default();
 
         for node in &ifg.nodes {
-            if let RegisterType::Virtual(ident) = node.ty
+            if let Some(node) = node
+                && let RegisterType::Virtual(ident) = node.ty
                 && let Some(reg) = color_map.get(&node.color)
             {
                 reg_map.insert(ident, *reg);
@@ -436,9 +515,20 @@ impl<'a> RegisterMap<'a> {
 /// registers used in allocation.
 pub fn allocate_registers(
     instructions: &mut Vec<Instruction<'_>>,
+    opts: &Opts,
     sym_map: &SymbolMap,
 ) -> HashSet<Reg> {
     let mut ifg = InterferenceGraph::from_instructions(instructions, sym_map);
+
+    if opts.coalesce {
+        loop {
+            if !compiler::opt::targets::x86_64::coalesce_registers(&mut ifg, instructions) {
+                break;
+            }
+
+            ifg = InterferenceGraph::from_instructions(instructions, sym_map);
+        }
+    }
 
     ifg.compute_spill_costs(instructions);
     ifg.assign_registers();

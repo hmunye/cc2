@@ -62,6 +62,7 @@ Tiny C Compiler (subset of _C17_).
 - [x] Copy Propagation
 - [x] Dead Store Elimination
 - [x] Register Allocation
+- [X] Register Coalescing
 
 ## Testing
 

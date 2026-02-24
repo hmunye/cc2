@@ -7,6 +7,7 @@
 #![warn(rust_2018_idioms)]
 #![warn(missing_debug_implementations)]
 #![allow(clippy::use_self)]
+#![allow(clippy::if_not_else)]
 #![allow(clippy::redundant_else)]
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::cast_sign_loss)]
