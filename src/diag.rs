@@ -1,10 +1,10 @@
 //! Compiler Diagnostics
 //!
-//! Provides macros and types for reporting/formatting compiler diagnostics.
+//! Macros and types for reporting/formatting compiler diagnostics.
 
 pub type Result<T> = std::result::Result<T, String>;
 
-/// Report a generic error message, printing to `stderr`.
+/// Prints an error diagnostic to `stderr`.
 #[macro_export]
 macro_rules! report_err {
     ($program:expr, $($arg:tt)+) => {{
@@ -12,8 +12,8 @@ macro_rules! report_err {
     }};
 }
 
-/// Report an error related to a token (with token position and line content),
-/// printing to `stderr`.
+/// Prints an error diagnostic related to a token (with token position and line
+/// content) to `stderr`.
 #[macro_export]
 macro_rules! report_token_err {
     ($file:expr, $line:expr, $col:expr, $token:expr, $marker_len:expr, $line_content:expr, $($arg:tt)+) => {{
@@ -32,7 +32,7 @@ macro_rules! report_token_err {
     }};
 }
 
-/// Format a generic error message.
+/// Formats an error diagnostic.
 #[macro_export]
 macro_rules! fmt_err {
     ($program:expr, $($arg:tt)+) => {{
@@ -40,7 +40,8 @@ macro_rules! fmt_err {
     }};
 }
 
-/// Format an error related to a token (with token position and line content).
+/// Formats an error diagnostic related to a token (with token position and line
+/// content).
 #[macro_export]
 macro_rules! fmt_token_err {
     ($file:expr, $line:expr, $col:expr, $token:expr, $marker_len:expr, $line_content:expr, $($arg:tt)+) => {{

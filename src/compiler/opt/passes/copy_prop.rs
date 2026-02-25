@@ -87,7 +87,7 @@ where
 
                         incoming.insert((dst.clone(), src.clone()));
                     }
-                    Instruction::Call { dst, .. } => {
+                    Instruction::FnCall { dst, .. } => {
                         // Kill any copies to and from `dst`.
                         //
                         // Interprocedural analysis is not performed, so also
@@ -233,7 +233,7 @@ where
                             rewrite_operand(lhs, reaching_copies);
                             rewrite_operand(rhs, reaching_copies);
                         }
-                        Instruction::Call { args, .. } => {
+                        Instruction::FnCall { args, .. } => {
                             for arg in args {
                                 rewrite_operand(arg, reaching_copies);
                             }

@@ -521,7 +521,7 @@ pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>) -> MIRX86<'a> {
                     is_global: *is_global,
                 });
             }
-            ir::Item::Func(func) => {
+            ir::Item::Fn(func) => {
                 locales.insert(func.ident);
                 mir_items.push(Item::Func(generate_mir_function(func)));
             }
@@ -711,7 +711,7 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
                     },
                 ]);
             }
-            ir::Instruction::Call { ident, args, dst } => {
+            ir::Instruction::FnCall { ident, args, dst } => {
                 // According to the System-V ABI calling convention, the first
                 // six function arguments are passed in the following registers:
                 //

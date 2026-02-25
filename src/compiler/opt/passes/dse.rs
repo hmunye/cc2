@@ -108,7 +108,7 @@ where
                             outgoing.insert(ident.to_string());
                         }
                     }
-                    Instruction::Call { args, dst, .. } => {
+                    Instruction::FnCall { args, dst, .. } => {
                         if let Some(ident) = dst.as_var() {
                             // Remove `dst` from the live set because this
                             // instruction defines it, killing the previously
@@ -278,7 +278,7 @@ where
                     | Instruction::Return(val) => {
                         insert_static(val, &mut statics);
                     }
-                    Instruction::Call { args, dst, .. } => {
+                    Instruction::FnCall { args, dst, .. } => {
                         insert_static(dst, &mut statics);
 
                         for arg in args {

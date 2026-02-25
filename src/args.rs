@@ -114,7 +114,7 @@ impl Args {
             if arg.starts_with('-') {
                 let flag_name = cli_args
                     .next()
-                    .expect("already peeked the next argument, should be present");
+                    .expect("next argument was peeked and should be present");
 
                 if let Some(opt_level) = flag_name.strip_prefix("-O") {
                     // '-O' implies '-O1'.
@@ -150,7 +150,7 @@ impl Args {
                             Some("lex" | "parse" | "ir" | "mir" | "asm") => {
                                 args.stage = cli_args
                                     .next()
-                                    .expect("already peeked the next argument, should be present");
+                                    .expect("next argument was peeked and should be present");
                             }
                             Some(s) => {
                                 report_err!(&args.program, "invalid stage: '{s}'");
@@ -193,12 +193,12 @@ impl Args {
                     print_usage(&args.program);
                 }
             } else if args.in_path.to_str() == Some("") {
-                // NOTE: String argument is leaked since it is used throughout
-                // the compiler for diagnostics.
+                // NOTE: String is leaked since it is used throughout the
+                // compiler for diagnostics.
                 args.in_path = Path::new(
                     cli_args
                         .next()
-                        .expect("already peeked the next argument, should be present")
+                        .expect("next argument was peeked and should be present")
                         .leak(),
                 );
             } else {

@@ -447,7 +447,7 @@ pub enum Expression<'a> {
         expr: Box<Expression<'a>>,
         // NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
-        prefix: bool,
+        is_prefix: bool,
     },
     /// Binary operator applied to two expressions.
     Binary {
@@ -485,9 +485,12 @@ impl fmt::Display for Expression<'_> {
             Expression::IntConstant(i) => write!(f, "Int({i})"),
             Expression::Var { ident, .. } => write!(f, "Var({ident:?})"),
             Expression::Unary {
-                op, expr, prefix, ..
+                op,
+                expr,
+                is_prefix,
+                ..
             } => {
-                if *prefix {
+                if *is_prefix {
                     write!(f, "{op}{expr}")
                 } else {
                     write!(f, "{expr}{op}")
@@ -1667,7 +1670,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                                 // shift.
                                 sign: Signedness::Signed,
                                 // Postfix unary operator.
-                                prefix: false,
+                                is_prefix: false,
                             });
                         }
                         TokenType::LParen => {
@@ -1734,7 +1737,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                     expr: Box::new(inner_fct),
                     // NOTE: Temporary hack for arithmetic right shift.
                     sign: Signedness::Signed,
-                    prefix: true,
+                    is_prefix: true,
                 })
             }
             TokenType::LParen => {
@@ -1764,7 +1767,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                             // NOTE: Temporary hack for arithmetic right shift.
                             sign: Signedness::Signed,
                             // Postfix unary operator.
-                            prefix: false,
+                            is_prefix: false,
                         })
                     } else {
                         let tok_str = format!("{token:?}");

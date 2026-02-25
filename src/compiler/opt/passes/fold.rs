@@ -84,7 +84,7 @@ pub fn fold_const(f: &mut Function<'_>) {
             | Instruction::Copy { .. }
             | Instruction::Jump(_)
             | Instruction::Label(_)
-            | Instruction::Call { .. } => {}
+            | Instruction::FnCall { .. } => {}
         }
 
         i += 1;

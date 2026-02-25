@@ -16,7 +16,7 @@ pub fn optimize_ir(ir: &mut IR<'_>, opts: &Opts) {
     }
 
     for item in &mut ir.program {
-        if let Item::Func(func) = item {
+        if let Item::Fn(func) = item {
             optimize_ir_func(func, opts);
         }
     }

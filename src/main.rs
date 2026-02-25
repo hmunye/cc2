@@ -1,11 +1,14 @@
 //! Tiny C Compiler (subset of _C17_).
 
 #![forbid(unsafe_code)]
+//
 #![deny(clippy::unwrap_used)]
+//
 #![warn(clippy::pedantic)]
 #![warn(clippy::nursery)]
 #![warn(rust_2018_idioms)]
 #![warn(missing_debug_implementations)]
+//
 #![allow(clippy::use_self)]
 #![allow(clippy::if_not_else)]
 #![allow(clippy::redundant_else)]

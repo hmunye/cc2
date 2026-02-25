@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
 use crate::args::Opts;
-use crate::compiler::frontend::parser::StorageDuration;
+use crate::compiler::frontend::parser::symbols::StorageDuration;
 use crate::compiler::targets::x86_64::{BinaryOperator, Instruction, Item, MIRX86, Operand, Reg};
 use crate::compiler::{self, frontend::SymbolTable};
 
