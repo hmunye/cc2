@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::{env, fs, process};
 
-use crate::{cli, compiler, diag::Result, fmt_err};
+use crate::{args, compiler, diag::Result, fmt_err};
 
 /// Information about the current program context.
 #[derive(Debug)]
@@ -41,7 +41,7 @@ impl Context<'_> {
 ///
 /// Returns an error if the provided input file cannot be opened or read, or if
 /// any compilation phase fails.
-pub fn run_compiler(args: &cli::Args) -> Result<()> {
+pub fn run_compiler(args: &args::Args) -> Result<()> {
     let mut f = if args.preprocess {
         preprocess_input(args)?
     } else {
@@ -135,7 +135,7 @@ pub fn run_compiler(args: &cli::Args) -> Result<()> {
 ///
 /// Returns an error if a temporary file cannot be created/opened or
 /// preprocessing fails.
-fn preprocess_input(args: &cli::Args) -> Result<fs::File> {
+fn preprocess_input(args: &args::Args) -> Result<fs::File> {
     let tmp_dir = env::temp_dir();
     let tmp_path = tmp_dir
         .join(

@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 
-use crate::cli::Opts;
+use crate::args::Opts;
 use crate::compiler;
 use crate::compiler::frontend::SymbolTable;
 use crate::compiler::opt::analysis::run_analysis;

@@ -15,12 +15,12 @@
 #![allow(clippy::struct_excessive_bools)]
 #![allow(clippy::iter_with_drain)]
 
-pub mod cli;
+pub mod args;
 pub mod compiler;
 pub mod diag;
 
 fn main() {
-    let args = cli::Args::parse();
+    let args = args::Args::parse();
 
     if let Err(err) = compiler::driver::run_compiler(&args) {
         eprintln!("{err}");
