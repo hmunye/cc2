@@ -59,8 +59,6 @@ pub fn fold_const(f: &mut Function<'_>) {
                         // We know the jump to `target` will always be taken.
                         *inst = Instruction::Jump(target.clone());
                     } else {
-                        // NOTE: O(n) time complexity.
-                        //
                         // We know the jump to `target` will never be taken.
                         f.instructions.remove(i);
                         continue;
@@ -128,7 +126,7 @@ const fn is_safe_fold(op: BinaryOperator, rhs: i32) -> bool {
     match op {
         BinaryOperator::Divide | BinaryOperator::Modulo => rhs != 0,
         BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight => {
-            // NOTE: Should report warning diagnostic if false.
+            // NOTE: Should report diagnostic warning.
             rhs < (std::mem::size_of::<c_int>() * 8) as i32
         }
         _ => true,

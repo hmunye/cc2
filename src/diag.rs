@@ -32,6 +32,26 @@ macro_rules! report_token_err {
     }};
 }
 
+/// Prints an warning diagnostic related to a token (with token position and
+/// line content) to `stderr`.
+#[macro_export]
+macro_rules! report_token_warn {
+    ($file:expr, $line:expr, $col:expr, $token:expr, $marker_len:expr, $line_content:expr, $($arg:tt)+) => {{
+        eprintln!(
+            "\x1b[1;1m{}:{line}:{col}:\x1b[0m \x1b[1;35mwarning:\x1b[0m {}\n{:>5} | {:<10}\n{:>5} | \x1b[1;31m{:>col$}{}\x1b[0m",
+            $file,
+            format!($($arg)+),
+            $line,
+            $line_content,
+            "",
+            "^",
+            "~".repeat($marker_len),
+            line = $line,
+            col = $col
+        );
+    }};
+}
+
 /// Formats an error diagnostic.
 #[macro_export]
 macro_rules! fmt_err {

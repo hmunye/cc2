@@ -197,7 +197,6 @@ fn rewrite_coalesced<'a>(
     // Removing instructions from right-left ensures indicies are not affected
     // by shifting.
     for i in to_remove.into_iter().rev() {
-        // NOTE: O(n) time complexity.
         instructions.remove(i);
     }
 }

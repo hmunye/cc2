@@ -38,13 +38,13 @@ Tiny C Compiler (subset of _C17_).
 - [x] `for` / `do` / `while`
 - [x] `break` / `continue`
 - [x] `switch`
-- [x] `default` / `case`
+- [x] `default` / `case` labels
 - [x] Empty statements (`;`)
 
 ### Expressions
 
 - [x] Integer constants
-- [x] Variable references
+- [x] Variables
 - [x] Unary operators: `-`, `!`, `~`, `++` (postfix and prefix), `--` (postfix and prefix)
 - [x] Binary operators: `+`, `-`, `*`, `/`, `%`
 - [x] Binary bitwise operators: `&`, `|`, `^`

@@ -223,7 +223,6 @@ where
             // Removing instructions from right-left ensures indicies are not
             // affected by shifting.
             for i in to_remove.drain(..).rev() {
-                // NOTE: O(n) time complexity.
                 instructions.remove(i);
             }
         }
