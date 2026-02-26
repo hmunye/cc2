@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::compiler::opt::Block;
 
@@ -15,14 +15,14 @@ impl<'a, I> PostOrder<'a, I> {
     ///
     /// A block is considered reachable if it is a successor of any prior block.
     #[must_use]
-    fn new(blocks: &'a [Block<I>]) -> Self {
+    fn new(blocks: &'a [Block<I>], id_to_index: &HashMap<usize, usize>) -> Self {
         let mut post_order = Self {
             blocks: vec![],
             index: 0,
         };
 
         if let Some(Block::Entry { successor }) = blocks.first() {
-            post_order.iterative_post_order(blocks, *successor);
+            post_order.iterative_post_order(blocks, *successor, id_to_index);
         }
 
         debug_assert!(
@@ -35,17 +35,20 @@ impl<'a, I> PostOrder<'a, I> {
 
     /// Performs an iterative depth-first search on the blocks, pushing blocks
     /// onto `self` in post-order.
-    fn iterative_post_order(&mut self, blocks: &'a [Block<I>], entry: usize) {
+    fn iterative_post_order(
+        &mut self,
+        blocks: &'a [Block<I>],
+        entry: usize,
+        id_to_index: &HashMap<usize, usize>,
+    ) {
         let mut visited = HashSet::new();
         let mut stack = vec![(entry, false)];
 
         while let Some((id, children_done)) = stack.pop() {
-            // NOTE: O(n) time complexity.
-            if children_done && let Some(block) = blocks.iter().find(|b| b.id() == id) {
-                self.blocks.push(block);
-            } else if let Some(Block::Basic { successors, .. }) =
-                // NOTE: O(n) time complexity.
-                blocks.iter().find(|b| b.id() == id)
+            if children_done && let Some(&idx) = id_to_index.get(&id) {
+                self.blocks.push(&blocks[idx]);
+            } else if let Some(&idx) = id_to_index.get(&id)
+                && let Block::Basic { successors, .. } = &blocks[idx]
             {
                 stack.push((id, true));
 
@@ -74,14 +77,18 @@ impl<'a, I> Iterator for PostOrder<'a, I> {
 #[derive(Debug)]
 pub struct BasicBlocks<'a, I> {
     blocks: &'a [Block<I>],
+    id_to_index: &'a HashMap<usize, usize>,
 }
 
 impl<'a, I> BasicBlocks<'a, I> {
     /// Returns a new `BasicBlocks`.
     #[inline]
     #[must_use]
-    pub const fn new(blocks: &'a [Block<I>]) -> Self {
-        Self { blocks }
+    pub const fn new(blocks: &'a [Block<I>], id_to_index: &'a HashMap<usize, usize>) -> Self {
+        Self {
+            blocks,
+            id_to_index,
+        }
     }
 
     /// Returns an iterator over basic blocks.
@@ -96,7 +103,7 @@ impl<'a, I> BasicBlocks<'a, I> {
     #[inline]
     #[must_use]
     pub fn post_order(&self) -> PostOrder<'a, I> {
-        PostOrder::new(self.blocks)
+        PostOrder::new(self.blocks, self.id_to_index)
     }
 
     /// Returns the number of basic blocks.

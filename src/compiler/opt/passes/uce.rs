@@ -37,13 +37,24 @@ fn clean_cfg<'a, I>(cfg: &mut CFG<I>, reachable: &HashSet<usize>)
 where
     I: CFGInstruction<Instr = Instruction<'a>>,
 {
-    let len = cfg.blocks.len();
     let exit_id = cfg.exit_block_id();
 
-    // Iterate over the blocks, excluding the entry and exit blocks.
-    for i in Block::<I>::ENTRY_ID + 1..len - 1 {
+    // Iterate over the blocks (excluding entry block).
+    for i in Block::<I>::ENTRY_ID + 1..cfg.blocks.len() {
+        // Keep mapping from block ID to index up to date.
+        cfg.id_to_index
+            .entry(cfg.blocks[i].id())
+            .and_modify(|index| *index = i);
+
         let prev_block_id = cfg.blocks[i - 1].id();
-        let next_block_id = cfg.blocks[i + 1].id();
+
+        let next_block_id = if let Some(block) = cfg.blocks.get(i + 1) {
+            block.id()
+        } else {
+            // At the exit block: continue;
+            continue;
+        };
+
         let block = &mut cfg.blocks[i];
 
         if let Block::Basic {

@@ -132,6 +132,8 @@ impl<I> Block<I> {
 #[derive(Debug)]
 pub struct CFG<I> {
     pub blocks: Vec<Block<I>>,
+    /// Maps block ID to it's current index.
+    pub id_to_index: HashMap<usize, usize>,
     /// Maps each label to its corresponding block ID.
     pub label_map: HashMap<String, usize>,
 }
@@ -149,6 +151,7 @@ impl<I: CFGInstruction> CFG<I> {
     pub fn new() -> Self {
         Self {
             blocks: Vec::default(),
+            id_to_index: HashMap::default(),
             label_map: HashMap::default(),
         }
     }
@@ -158,7 +161,7 @@ impl<I: CFGInstruction> CFG<I> {
     #[inline]
     #[must_use]
     pub fn basic_blocks(&self) -> BasicBlocks<'_, I> {
-        BasicBlocks::new(&self.blocks)
+        BasicBlocks::new(&self.blocks, &self.id_to_index)
     }
 
     /// Returns mutable basic blocks of the control-flow graph (excluding entry
@@ -192,6 +195,7 @@ impl<I: CFGInstruction + Clone> CFG<I> {
     pub fn sync(&mut self, instructions: &[I]) {
         if !self.blocks.is_empty() {
             self.blocks.clear();
+            self.id_to_index.clear();
             self.label_map.clear();
         }
 
@@ -264,6 +268,12 @@ impl<I: CFGInstruction + Clone> CFG<I> {
             id: self.blocks.len(),
             predecessors: vec![],
         });
+
+        self.id_to_index.reserve(self.blocks.len());
+
+        for i in 0..self.blocks.len() {
+            self.id_to_index.insert(i, i);
+        }
     }
 
     /// Builds the control-flow of the graph, linking blocks according to their
