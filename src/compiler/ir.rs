@@ -304,7 +304,7 @@ struct TACBuilder<'a> {
     label_count: usize,
     val_count: usize,
     /// Mapping from _IR_ variable name to internal ID.
-    to_id: HashMap<String, usize>,
+    var_to_id: HashMap<String, usize>,
     /// _AST_ function label.
     fn_ident: &'a str,
     /// Canonical names of `static` objects, later resolved to _IR_ static
@@ -336,7 +336,7 @@ impl<'a> TACBuilder<'a> {
     /// Returns an internal value ID for the provided identifier.
     #[inline]
     fn new_id(&mut self, ident: String) -> usize {
-        match self.to_id.entry(ident) {
+        match self.var_to_id.entry(ident) {
             Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(entry) => {
                 let id = self.val_count;
@@ -350,11 +350,13 @@ impl<'a> TACBuilder<'a> {
     /// Resets the builder state for the next _AST_ function definition
     /// identifier.
     #[inline]
-    const fn reset(&mut self, ident: &'a str) {
+    fn reset(&mut self, ident: &'a str) {
         // NOTE: Since `ident` is enough ensures the uniqueness of each
         // generated temporary and label, counts can be reset.
         self.tmp_count = 0;
         self.label_count = 0;
+
+        self.var_to_id.clear();
 
         self.fn_ident = ident;
     }
@@ -402,7 +404,6 @@ pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_table: &mut SymbolTa
             ast::Declaration::Fn(f) => {
                 if f.body.is_some() {
                     builder.reset(&f.ident);
-
                     ir_items.push(Item::Fn(generate_ir_function(f, &mut builder, sym_table)));
                 }
             }

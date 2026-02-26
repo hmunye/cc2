@@ -21,4 +21,4 @@ printf "\x1b[1;45m=== clang ===\x1b[0m\n"
 clang -std=c17 -pedantic "$src" -o "$bin" &&
     ("./$bin"; echo "exit code: $?")
 
-rm -f "$bin" "$asm"
+rm -f "$asm" "$bin"

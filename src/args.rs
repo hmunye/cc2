@@ -33,13 +33,6 @@ impl Opts {
         self.fold || self.copy_prop || self.uce || self.dse
     }
 
-    /// Returns `true` if any machine-dependent optimization passes are enabled.
-    #[inline]
-    #[must_use]
-    pub const fn any_target_passes_enabled(&self) -> bool {
-        self.reg_alloc || self.coalesce
-    }
-
     /// Enables all optimizations flags.
     #[inline]
     const fn enable(&mut self) {

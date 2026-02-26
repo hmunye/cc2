@@ -4,7 +4,7 @@
 //! graph (_CFG_).
 
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use crate::compiler::opt::{Block, CFG, CFGInstruction};
 
@@ -138,18 +138,18 @@ pub trait DataFlowAnalysis<I> {
 /// Panics if the control-flow graph is malformed.
 pub fn run_analysis<I: CFGInstruction, A: DataFlowAnalysis<I>>(cfg: &CFG<I>, a: &mut A) {
     let init = a.initial(cfg);
+    let basic_blocks = cfg.basic_blocks();
 
-    // Exclude the entry and exit block IDs from the set.
-    let mut seen_blocks = HashSet::with_capacity(cfg.blocks.len() - 2);
+    let mut id_to_block = HashMap::with_capacity(basic_blocks.len());
 
-    let mut worklist: VecDeque<_> = cfg
-        .basic_blocks()
+    let mut worklist: VecDeque<_> = basic_blocks
         // Working in post-order minimizes the number of times a block needs
         // to be revisited for analysis.
         .post_order()
         .inspect(|block| {
             let id = block.id();
-            seen_blocks.insert(id);
+            id_to_block.insert(id, (*block, true));
+
             if let Block::Basic { instructions, .. } = block {
                 let num_insts = instructions.len();
                 a.record_block_fact(id, num_insts, &init);
@@ -164,8 +164,11 @@ pub fn run_analysis<I: CFGInstruction, A: DataFlowAnalysis<I>>(cfg: &CFG<I>, a: 
 
     while let Some(block) = worklist.pop_front() {
         let id = block.id();
+
         // Ensures we reflect the state of the `worklist`.
-        seen_blocks.remove(&id);
+        if let Some((_, scheduled)) = id_to_block.get_mut(&id) {
+            *scheduled = false;
+        }
 
         let old_block_fact = a.get_block_fact(id).cloned();
 
@@ -200,10 +203,11 @@ pub fn run_analysis<I: CFGInstruction, A: DataFlowAnalysis<I>>(cfg: &CFG<I>, a: 
                         );
                     }
                     id => {
-                        // NOTE: O(n) time complexity.
-                        if let Some(next_block) = cfg.blocks.iter().find(|block| block.id() == id)
-                            && seen_blocks.insert(next_block.id())
+                        if let Some((next_block, scheduled)) = id_to_block.get_mut(&id)
+                            && !*scheduled
                         {
+                            // Ensures we reflect the state of the `worklist`.
+                            *scheduled = true;
                             worklist.push_back(next_block);
                         }
                     }
