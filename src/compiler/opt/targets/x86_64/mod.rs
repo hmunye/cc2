@@ -8,7 +8,7 @@ pub mod liveness;
 pub mod optimize;
 pub mod register_alloc;
 
-pub use coalesce::coalesce_registers;
+pub use coalesce::coalesce_loop;
 pub use liveness::RegisterLiveness;
 pub use optimize::optimize_x86_64_mir;
 pub use register_alloc::{RegisterType, allocate_registers};

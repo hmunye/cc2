@@ -31,22 +31,9 @@ pub fn fold_const(f: &mut Function<'_>) {
                 if let Value::IntConstant(x) = lhs
                     && let Value::IntConstant(y) = rhs
                 {
-                    match op {
-                        BinaryOperator::Divide | BinaryOperator::Modulo => {
-                            if *y == 0 {
-                                i += 1;
-                                continue;
-                            }
-                        }
-                        BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight => {
-                            #[allow(clippy::cast_possible_wrap)]
-                            // NOTE: Should report warning diagnostic.
-                            if *y >= (std::mem::size_of::<c_int>() * 8) as i32 {
-                                i += 1;
-                                continue;
-                            }
-                        }
-                        _ => {}
+                    if !is_safe_fold(*op, *y) {
+                        i += 1;
+                        continue;
                     }
 
                     let val = eval_binary(*op, *x, *y);
@@ -105,20 +92,8 @@ pub fn try_fold_ast(expr: &ast::Expression<'_>) -> Option<c_int> {
         ast::Expression::Binary { op, lhs, rhs, .. } => {
             let rhs = try_fold_ast(rhs)?;
 
-            match op {
-                BinaryOperator::Divide | BinaryOperator::Modulo => {
-                    if rhs == 0 {
-                        return None;
-                    }
-                }
-                BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight => {
-                    #[allow(clippy::cast_possible_wrap)]
-                    // NOTE: Should report warning diagnostic.
-                    if rhs >= (std::mem::size_of::<c_int>() * 8) as i32 {
-                        return None;
-                    }
-                }
-                _ => {}
+            if !is_safe_fold(*op, rhs) {
+                return None;
             }
 
             let lhs = try_fold_ast(lhs)?;
@@ -142,6 +117,21 @@ pub fn try_fold_ast(expr: &ast::Expression<'_>) -> Option<c_int> {
         ast::Expression::Var { .. }
         | ast::Expression::FnCall { .. }
         | ast::Expression::Assignment { .. } => None,
+    }
+}
+
+/// Returns `true` if the binary operation, given it's `rhs`, is safe to fold.
+#[inline]
+#[must_use]
+const fn is_safe_fold(op: BinaryOperator, rhs: i32) -> bool {
+    #[allow(clippy::cast_possible_wrap)]
+    match op {
+        BinaryOperator::Divide | BinaryOperator::Modulo => rhs != 0,
+        BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight => {
+            // NOTE: Should report warning diagnostic if false.
+            rhs < (std::mem::size_of::<c_int>() * 8) as i32
+        }
+        _ => true,
     }
 }
 

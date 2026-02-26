@@ -8,7 +8,6 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 
-use crate::args::Opts;
 use crate::compiler;
 use crate::compiler::frontend::SymbolTable;
 use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
@@ -84,42 +83,10 @@ pub struct InterferenceGraph<'a> {
 }
 
 impl<'a> InterferenceGraph<'a> {
-    /// Returns `true` if the node at `to` interferes with the node at `from`,
-    /// or vice-versa.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provided indices are out-of-bounds.
-    #[inline]
-    #[must_use]
-    pub fn are_neighbors(&self, to: usize, from: usize) -> bool {
-        if let (Some(src_node), Some(dst_node)) =
-            (self.nodes[from].as_ref(), self.nodes[to].as_ref())
-        {
-            src_node.neighbors.contains(&to) || dst_node.neighbors.contains(&from)
-        } else {
-            false
-        }
-    }
-
-    /// Removes the node at `remove` from the graph, adding all it's neighbors
-    /// to the node at `keep`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provided indices are out-of-bounds.
-    pub fn remove_node(&mut self, remove: usize, keep: usize) {
-        if let Some(node) = self.nodes[remove].take() {
-            for id in node.neighbors {
-                self.add_interference(keep, id);
-                self.remove_interference(remove, id);
-            }
-        }
-    }
-
     /// Returns a new, initialized, interference graph from the provided
     /// instructions and symbol map.
-    fn from_instructions(instructions: &[Instruction<'a>], sym_table: &'a SymbolTable) -> Self {
+    #[must_use]
+    pub fn from_instructions(instructions: &[Instruction<'a>], sym_table: &'a SymbolTable) -> Self {
         let mut base = Self::base();
 
         let mut seen = HashSet::new();
@@ -182,6 +149,39 @@ impl<'a> InterferenceGraph<'a> {
         base.apply_liveness(instructions, sym_table);
 
         base
+    }
+
+    /// Returns `true` if the node at `to` interferes with the node at `from`,
+    /// or vice-versa.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
+    #[inline]
+    #[must_use]
+    pub fn are_neighbors(&self, to: usize, from: usize) -> bool {
+        if let (Some(src_node), Some(dst_node)) =
+            (self.nodes[from].as_ref(), self.nodes[to].as_ref())
+        {
+            src_node.neighbors.contains(&to) || dst_node.neighbors.contains(&from)
+        } else {
+            false
+        }
+    }
+
+    /// Removes the node at `remove` from the graph, adding all it's neighbors
+    /// to the node at `keep`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
+    pub fn remove_node(&mut self, remove: usize, keep: usize) {
+        if let Some(node) = self.nodes[remove].take() {
+            for id in node.neighbors {
+                self.add_interference(keep, id);
+                self.remove_interference(remove, id);
+            }
+        }
     }
 
     /// Calculates and updates the spill costs for each register, based on its
@@ -519,20 +519,14 @@ impl<'a> RegisterMap<'a> {
 /// registers used in allocation.
 pub fn allocate_registers<'a>(
     instructions: &mut Vec<Instruction<'a>>,
-    opts: &Opts,
     sym_table: &'a SymbolTable,
+    coalesce: bool,
 ) -> HashSet<Reg> {
-    let mut ifg = InterferenceGraph::from_instructions(instructions, sym_table);
-
-    if opts.coalesce {
-        loop {
-            if !compiler::opt::targets::x86_64::coalesce_registers(&mut ifg, instructions) {
-                break;
-            }
-
-            ifg = InterferenceGraph::from_instructions(instructions, sym_table);
-        }
-    }
+    let mut ifg = if coalesce {
+        compiler::opt::targets::x86_64::coalesce_loop(instructions, sym_table)
+    } else {
+        InterferenceGraph::from_instructions(instructions, sym_table)
+    };
 
     ifg.compute_spill_costs(instructions);
     ifg.assign_registers();

@@ -337,7 +337,7 @@ impl fmt::Display for Operand<'_> {
             Operand::Register(r) => write!(f, "%{r:?}"),
             Operand::Symbol { ident, .. } => write!(f, "{ident:?}"),
             Operand::Stack(i) => write!(f, "stack({i})"),
-            Operand::Data(ident) => write!(f, "{ident:?} [static memory]"),
+            Operand::Data(ident) => write!(f, "{ident:?} [static]"),
         }
     }
 }

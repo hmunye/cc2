@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 
+use crate::compiler::frontend::SymbolTable;
 use crate::compiler::opt::targets::x86_64::RegisterType;
 use crate::compiler::opt::targets::x86_64::register_alloc::{
     Color, InterferenceGraph, RegisterNode,
@@ -71,6 +72,26 @@ impl<T: Copy + Eq + std::hash::Hash> DisjointSet<T> {
             x
         }
     }
+}
+
+/// Coalesces register assignments in a set of instructions, iteratively
+/// merging registers until no further coalescing can be done.
+#[must_use]
+pub fn coalesce_loop<'a>(
+    instructions: &mut Vec<Instruction<'a>>,
+    sym_table: &'a SymbolTable,
+) -> InterferenceGraph<'a> {
+    let mut ifg = InterferenceGraph::from_instructions(instructions, sym_table);
+
+    loop {
+        if !coalesce_registers(&mut ifg, instructions) {
+            break;
+        }
+
+        ifg = InterferenceGraph::from_instructions(instructions, sym_table);
+    }
+
+    ifg
 }
 
 /// Transforms the _MIR x86-64_ instructions by coalescing (merging) compatible

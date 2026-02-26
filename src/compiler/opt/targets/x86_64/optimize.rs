@@ -15,50 +15,62 @@ use crate::compiler::{self, frontend::SymbolTable};
 /// _x86-64_ machine intermediate representation (_MIR_), according to the
 /// optimizations specified.
 pub fn optimize_x86_64_mir<'a>(mir: &mut MIRX86<'a>, opts: &Opts, sym_table: &'a SymbolTable) {
+    let mut callee_alloc = vec![];
+
     for item in &mut mir.program {
         if let Item::Fn(f) = item {
-            optimize_mir_function(&mut f.instructions, opts, sym_table);
+            optimize_mir_function(&mut f.instructions, sym_table, opts, &mut callee_alloc);
         }
     }
 }
 
 /// Optimizes the provided _MIR x86-64_ instructions, applying the specified
-/// optimizations.
+/// optimizations based on the given `opts`.
 fn optimize_mir_function<'a>(
     instructions: &mut Vec<Instruction<'a>>,
-    opts: &Opts,
     sym_table: &'a SymbolTable,
+    opts: &Opts,
+    callee_alloc: &mut Vec<Reg>,
 ) {
     if instructions.is_empty() {
         return;
     }
 
-    let callee_alloc = if opts.reg_alloc {
-        compiler::opt::targets::x86_64::allocate_registers(instructions, opts, sym_table)
-            .into_iter()
-            .collect()
+    callee_alloc.clear();
+
+    if opts.reg_alloc {
+        callee_alloc.extend(compiler::opt::targets::x86_64::allocate_registers(
+            instructions,
+            sym_table,
+            opts.coalesce,
+        ));
+    } else if opts.coalesce {
+        let _ = compiler::opt::targets::x86_64::coalesce_loop(instructions, sym_table);
+    }
+
+    finalize_stack_frame(instructions, sym_table, callee_alloc);
+}
+
+/// Finalizes an _MIR x86-64_ stack frame, replacing symbols, rewriting invalid
+/// instructions, and ensuring stack alignment.
+fn finalize_stack_frame(
+    instructions: &mut Vec<Instruction<'_>>,
+    sym_table: &SymbolTable,
+    callee_alloc: &[Reg],
+) {
+    let callee_bytes = (callee_alloc.len() * 8).cast_signed();
+
+    let stack_offset = replace_symbols(instructions, sym_table) + callee_bytes;
+
+    let padding = if stack_offset & 0xF != 0 {
+        16 - (stack_offset & 0xF)
     } else {
-        Vec::default()
+        0
     };
 
-    let alloc = {
-        let callee_bytes = (callee_alloc.len() * 8).cast_signed();
+    let alloc = (stack_offset + padding) - callee_bytes;
 
-        let stack_offset = replace_symbols(instructions, sym_table) + callee_bytes;
-
-        // System-V x86-64 ABI requires the stack to be 16-byte aligned at every
-        // `call` instruction. A length that is a multiple of 16 will always have
-        // the last four bits set to `0000`.
-        let padding = if stack_offset & 0xF != 0 {
-            16 - (stack_offset & 0xF)
-        } else {
-            0
-        };
-
-        (stack_offset + padding) - callee_bytes
-    };
-
-    rewrite_invalid_instructions(instructions, &callee_alloc);
+    rewrite_invalid_instructions(instructions, callee_alloc);
 
     if alloc > 0 {
         // NOTE: O(n) time complexity.
