@@ -6,7 +6,6 @@
 // TODO: Update IR to include unique ID for each variable, so strings do not
 // have to be cloned.
 
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::ir::{Instruction, Value};
@@ -26,37 +25,12 @@ struct DeadStore {
     stores: HashMap<usize, (Stores, Vec<Stores>)>,
 }
 
-impl DeadStore {
-    /// Records the set of live variables just after the instruction `inst_id`
-    /// in the block `block_id`.
-    #[inline]
-    fn record_instruction_fact(&mut self, block_id: usize, inst_id: usize, stores: &Stores) {
-        let entry = self
-            .stores
-            .get_mut(&block_id)
-            .expect("block of instruction must be initialized before recording facts");
-
-        let slot = &mut entry.1[inst_id];
-
-        // Reuses existing allocation when possible.
-        slot.clone_from(stores);
-    }
-
-    /// Returns the set of live variables just after instruction `inst_id` in
-    /// block `block_id`, or `None` if the block containing the instruction has
-    /// not been initialized.
-    #[inline]
-    fn get_instruction_fact(&self, block_id: usize, inst_id: usize) -> Option<&Stores> {
-        let entry = self.stores.get(&block_id)?;
-        Some(&entry.1[inst_id])
-    }
-}
-
-impl<'a, 'b, I> DataFlowAnalysis<'a, I> for DeadStore
+impl<'a, I> DataFlowAnalysis<I> for DeadStore
 where
-    I: CFGInstruction<Instr = Instruction<'b>>,
+    I: CFGInstruction<Instr = Instruction<'a>>,
 {
     type Fact = Stores;
+    type BlockFact = HashMap<usize, (Self::Fact, Vec<Self::Fact>)>;
 
     fn transfer(&mut self, block: &Block<I>, mut outgoing: Self::Fact) {
         if let Block::Basic {
@@ -68,7 +42,9 @@ where
             for (i, instr) in instructions.iter().enumerate().rev() {
                 // Record the set of live variables that reach the point after
                 // the current instruction.
-                self.record_instruction_fact(*block_id, i, &outgoing);
+                <DeadStore as DataFlowAnalysis<I>>::record_instruction_fact(
+                    self, *block_id, i, &outgoing,
+                );
 
                 // Compute the set of live variables that reach the point before
                 // the current instruction.
@@ -130,7 +106,7 @@ where
                 }
             }
 
-            <DeadStore as DataFlowAnalysis<'_, I>>::record_block_fact(
+            <DeadStore as DataFlowAnalysis<I>>::record_block_fact(
                 self,
                 block.id(),
                 instructions.len(),
@@ -157,7 +133,7 @@ where
                         );
 
                         if let Some(succ_incoming) =
-                            <DeadStore as DataFlowAnalysis<'_, I>>::get_block_fact(self, id)
+                            <DeadStore as DataFlowAnalysis<I>>::get_block_fact(self, id)
                         {
                             outgoing.extend(succ_incoming.iter().cloned());
                         }
@@ -170,30 +146,20 @@ where
     }
 
     #[inline]
-    fn initial(&self, _cfg: &'a CFG<I>) -> Self::Fact {
+    fn initial(_cfg: &CFG<I>) -> Self::Fact {
         // The identity element for the `meet` operator (union) is the empty set
         // (at the function exit, no local variables are live).
         Self::Fact::default()
     }
 
     #[inline]
-    fn record_block_fact(&mut self, block_id: usize, num_insts: usize, fact: &Self::Fact) {
-        match self.stores.entry(block_id) {
-            Entry::Occupied(mut entry) => {
-                let exit_fact = &mut entry.get_mut().0;
-                // Reuses existing allocation when possible.
-                exit_fact.clone_from(fact);
-            }
-            Entry::Vacant(entry) => {
-                entry.insert((fact.clone(), vec![Self::Fact::default(); num_insts]));
-            }
-        }
+    fn block_facts(&self) -> &Self::BlockFact {
+        &self.stores
     }
 
     #[inline]
-    fn get_block_fact(&self, block_id: usize) -> Option<&Self::Fact> {
-        let entry = self.stores.get(&block_id)?;
-        Some(&entry.0)
+    fn block_facts_mut(&mut self) -> &mut Self::BlockFact {
+        &mut self.stores
     }
 
     #[inline]
@@ -226,7 +192,9 @@ where
         } = block
         {
             for (i, inst) in instructions.iter().enumerate() {
-                if let Some(stores) = dse.get_instruction_fact(*block_id, i) {
+                if let Some(stores) =
+                    <DeadStore as DataFlowAnalysis<I>>::get_instruction_fact(&dse, *block_id, i)
+                {
                     // Since interprocedural analysis is not performed, function
                     // calls are ignored, as they may have side-effects.
                     match inst.concrete() {
@@ -295,7 +263,7 @@ where
 }
 
 #[inline]
-fn insert_static(val: &Value, statics: &mut Stores) {
+fn insert_static(val: &Value<'_>, statics: &mut Stores) {
     if val.is_static()
         && let Some(ident) = val.as_var()
     {

@@ -1,4 +1,3 @@
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::frontend::SymbolTable;
@@ -31,42 +30,14 @@ impl<'a> RegisterLiveness<'a> {
             exit_id,
         }
     }
-
-    // TODO: Could possibly be a default implementation using an associated type.
-    //
-    /// Returns the set of live registers just after instruction `inst_id` in
-    /// block `block_id`, or `None` if the block containing the instruction has
-    /// not been initialized.
-    #[inline]
-    #[must_use]
-    pub fn get_instruction_fact(&self, block_id: usize, inst_id: usize) -> Option<&LiveRegs<'_>> {
-        let entry = self.lives.get(&block_id)?;
-        Some(&entry.1[inst_id])
-    }
-
-    // TODO: Could possibly be a default implementation using an associated type.
-    //
-    /// Records the set of live registers just after the instruction `inst_id`
-    /// in the block `block_id`.
-    #[inline]
-    fn record_instruction_fact(&mut self, block_id: usize, inst_id: usize, lives: &LiveRegs<'a>) {
-        let entry = self
-            .lives
-            .get_mut(&block_id)
-            .expect("block of instruction must be initialized before recording facts");
-
-        let slot = &mut entry.1[inst_id];
-
-        // Reuses existing allocation when possible.
-        slot.clone_from(lives);
-    }
 }
 
-impl<'a, 'b, I> DataFlowAnalysis<'a, I> for RegisterLiveness<'b>
+impl<'a, I> DataFlowAnalysis<I> for RegisterLiveness<'a>
 where
-    I: CFGInstruction<Instr = Instruction<'b>>,
+    I: CFGInstruction<Instr = Instruction<'a>>,
 {
-    type Fact = LiveRegs<'b>;
+    type Fact = LiveRegs<'a>;
+    type BlockFact = HashMap<usize, (Self::Fact, Vec<Self::Fact>)>;
 
     fn transfer(&mut self, block: &Block<I>, mut outgoing: Self::Fact) {
         if let Block::Basic {
@@ -83,7 +54,9 @@ where
             for (i, instr) in instructions.iter().enumerate().rev() {
                 // Record the set of live registers that reach the point after
                 // the current instruction.
-                self.record_instruction_fact(*block_id, i, &outgoing);
+                <RegisterLiveness<'_> as DataFlowAnalysis<I>>::record_instruction_fact(
+                    self, *block_id, i, &outgoing,
+                );
 
                 instr
                     .concrete()
@@ -103,7 +76,7 @@ where
                     });
             }
 
-            <RegisterLiveness<'_> as DataFlowAnalysis<'_, I>>::record_block_fact(
+            <RegisterLiveness<'_> as DataFlowAnalysis<I>>::record_block_fact(
                 self,
                 block.id(),
                 instructions.len(),
@@ -130,9 +103,7 @@ where
                         );
 
                         if let Some(succ_incoming) =
-                            <RegisterLiveness<'_> as DataFlowAnalysis<'_, I>>::get_block_fact(
-                                self, id,
-                            )
+                            <RegisterLiveness<'_> as DataFlowAnalysis<I>>::get_block_fact(self, id)
                         {
                             outgoing.extend(succ_incoming.iter().copied());
                         }
@@ -144,33 +115,22 @@ where
         outgoing
     }
 
-    fn initial(&self, _cfg: &'a CFG<I>) -> Self::Fact {
+    #[inline]
+    fn initial(_cfg: &CFG<I>) -> Self::Fact {
         // The identity element for the `meet` operator (union) is the empty set
         // (at stack-frame exit, no registers are live, ignoring callee-saved
         // registers which are handled separately).
         Self::Fact::default()
     }
 
-    // TODO: Could possibly be a default implementation using an associated type.
     #[inline]
-    fn record_block_fact(&mut self, block_id: usize, num_insts: usize, fact: &Self::Fact) {
-        match self.lives.entry(block_id) {
-            Entry::Occupied(mut entry) => {
-                let exit_fact = &mut entry.get_mut().0;
-                // Reuses existing allocation when possible.
-                exit_fact.clone_from(fact);
-            }
-            Entry::Vacant(entry) => {
-                entry.insert((fact.clone(), vec![Self::Fact::default(); num_insts]));
-            }
-        }
+    fn block_facts(&self) -> &Self::BlockFact {
+        &self.lives
     }
 
-    // TODO: Could possibly be a default implementation using an associated type.
     #[inline]
-    fn get_block_fact(&self, block_id: usize) -> Option<&Self::Fact> {
-        let entry = self.lives.get(&block_id)?;
-        Some(&entry.0)
+    fn block_facts_mut(&mut self) -> &mut Self::BlockFact {
+        &mut self.lives
     }
 
     #[inline]

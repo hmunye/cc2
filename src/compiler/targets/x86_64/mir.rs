@@ -794,11 +794,11 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
 }
 
 /// Generate a _MIR x86-64_ operand from the provided _IR_ value.
-const fn generate_mir_operand(val: &ir::Value) -> Operand<'_> {
+fn generate_mir_operand<'a>(val: &'a ir::Value<'_>) -> Operand<'a> {
     match val {
         ir::Value::IntConstant(i) => Operand::Imm32(*i),
         ir::Value::Var { ident, is_static } => Operand::Symbol {
-            ident: ident.as_str(),
+            ident,
             is_static: *is_static,
         },
     }

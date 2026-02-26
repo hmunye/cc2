@@ -11,7 +11,7 @@ use std::convert::TryFrom;
 use crate::args::Opts;
 use crate::compiler;
 use crate::compiler::frontend::SymbolTable;
-use crate::compiler::opt::analysis::run_analysis;
+use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
 use crate::compiler::opt::targets::x86_64::RegisterLiveness;
 use crate::compiler::opt::{Block, CFG, CFGInstruction};
 use crate::compiler::targets::x86_64::{self, Instruction, Operand, Reg};
@@ -119,7 +119,7 @@ impl<'a> InterferenceGraph<'a> {
 
     /// Returns a new, initialized, interference graph from the provided
     /// instructions and symbol map.
-    fn from_instructions(instructions: &[Instruction<'a>], sym_map: &SymbolTable) -> Self {
+    fn from_instructions(instructions: &[Instruction<'a>], sym_map: &'a SymbolTable) -> Self {
         let mut base = Self::base();
 
         let mut seen = HashSet::new();
@@ -360,7 +360,7 @@ impl<'a> InterferenceGraph<'a> {
 
     /// Adds edges to the graph based on the results of the liveness data-flow
     /// analysis.
-    fn apply_liveness(&mut self, instructions: &[Instruction<'a>], sym_map: &SymbolTable) {
+    fn apply_liveness(&mut self, instructions: &[Instruction<'a>], sym_map: &'a SymbolTable) {
         let mut cfg = CFG::new();
         cfg.sync(instructions);
 
@@ -372,7 +372,7 @@ impl<'a> InterferenceGraph<'a> {
     }
 
     /// Updates the neighbors of virtual registers based on a liveness analysis.
-    fn update_interference<I>(&mut self, cfg: &CFG<I>, liveness: &RegisterLiveness<'_>)
+    fn update_interference<I>(&mut self, cfg: &CFG<I>, liveness: &RegisterLiveness<'a>)
     where
         I: CFGInstruction<Instr = Instruction<'a>>,
     {
@@ -386,7 +386,11 @@ impl<'a> InterferenceGraph<'a> {
                 let mut updated = vec![];
 
                 for (i, instr) in instructions.iter().enumerate() {
-                    if let Some(live_regs) = liveness.get_instruction_fact(*block_id, i) {
+                    if let Some(live_regs) =
+                        <RegisterLiveness<'_> as DataFlowAnalysis<I>>::get_instruction_fact(
+                            liveness, *block_id, i,
+                        )
+                    {
                         let instr = instr.concrete();
 
                         instr.find_updated(&mut updated);
@@ -513,10 +517,10 @@ impl<'a> RegisterMap<'a> {
 /// Transforms the _MIR x86-64_ instructions by assigning virtual registers to
 /// physical _x86-64_ registers, returning a set containing callee-saved
 /// registers used in allocation.
-pub fn allocate_registers(
-    instructions: &mut Vec<Instruction<'_>>,
+pub fn allocate_registers<'a>(
+    instructions: &mut Vec<Instruction<'a>>,
     opts: &Opts,
-    sym_map: &SymbolTable,
+    sym_map: &'a SymbolTable,
 ) -> HashSet<Reg> {
     let mut ifg = InterferenceGraph::from_instructions(instructions, sym_map);
 

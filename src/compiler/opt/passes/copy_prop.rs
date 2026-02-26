@@ -3,61 +3,30 @@
 //! Transforms an intermediate representation (_IR_) by replacing variables with
 //! their assigned values where applicable, reducing redundant copies.
 
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::ir::{Instruction, Value};
 use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
 use crate::compiler::opt::{Block, CFG, CFGInstruction};
 
+/// TODO: Use `HashMap` to avoid O(n) lookup.
+///
 /// Tracks copies from `dst` -> `src` (`dst` receives value from `src`).
-type ReachingCopies = HashSet<(Value, Value)>;
+type ReachingCopies<'a> = HashSet<(Value<'a>, Value<'a>)>;
 
 /// Reaching copies analysis over a control-flow graph.
 #[derive(Debug)]
-struct CopyProp {
+struct CopyProp<'a> {
+    copies: HashMap<usize, (ReachingCopies<'a>, Vec<ReachingCopies<'a>>)>,
     exit_id: usize,
-    /// Mapping from block ID to reaching copies at the block's exit and the
-    /// per-instruction reaching copies by index.
-    reaching_copies: HashMap<usize, (ReachingCopies, Vec<ReachingCopies>)>,
 }
 
-impl CopyProp {
-    /// Records the set of copies reaching just before the instruction `inst_id`
-    /// in the block `block_id`.
-    #[inline]
-    fn record_instruction_fact(
-        &mut self,
-        block_id: usize,
-        inst_id: usize,
-        copies: &ReachingCopies,
-    ) {
-        let entry = self
-            .reaching_copies
-            .get_mut(&block_id)
-            .expect("block of instruction must be initialized before recording facts");
-
-        let slot = &mut entry.1[inst_id];
-
-        // Reuses existing allocation when possible.
-        slot.clone_from(copies);
-    }
-
-    /// Returns the set of copies reaching just before instruction `inst_id` in
-    /// block `block_id`, or `None` if the block containing the instruction has
-    /// not been initialized.
-    #[inline]
-    fn get_instruction_fact(&self, block_id: usize, inst_id: usize) -> Option<&ReachingCopies> {
-        let entry = self.reaching_copies.get(&block_id)?;
-        Some(&entry.1[inst_id])
-    }
-}
-
-impl<'a, 'b, I> DataFlowAnalysis<'a, I> for CopyProp
+impl<'a, I> DataFlowAnalysis<I> for CopyProp<'a>
 where
-    I: CFGInstruction<Instr = Instruction<'b>>,
+    I: CFGInstruction<Instr = Instruction<'a>>,
 {
-    type Fact = ReachingCopies;
+    type Fact = ReachingCopies<'a>;
+    type BlockFact = HashMap<usize, (Self::Fact, Vec<Self::Fact>)>;
 
     fn transfer(&mut self, block: &Block<I>, mut incoming: Self::Fact) {
         if let Block::Basic {
@@ -69,7 +38,9 @@ where
             for (i, instr) in instructions.iter().enumerate() {
                 // Record the set of copies that reach the point before the
                 // current instruction.
-                self.record_instruction_fact(*block_id, i, &incoming);
+                <CopyProp<'_> as DataFlowAnalysis<I>>::record_instruction_fact(
+                    self, *block_id, i, &incoming,
+                );
 
                 // Compute the set of copies that reach the point after the
                 // current instruction.
@@ -106,7 +77,7 @@ where
                 }
             }
 
-            <CopyProp as DataFlowAnalysis<'_, I>>::record_block_fact(
+            <CopyProp<'_> as DataFlowAnalysis<I>>::record_block_fact(
                 self,
                 block.id(),
                 instructions.len(),
@@ -132,7 +103,7 @@ where
                         );
 
                         if let Some(pred_outgoing) =
-                            <CopyProp as DataFlowAnalysis<'_, I>>::get_block_fact(self, id)
+                            <CopyProp<'_> as DataFlowAnalysis<I>>::get_block_fact(self, id)
                         {
                             // Retain those copies that intersect with the
                             // predecessors copies.
@@ -146,7 +117,7 @@ where
         incoming
     }
 
-    fn initial(&self, cfg: &'a CFG<I>) -> Self::Fact {
+    fn initial(cfg: &CFG<I>) -> Self::Fact {
         let mut initial = Self::Fact::default();
 
         for block in &cfg.basic_blocks() {
@@ -163,23 +134,13 @@ where
     }
 
     #[inline]
-    fn record_block_fact(&mut self, block_id: usize, num_insts: usize, fact: &Self::Fact) {
-        match self.reaching_copies.entry(block_id) {
-            Entry::Occupied(mut entry) => {
-                let exit_fact = &mut entry.get_mut().0;
-                // Reuses existing allocation when possible.
-                exit_fact.clone_from(fact);
-            }
-            Entry::Vacant(entry) => {
-                entry.insert((fact.clone(), vec![Self::Fact::default(); num_insts]));
-            }
-        }
+    fn block_facts(&self) -> &Self::BlockFact {
+        &self.copies
     }
 
     #[inline]
-    fn get_block_fact(&self, block_id: usize) -> Option<&Self::Fact> {
-        let entry = self.reaching_copies.get(&block_id)?;
-        Some(&entry.0)
+    fn block_facts_mut(&mut self) -> &mut Self::BlockFact {
+        &mut self.copies
     }
 
     #[inline]
@@ -196,7 +157,7 @@ where
 {
     let mut copy_prop = CopyProp {
         exit_id: cfg.exit_block_id(),
-        reaching_copies: HashMap::default(),
+        copies: HashMap::default(),
     };
 
     run_analysis(cfg, &mut copy_prop);
@@ -211,36 +172,38 @@ where
         } = block
         {
             for (i, inst) in instructions.iter_mut().enumerate() {
-                if let Some(reaching_copies) = copy_prop.get_instruction_fact(*block_id, i) {
+                if let Some(copies) = <CopyProp<'_> as DataFlowAnalysis<I>>::get_instruction_fact(
+                    &copy_prop, *block_id, i,
+                ) {
                     match inst.concrete_mut() {
                         Instruction::Copy { src, dst } => {
                             // Instruction has no affect if `src` and `dst`
                             // already have the same value with copies that
                             // reach this instruction.
-                            if reaching_copies.contains(&(dst.clone(), src.clone()))
-                                || reaching_copies.contains(&(src.clone(), dst.clone()))
+                            if copies.contains(&(dst.clone(), src.clone()))
+                                || copies.contains(&(src.clone(), dst.clone()))
                             {
                                 to_remove.push(i);
                                 continue;
                             }
 
-                            rewrite_operand(src, reaching_copies);
+                            rewrite_operand(src, copies);
                         }
                         Instruction::Unary { src, .. } | Instruction::Return(src) => {
-                            rewrite_operand(src, reaching_copies);
+                            rewrite_operand(src, copies);
                         }
                         Instruction::Binary { lhs, rhs, .. } => {
-                            rewrite_operand(lhs, reaching_copies);
-                            rewrite_operand(rhs, reaching_copies);
+                            rewrite_operand(lhs, copies);
+                            rewrite_operand(rhs, copies);
                         }
                         Instruction::FnCall { args, .. } => {
                             for arg in args {
-                                rewrite_operand(arg, reaching_copies);
+                                rewrite_operand(arg, copies);
                             }
                         }
                         Instruction::JumpIfZero { cond, .. }
                         | Instruction::JumpIfNotZero { cond, .. } => {
-                            rewrite_operand(cond, reaching_copies);
+                            rewrite_operand(cond, copies);
                         }
                         _ => {}
                     }
@@ -259,10 +222,10 @@ where
 
 /// Rewrites the given _IR_ value using the reaching copies at the current
 /// instruction.
-fn rewrite_operand(val: &mut Value, reaching_copies: &ReachingCopies) {
+fn rewrite_operand<'a>(val: &mut Value<'a>, copies: &ReachingCopies<'a>) {
     if let Value::Var { .. } = val
         // NOTE: O(n) time complexity.
-        && let Some((_, src)) = reaching_copies.iter().find(|(dst, _)| dst == val)
+        && let Some((_, src)) = copies.iter().find(|(dst, _)| dst == val)
     {
         val.clone_from(src);
     }

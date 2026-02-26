@@ -3,6 +3,7 @@
 //! Compiler pass that lowers an abstract syntax tree (_AST_) into intermediate
 //! representation (_IR_).
 
+use std::borrow::Cow;
 use std::fmt;
 
 use crate::compiler::frontend::SymbolTable;
@@ -92,12 +93,12 @@ impl fmt::Display for Function<'_> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction<'a> {
     /// Return a value to the caller.
-    Return(Value),
+    Return(Value<'a>),
     /// Perform a unary operation on `src`, storing the result in `dst`.
     Unary {
         op: UnaryOperator,
-        src: Value,
-        dst: Value,
+        src: Value<'a>,
+        dst: Value<'a>,
         // NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
     },
@@ -105,28 +106,28 @@ pub enum Instruction<'a> {
     /// `dst`.
     Binary {
         op: BinaryOperator,
-        lhs: Value,
-        rhs: Value,
-        dst: Value,
+        lhs: Value<'a>,
+        rhs: Value<'a>,
+        dst: Value<'a>,
         // NOTE: Temporary hack for arithmetic right shift.
         sign: Signedness,
     },
     /// Copy the value from `src` into `dst`.
-    Copy { src: Value, dst: Value },
+    Copy { src: Value<'a>, dst: Value<'a> },
     /// Unconditionally jump to the target label.
     Jump(String),
     /// Conditionally jump to the target label if `cond` is zero.
-    JumpIfZero { cond: Value, target: String },
+    JumpIfZero { cond: Value<'a>, target: String },
     /// Conditionally jump to the target label if `cond` is non-zero.
-    JumpIfNotZero { cond: Value, target: String },
+    JumpIfNotZero { cond: Value<'a>, target: String },
     /// Label identifier.
     Label(String),
     /// Transfers control to the callee with arguments, storing the return value
     /// in `dst`.
     FnCall {
         ident: &'a str,
-        args: Vec<Value>,
-        dst: Value,
+        args: Vec<Value<'a>>,
+        dst: Value<'a>,
     },
 }
 
@@ -240,22 +241,24 @@ impl fmt::Display for Instruction<'_> {
 
 /// _IR_ values.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub enum Value {
+pub enum Value<'a> {
     /// Integer constant (32-bit).
     IntConstant(c_int),
     /// Temporary variable.
-    Var { ident: String, is_static: bool },
+    Var {
+        ident: Cow<'a, str>,
+        is_static: bool,
+    },
 }
 
-impl Value {
+impl Value<'_> {
     /// Returns the identifier of the value, or `None` if it is not a variable.
     #[inline]
     #[must_use]
-    pub const fn as_var(&self) -> Option<&str> {
-        if let Value::Var { ident, .. } = self {
-            Some(ident.as_str())
-        } else {
-            None
+    pub fn as_var(&self) -> Option<&str> {
+        match self {
+            Value::IntConstant(_) => None,
+            Value::Var { ident, .. } => Some(ident),
         }
     }
 
@@ -270,7 +273,7 @@ impl Value {
     }
 }
 
-impl fmt::Display for Value {
+impl fmt::Display for Value<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::IntConstant(i) => write!(f, "{i}"),
@@ -456,7 +459,7 @@ fn generate_ir_function<'a>(
                         builder.instructions.push(Instruction::Copy {
                             src: ir_val,
                             dst: Value::Var {
-                                ident: ident.clone(),
+                                ident: Cow::Borrowed(ident),
                                 is_static: false,
                             },
                         });
@@ -677,7 +680,7 @@ fn generate_ir_function<'a>(
 
                     for case in cases {
                         let dst = Value::Var {
-                            ident: builder.new_tmp(),
+                            ident: Cow::Owned(builder.new_tmp()),
                             is_static: false,
                         };
 
@@ -748,6 +751,7 @@ fn generate_ir_function<'a>(
     // the return value being used by the caller or ignored (no undefined
     // behavior if the value is never used). Will be optimized away during
     // unreachable code elimination, if enabled.
+
     builder
         .instructions
         .push(Instruction::Return(Value::IntConstant(0)));
@@ -769,7 +773,7 @@ fn generate_ir_value<'a>(
     expr: &'a ast::Expression<'_>,
     builder: &mut TACBuilder<'a>,
     sym_table: &SymbolTable,
-) -> Value {
+) -> Value<'a> {
     match expr {
         ast::Expression::IntConstant(i) => Value::IntConstant(*i),
         ast::Expression::Var { ident, .. } => {
@@ -778,7 +782,7 @@ fn generate_ir_value<'a>(
                 .expect("identifier should be in symbol table after semantic analysis");
 
             Value::Var {
-                ident: ident.clone(),
+                ident: Cow::Borrowed(ident),
                 is_static: sym_info.duration == Some(StorageDuration::Static),
             }
         }
@@ -790,7 +794,7 @@ fn generate_ir_value<'a>(
         } => {
             let src = generate_ir_value(expr, builder, sym_table);
             let dst = Value::Var {
-                ident: builder.new_tmp(),
+                ident: Cow::Owned(builder.new_tmp()),
                 is_static: false,
             };
 
@@ -807,7 +811,7 @@ fn generate_ir_value<'a>(
                     };
 
                     let tmp = Value::Var {
-                        ident: builder.new_tmp(),
+                        ident: Cow::Owned(builder.new_tmp()),
                         is_static: false,
                     };
 
@@ -870,7 +874,7 @@ fn generate_ir_value<'a>(
                 ast::BinaryOperator::LogAnd | ast::BinaryOperator::LogOr => {
                     let lhs = generate_ir_value(lhs, builder, sym_table);
                     let dst = Value::Var {
-                        ident: builder.new_tmp(),
+                        ident: Cow::Owned(builder.new_tmp()),
                         is_static: false,
                     };
 
@@ -950,7 +954,7 @@ fn generate_ir_value<'a>(
                     let lhs = generate_ir_value(lhs, builder, sym_table);
                     let rhs = generate_ir_value(rhs, builder, sym_table);
                     let dst = Value::Var {
-                        ident: builder.new_tmp(),
+                        ident: Cow::Owned(builder.new_tmp()),
                         is_static: false,
                     };
 
@@ -977,7 +981,7 @@ fn generate_ir_value<'a>(
                 .expect("identifier should be in symbol table after semantic analysis");
 
             let dst = Value::Var {
-                ident: ident.clone(),
+                ident: Cow::Borrowed(ident),
                 is_static: sym_info.duration == Some(StorageDuration::Static),
             };
 
@@ -996,7 +1000,7 @@ fn generate_ir_value<'a>(
             third,
         } => {
             let dst = Value::Var {
-                ident: builder.new_tmp(),
+                ident: Cow::Owned(builder.new_tmp()),
                 is_static: false,
             };
 
@@ -1035,7 +1039,7 @@ fn generate_ir_value<'a>(
             let mut ir_args = Vec::with_capacity(args.len());
 
             let dst = Value::Var {
-                ident: builder.new_tmp(),
+                ident: Cow::Owned(builder.new_tmp()),
                 is_static: false,
             };
 

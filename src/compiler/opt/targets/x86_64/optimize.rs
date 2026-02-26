@@ -14,7 +14,7 @@ use crate::compiler::{self, frontend::SymbolTable};
 /// Runs machine-dependent, intraprocedural optimization passes, on the given
 /// _x86-64_ machine intermediate representation (_MIR_), according to the
 /// optimizations specified.
-pub fn optimize_x86_64_mir(mir: &mut MIRX86<'_>, opts: &Opts, sym_map: &SymbolTable) {
+pub fn optimize_x86_64_mir<'a>(mir: &mut MIRX86<'a>, opts: &Opts, sym_map: &'a SymbolTable) {
     for item in &mut mir.program {
         if let Item::Func(func) = item {
             optimize_mir_func(&mut func.instructions, opts, sym_map);
@@ -24,7 +24,11 @@ pub fn optimize_x86_64_mir(mir: &mut MIRX86<'_>, opts: &Opts, sym_map: &SymbolTa
 
 /// Optimizes the provided _MIR x86-64_ instructions, applying the specified
 /// optimizations.
-fn optimize_mir_func(instructions: &mut Vec<Instruction<'_>>, opts: &Opts, sym_map: &SymbolTable) {
+fn optimize_mir_func<'a>(
+    instructions: &mut Vec<Instruction<'a>>,
+    opts: &Opts,
+    sym_map: &'a SymbolTable,
+) {
     if instructions.is_empty() {
         return;
     }
