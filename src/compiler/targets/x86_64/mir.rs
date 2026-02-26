@@ -514,6 +514,7 @@ pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>) -> MIRX86<'a> {
                 init,
                 ident,
                 is_global,
+                ..
             } => {
                 mir_items.push(Item::Static {
                     init: *init,
@@ -797,7 +798,9 @@ fn generate_mir_function<'a>(f: &'a ir::Function<'_>) -> Function<'a> {
 fn generate_mir_operand<'a>(val: &'a ir::Value<'_>) -> Operand<'a> {
     match val {
         ir::Value::IntConstant(i) => Operand::Imm32(*i),
-        ir::Value::Var { ident, is_static } => Operand::Symbol {
+        ir::Value::Var {
+            ident, is_static, ..
+        } => Operand::Symbol {
             ident,
             is_static: *is_static,
         },

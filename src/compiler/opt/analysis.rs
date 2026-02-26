@@ -50,24 +50,30 @@ pub trait DataFlowAnalysis<I> {
     /// Merges facts from multiple execution paths (predecessors or successors),
     /// starting from the given block, returning the intersection of the initial
     /// fact and the facts from neighboring blocks.
+    #[must_use]
     fn meet(&self, block: &Block<I>, initial: &Self::Fact) -> Self::Fact;
 
     /// Returns the initial facts for analysis (e.g., identity element for
     /// `meet` function).
-    fn initial(cfg: &CFG<I>) -> Self::Fact;
+    #[must_use]
+    fn initial(&mut self, cfg: &CFG<I>) -> Self::Fact;
 
     /// Returns a mapping of block IDs to exit and per-instruction facts.
+    #[must_use]
     fn block_facts(&self) -> &Self::BlockFact;
 
     /// Returns a mutable mapping of block IDs to exit and per-instruction
     /// facts.
+    #[must_use]
     fn block_facts_mut(&mut self) -> &mut Self::BlockFact;
 
     /// Returns `true` if this is a forward analysis.
+    #[must_use]
     fn is_forward(&self) -> bool;
 
     /// Stores the fact for the block identified by `id`, replacing any prior
     /// fact.
+    #[inline]
     fn record_block_fact(&mut self, block_id: usize, num_inst: usize, fact: &Self::Fact) {
         match self.block_facts_mut().entry(block_id) {
             Entry::Occupied(mut entry) => {
@@ -83,6 +89,8 @@ pub trait DataFlowAnalysis<I> {
 
     /// Returns the recorded fact for the block identified by `id`, or `None` if
     /// no fact has been stored.
+    #[inline]
+    #[must_use]
     fn get_block_fact<'b>(&'b self, block_id: usize) -> Option<&'b Self::Fact>
     where
         I: 'b,
@@ -112,6 +120,7 @@ pub trait DataFlowAnalysis<I> {
     /// Returns the fact for the instruction in the given block, or `None` if
     /// the block is uninitialized.
     #[inline]
+    #[must_use]
     fn get_instruction_fact<'b>(&'b self, block_id: usize, inst_id: usize) -> Option<&'b Self::Fact>
     where
         I: 'b,
@@ -128,7 +137,7 @@ pub trait DataFlowAnalysis<I> {
 ///
 /// Panics if the control-flow graph is malformed.
 pub fn run_analysis<I: CFGInstruction, A: DataFlowAnalysis<I>>(cfg: &CFG<I>, a: &mut A) {
-    let init = A::initial(cfg);
+    let init = a.initial(cfg);
 
     // Exclude the entry and exit block IDs from the set.
     let mut seen_blocks = HashSet::with_capacity(cfg.blocks.len() - 2);

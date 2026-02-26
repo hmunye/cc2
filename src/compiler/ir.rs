@@ -4,6 +4,8 @@
 //! representation (_IR_).
 
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt;
 
 use crate::compiler::frontend::SymbolTable;
@@ -246,12 +248,23 @@ pub enum Value<'a> {
     IntConstant(c_int),
     /// Temporary variable.
     Var {
+        id: usize,
         ident: Cow<'a, str>,
         is_static: bool,
     },
 }
 
 impl Value<'_> {
+    /// Returns the internal ID of the value, or `None` if one was not assigned.
+    #[inline]
+    #[must_use]
+    pub const fn as_id(&self) -> Option<usize> {
+        match self {
+            Value::IntConstant(_) => None,
+            Value::Var { id, .. } => Some(*id),
+        }
+    }
+
     /// Returns the identifier of the value, or `None` if it is not a variable.
     #[inline]
     #[must_use]
@@ -289,6 +302,9 @@ struct TACBuilder<'a> {
     instructions: Vec<Instruction<'a>>,
     tmp_count: usize,
     label_count: usize,
+    val_count: usize,
+    /// Mapping from _IR_ variable name to internal ID.
+    to_id: HashMap<String, usize>,
     /// _AST_ function label.
     fn_ident: &'a str,
     /// Canonical names of `static` objects, later resolved to _IR_ static
@@ -315,6 +331,20 @@ impl<'a> TACBuilder<'a> {
         let label = format!("{}.lbl.{}.{suffix}", self.fn_ident, self.label_count);
         self.label_count += 1;
         label
+    }
+
+    /// Returns an internal value ID for the provided identifier.
+    #[inline]
+    fn new_id(&mut self, ident: String) -> usize {
+        match self.to_id.entry(ident) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let id = self.val_count;
+                self.val_count += 1;
+                entry.insert(id);
+                id
+            }
+        }
     }
 
     /// Resets the builder state for the next _AST_ function definition
@@ -450,11 +480,14 @@ fn generate_ir_function<'a>(
                         // declaration initializer.
                         let ir_val = generate_ir_value(init, builder, sym_table);
 
+                        let id = builder.new_id(ident.clone());
+
                         // Ensure the initialized result is copied to the
                         // destination.
                         builder.instructions.push(Instruction::Copy {
                             src: ir_val,
                             dst: Value::Var {
+                                id,
                                 ident: Cow::Borrowed(ident),
                                 is_static: false,
                             },
@@ -675,8 +708,11 @@ fn generate_ir_function<'a>(
                     let break_label = format!("break_{label}");
 
                     for case in cases {
+                        let tmp_ident = builder.new_tmp();
+
                         let dst = Value::Var {
-                            ident: Cow::Owned(builder.new_tmp()),
+                            id: builder.new_id(tmp_ident.clone()),
+                            ident: Cow::Owned(tmp_ident),
                             is_static: false,
                         };
 
@@ -778,6 +814,7 @@ fn generate_ir_value<'a>(
                 .expect("identifier should be in symbol table after semantic analysis");
 
             Value::Var {
+                id: builder.new_id(ident.clone()),
                 ident: Cow::Borrowed(ident),
                 is_static: sym_info.duration == Some(StorageDuration::Static),
             }
@@ -789,8 +826,12 @@ fn generate_ir_value<'a>(
             ..
         } => {
             let src = generate_ir_value(expr, builder, sym_table);
+
+            let tmp_ident = builder.new_tmp();
+
             let dst = Value::Var {
-                ident: Cow::Owned(builder.new_tmp()),
+                id: builder.new_id(tmp_ident.clone()),
+                ident: Cow::Owned(tmp_ident),
                 is_static: false,
             };
 
@@ -806,8 +847,11 @@ fn generate_ir_value<'a>(
                         ),
                     };
 
+                    let tmp_ident = builder.new_tmp();
+
                     let tmp = Value::Var {
-                        ident: Cow::Owned(builder.new_tmp()),
+                        id: builder.new_id(tmp_ident.clone()),
+                        ident: Cow::Owned(tmp_ident),
                         is_static: false,
                     };
 
@@ -869,8 +913,12 @@ fn generate_ir_value<'a>(
             match op {
                 ast::BinaryOperator::LogAnd | ast::BinaryOperator::LogOr => {
                     let lhs = generate_ir_value(lhs, builder, sym_table);
+
+                    let tmp_ident = builder.new_tmp();
+
                     let dst = Value::Var {
-                        ident: Cow::Owned(builder.new_tmp()),
+                        id: builder.new_id(tmp_ident.clone()),
+                        ident: Cow::Owned(tmp_ident),
                         is_static: false,
                     };
 
@@ -949,8 +997,12 @@ fn generate_ir_value<'a>(
                     // `rhs` can be processed first.
                     let lhs = generate_ir_value(lhs, builder, sym_table);
                     let rhs = generate_ir_value(rhs, builder, sym_table);
+
+                    let tmp_ident = builder.new_tmp();
+
                     let dst = Value::Var {
-                        ident: Cow::Owned(builder.new_tmp()),
+                        id: builder.new_id(tmp_ident.clone()),
+                        ident: Cow::Owned(tmp_ident),
                         is_static: false,
                     };
 
@@ -977,6 +1029,7 @@ fn generate_ir_value<'a>(
                 .expect("identifier should be in symbol table after semantic analysis");
 
             let dst = Value::Var {
+                id: builder.new_id(ident.clone()),
                 ident: Cow::Borrowed(ident),
                 is_static: sym_info.duration == Some(StorageDuration::Static),
             };
@@ -995,8 +1048,11 @@ fn generate_ir_value<'a>(
             second,
             third,
         } => {
+            let tmp_ident = builder.new_tmp();
+
             let dst = Value::Var {
-                ident: Cow::Owned(builder.new_tmp()),
+                id: builder.new_id(tmp_ident.clone()),
+                ident: Cow::Owned(tmp_ident),
                 is_static: false,
             };
 
@@ -1034,8 +1090,11 @@ fn generate_ir_value<'a>(
         ast::Expression::FnCall { ident, args, .. } => {
             let mut ir_args = Vec::with_capacity(args.len());
 
+            let tmp_ident = builder.new_tmp();
+
             let dst = Value::Var {
-                ident: Cow::Owned(builder.new_tmp()),
+                id: builder.new_id(tmp_ident.clone()),
+                ident: Cow::Owned(tmp_ident),
                 is_static: false,
             };
 

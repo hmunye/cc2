@@ -116,7 +116,7 @@ where
     }
 
     #[inline]
-    fn initial(_cfg: &CFG<I>) -> Self::Fact {
+    fn initial(&mut self, _cfg: &CFG<I>) -> Self::Fact {
         // The identity element for the `meet` operator (union) is the empty set
         // (at stack-frame exit, no registers are live, ignoring callee-saved
         // registers which are handled separately).

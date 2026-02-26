@@ -3,16 +3,14 @@
 //! Transforms an intermediate representation (_IR_) by replacing variables with
 //! their assigned values where applicable, reducing redundant copies.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::compiler::ir::{Instruction, Value};
 use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
 use crate::compiler::opt::{Block, CFG, CFGInstruction};
 
-/// TODO: Use `HashMap` to avoid O(n) lookup.
-///
 /// Tracks copies from `dst` -> `src` (`dst` receives value from `src`).
-type ReachingCopies<'a> = HashSet<(Value<'a>, Value<'a>)>;
+type ReachingCopies<'a> = HashMap<Value<'a>, Value<'a>>;
 
 /// Reaching copies analysis over a control-flow graph.
 #[derive(Debug)]
@@ -46,7 +44,9 @@ where
                 // current instruction.
                 match instr.concrete() {
                     Instruction::Copy { src, dst } => {
-                        if incoming.contains(&(src.clone(), dst.clone())) {
+                        if let Some(copy_dst) = incoming.get(src)
+                            && dst == copy_dst
+                        {
                             // Skip trivial copy (e.g. `x = y` copy after prior
                             // `y = x` copy was recorded).
                             continue;
@@ -54,9 +54,9 @@ where
 
                         // Kill any copies to and from `dst` before recording
                         // it.
-                        incoming.retain(|copy| copy.0 != *dst && copy.1 != *dst);
+                        incoming.retain(|copy_dst, copy_src| copy_dst != dst && copy_src != dst);
 
-                        incoming.insert((dst.clone(), src.clone()));
+                        incoming.insert(dst.clone(), src.clone());
                     }
                     Instruction::FnCall { dst, .. } => {
                         // Kill any copies to and from `dst`.
@@ -64,14 +64,14 @@ where
                         // Interprocedural analysis is not performed, so also
                         // conservatively remove copies using static variables
                         // that may be used across function boundaries.
-                        incoming.retain(|copy| {
-                            (!copy.0.is_static() && copy.0 != *dst)
-                                && (!copy.1.is_static() && copy.1 != *dst)
+                        incoming.retain(|copy_dst, copy_src| {
+                            (!copy_dst.is_static() && copy_dst != dst)
+                                && (!copy_src.is_static() && copy_src != dst)
                         });
                     }
                     Instruction::Unary { dst, .. } | Instruction::Binary { dst, .. } => {
                         // Kill any copies to and from `dst`.
-                        incoming.retain(|copy| copy.0 != *dst && copy.1 != *dst);
+                        incoming.retain(|copy_dst, copy_src| copy_dst != dst && copy_src != dst);
                     }
                     _ => {}
                 }
@@ -107,7 +107,11 @@ where
                         {
                             // Retain those copies that intersect with the
                             // predecessors copies.
-                            incoming.retain(|copy| pred_outgoing.contains(copy));
+                            incoming.retain(|copy_dst, copy_src| {
+                                pred_outgoing
+                                    .get(copy_dst)
+                                    .is_some_and(|pred_src| pred_src == copy_src)
+                            });
                         }
                     }
                 }
@@ -117,18 +121,24 @@ where
         incoming
     }
 
-    fn initial(cfg: &CFG<I>) -> Self::Fact {
+    fn initial(&mut self, cfg: &CFG<I>) -> Self::Fact {
         let mut initial = Self::Fact::default();
+
+        let mut count = 0;
 
         for block in &cfg.basic_blocks() {
             if let Block::Basic { instructions, .. } = block {
                 for inst in instructions {
                     if let Instruction::Copy { src, dst } = inst.concrete() {
-                        initial.insert((dst.clone(), src.clone()));
+                        initial.insert(dst.clone(), src.clone());
                     }
                 }
+
+                count += 1;
             }
         }
+
+        self.copies.reserve(count);
 
         initial
     }
@@ -156,8 +166,8 @@ where
     I: CFGInstruction<Instr = Instruction<'b>>,
 {
     let mut copy_prop = CopyProp {
-        exit_id: cfg.exit_block_id(),
         copies: HashMap::default(),
+        exit_id: cfg.exit_block_id(),
     };
 
     run_analysis(cfg, &mut copy_prop);
@@ -180,8 +190,8 @@ where
                             // Instruction has no affect if `src` and `dst`
                             // already have the same value with copies that
                             // reach this instruction.
-                            if copies.contains(&(dst.clone(), src.clone()))
-                                || copies.contains(&(src.clone(), dst.clone()))
+                            if copies.get(dst).is_some_and(|s| s == src)
+                                || copies.get(src).is_some_and(|d| d == dst)
                             {
                                 to_remove.push(i);
                                 continue;
@@ -224,8 +234,7 @@ where
 /// instruction.
 fn rewrite_operand<'a>(val: &mut Value<'a>, copies: &ReachingCopies<'a>) {
     if let Value::Var { .. } = val
-        // NOTE: O(n) time complexity.
-        && let Some((_, src)) = copies.iter().find(|(dst, _)| dst == val)
+        && let Some(src) = copies.get(val)
     {
         val.clone_from(src);
     }

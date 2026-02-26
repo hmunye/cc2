@@ -3,26 +3,23 @@
 //! Transforms an intermediate representation (_IR_) by removing assignments to
 //! variables that are never used or updated.
 
-// TODO: Update IR to include unique ID for each variable, so strings do not
-// have to be cloned.
-
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::ir::{Instruction, Value};
 use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
 use crate::compiler::opt::{Block, CFG, CFGInstruction};
 
-/// Tracks the set of live variables at a program point.
-type Stores = HashSet<String>;
+/// Tracks the set of live variables at a program point using internal IDs.
+type Stores = HashSet<usize>;
 
 /// Liveness analysis over a control-flow graph.
 #[derive(Debug)]
 struct DeadStore {
-    exit_id: usize,
-    statics: Stores,
     /// Mapping from block ID to live variables at the block's exit and the
     /// per-instruction live variables by index.
     stores: HashMap<usize, (Stores, Vec<Stores>)>,
+    statics: Stores,
+    exit_id: usize,
 }
 
 impl<'a, I> DataFlowAnalysis<I> for DeadStore
@@ -50,57 +47,57 @@ where
                 // the current instruction.
                 match instr.concrete() {
                     Instruction::Binary { lhs, rhs, dst, .. } => {
-                        if let Some(ident) = dst.as_var() {
+                        if let Value::Var { id, .. } = dst {
                             // Remove `dst` from the live set because this
                             // instruction defines it, killing the previously
                             // live value.
-                            outgoing.remove(ident);
+                            outgoing.remove(id);
                         }
 
-                        if let Some(ident) = lhs.as_var() {
-                            outgoing.insert(ident.to_string());
+                        if let Value::Var { id, .. } = lhs {
+                            outgoing.insert(*id);
                         }
 
-                        if let Some(ident) = rhs.as_var() {
-                            outgoing.insert(ident.to_string());
+                        if let Value::Var { id, .. } = rhs {
+                            outgoing.insert(*id);
                         }
                     }
                     Instruction::Unary { src, dst, .. } | Instruction::Copy { src, dst } => {
-                        if let Some(ident) = dst.as_var() {
+                        if let Value::Var { id, .. } = dst {
                             // Remove `dst` from the live set because this
                             // instruction defines it, killing the previously
                             // live value.
-                            outgoing.remove(ident);
+                            outgoing.remove(id);
                         }
 
-                        if let Some(ident) = src.as_var() {
-                            outgoing.insert(ident.to_string());
+                        if let Value::Var { id, .. } = src {
+                            outgoing.insert(*id);
                         }
                     }
                     Instruction::JumpIfZero { cond: val, .. }
                     | Instruction::JumpIfNotZero { cond: val, .. }
                     | Instruction::Return(val) => {
-                        if let Some(ident) = val.as_var() {
-                            outgoing.insert(ident.to_string());
+                        if let Value::Var { id, .. } = val {
+                            outgoing.insert(*id);
                         }
                     }
                     Instruction::FnCall { args, dst, .. } => {
-                        if let Some(ident) = dst.as_var() {
+                        if let Value::Var { id, .. } = dst {
                             // Remove `dst` from the live set because this
                             // instruction defines it, killing the previously
                             // live value.
-                            outgoing.remove(ident);
+                            outgoing.remove(id);
                         }
 
-                        args.iter().filter_map(Value::as_var).for_each(|ident| {
-                            outgoing.insert(ident.to_string());
+                        args.iter().filter_map(Value::as_id).for_each(|id| {
+                            outgoing.insert(id);
                         });
 
                         // Interprocedural analysis is not performed, so also
                         // conservatively mark all static variables as live,
                         // since they may be read and/or updated across function
                         // boundaries.
-                        outgoing.extend(self.statics.iter().cloned());
+                        outgoing.extend(self.statics.iter().copied());
                     }
                     _ => {}
                 }
@@ -124,7 +121,7 @@ where
                     // All static variables used within the function are live
                     // at the exit block (end of function).
                     id if self.exit_id == id => {
-                        outgoing.extend(self.statics.iter().cloned());
+                        outgoing.extend(self.statics.iter().copied());
                     }
                     id => {
                         assert!(
@@ -135,7 +132,7 @@ where
                         if let Some(succ_incoming) =
                             <DeadStore as DataFlowAnalysis<I>>::get_block_fact(self, id)
                         {
-                            outgoing.extend(succ_incoming.iter().cloned());
+                            outgoing.extend(succ_incoming.iter().copied());
                         }
                     }
                 }
@@ -146,7 +143,7 @@ where
     }
 
     #[inline]
-    fn initial(_cfg: &CFG<I>) -> Self::Fact {
+    fn initial(&mut self, _cfg: &CFG<I>) -> Self::Fact {
         // The identity element for the `meet` operator (union) is the empty set
         // (at the function exit, no local variables are live).
         Self::Fact::default()
@@ -175,9 +172,9 @@ where
     I: CFGInstruction<Instr = Instruction<'b>>,
 {
     let mut dse = DeadStore {
-        exit_id: cfg.exit_block_id(),
-        statics: collect_statics(cfg),
         stores: HashMap::default(),
+        statics: collect_statics(cfg),
+        exit_id: cfg.exit_block_id(),
     };
 
     run_analysis(cfg, &mut dse);
@@ -195,18 +192,18 @@ where
                 if let Some(stores) =
                     <DeadStore as DataFlowAnalysis<I>>::get_instruction_fact(&dse, *block_id, i)
                 {
-                    // Since interprocedural analysis is not performed, function
-                    // calls are ignored, as they may have side-effects.
                     match inst.concrete() {
                         Instruction::Copy { dst, .. }
                         | Instruction::Unary { dst, .. }
                         | Instruction::Binary { dst, .. } => {
-                            if let Some(ident) = dst.as_var()
-                                && !stores.contains(ident)
+                            if let Some(id) = dst.as_id()
+                                && !stores.contains(&id)
                             {
                                 to_remove.push(i);
                             }
                         }
+                        // Since interprocedural analysis is not performed, function
+                        // calls are ignored, as they may have side-effects.
                         _ => {}
                     }
                 }
@@ -265,8 +262,8 @@ where
 #[inline]
 fn insert_static(val: &Value<'_>, statics: &mut Stores) {
     if val.is_static()
-        && let Some(ident) = val.as_var()
+        && let Some(id) = val.as_id()
     {
-        statics.insert(ident.to_string());
+        statics.insert(id);
     }
 }
