@@ -36,7 +36,7 @@ pub fn emit_gas_x86_64_linux(
 
     for item in &mir.program {
         match item {
-            x86_64::Item::Func(func) => {
+            x86_64::Item::Fn(f) => {
                 let section_emit = if curr_section == ".text" {
                     ""
                 } else {
@@ -44,8 +44,8 @@ pub fn emit_gas_x86_64_linux(
                     "\t.text\n"
                 };
 
-                let globl_emit = if func.is_global {
-                    Cow::Owned(format!("\t.globl\t{}\n", func.label))
+                let globl_emit = if f.is_global {
+                    Cow::Owned(format!("\t.globl\t{}\n", f.label))
                 } else {
                     Cow::Borrowed("")
                 };
@@ -54,24 +54,20 @@ pub fn emit_gas_x86_64_linux(
                 writeln!(
                     &mut writer,
                     "{section_emit}{globl_emit}\t.type\t{label}, @function\n{label}:",
-                    label = &func.label
+                    label = &f.label
                 )?;
 
                 // `FB` - Function Begin
                 // writeln!(&mut writer, ".LFB{i}:")?;
 
-                emit_asm_function(func, &mir.locales, &mut writer)?;
+                emit_asm_function(f, &mir.locales, &mut writer)?;
 
                 // `FE` - Function End
                 // writeln!(&mut writer, ".LFE{i}:")?;
 
                 // `.size` directive records the byte size of the function in
                 // the _ELF_ symbol table.
-                writeln!(
-                    &mut writer,
-                    "\t.size\t{label}, .-{label}",
-                    label = &func.label
-                )?;
+                writeln!(&mut writer, "\t.size\t{label}, .-{label}", label = &f.label)?;
 
                 // i += 1;
             }
@@ -151,7 +147,7 @@ pub fn emit_gas_x86_64_linux(
 /// Emit assembly representation of the given _MIR x86-64_ function to the
 /// provided `writer`.
 fn emit_asm_function(
-    func: &x86_64::Function<'_>,
+    f: &x86_64::Function<'_>,
     locales: &HashSet<&str>,
     writer: &mut BufWriter<Box<dyn Write>>,
 ) -> io::Result<()> {
@@ -164,7 +160,7 @@ fn emit_asm_function(
     // to establish the start of the callee's stack frame.
     writeln!(writer, "\tpushq\t%rbp\n\tmovq\t%rsp, %rbp")?;
 
-    for inst in &func.instructions {
+    for inst in &f.instructions {
         if let x86_64::Instruction::Label(label) = inst {
             writeln!(writer, ".L{label}:")?;
             continue;

@@ -167,10 +167,10 @@ pub fn resolve_labels<'a>(
     let mut lbl_resolver = LabelResolver::default();
 
     for decl in &mut ast.program {
-        if let Declaration::Func(func) = decl
-            && let Some(body) = &mut func.body
+        if let Declaration::Fn(f) = decl
+            && let Some(body) = &mut f.body
         {
-            lbl_resolver.reset(&func.ident);
+            lbl_resolver.reset(&f.ident);
 
             // Collect and validate all labels within the function in the first
             // pass.
@@ -227,7 +227,7 @@ fn update_labels(body: &mut Block<'_>, resolver: &LabelResolver<'_>) {
             }
             Statement::Goto { target, .. } => {
                 target.clone_from(
-                    resolver.labels.get(target.as_str()).expect(
+                    resolver.labels.get(target).expect(
                         "`goto` target should have been encountered during label resolution",
                     ),
                 );
@@ -237,7 +237,7 @@ fn update_labels(body: &mut Block<'_>, resolver: &LabelResolver<'_>) {
                     label.clone_from(
                         resolver
                             .labels
-                            .get(label.as_str())
+                            .get(label)
                             .expect("label should have been encountered during label resolution"),
                     );
 

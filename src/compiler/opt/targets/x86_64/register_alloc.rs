@@ -119,7 +119,7 @@ impl<'a> InterferenceGraph<'a> {
 
     /// Returns a new, initialized, interference graph from the provided
     /// instructions and symbol map.
-    fn from_instructions(instructions: &[Instruction<'a>], sym_map: &'a SymbolTable) -> Self {
+    fn from_instructions(instructions: &[Instruction<'a>], sym_table: &'a SymbolTable) -> Self {
         let mut base = Self::base();
 
         let mut seen = HashSet::new();
@@ -179,7 +179,7 @@ impl<'a> InterferenceGraph<'a> {
             }
         }
 
-        base.apply_liveness(instructions, sym_map);
+        base.apply_liveness(instructions, sym_table);
 
         base
     }
@@ -360,11 +360,11 @@ impl<'a> InterferenceGraph<'a> {
 
     /// Adds edges to the graph based on the results of the liveness data-flow
     /// analysis.
-    fn apply_liveness(&mut self, instructions: &[Instruction<'a>], sym_map: &'a SymbolTable) {
+    fn apply_liveness(&mut self, instructions: &[Instruction<'a>], sym_table: &'a SymbolTable) {
         let mut cfg = CFG::new();
         cfg.sync(instructions);
 
-        let mut liveness = RegisterLiveness::new(cfg.exit_block_id(), sym_map);
+        let mut liveness = RegisterLiveness::new(cfg.exit_block_id(), sym_table);
 
         run_analysis(&cfg, &mut liveness);
 
@@ -520,9 +520,9 @@ impl<'a> RegisterMap<'a> {
 pub fn allocate_registers<'a>(
     instructions: &mut Vec<Instruction<'a>>,
     opts: &Opts,
-    sym_map: &'a SymbolTable,
+    sym_table: &'a SymbolTable,
 ) -> HashSet<Reg> {
-    let mut ifg = InterferenceGraph::from_instructions(instructions, sym_map);
+    let mut ifg = InterferenceGraph::from_instructions(instructions, sym_table);
 
     if opts.coalesce {
         loop {
@@ -530,7 +530,7 @@ pub fn allocate_registers<'a>(
                 break;
             }
 
-            ifg = InterferenceGraph::from_instructions(instructions, sym_map);
+            ifg = InterferenceGraph::from_instructions(instructions, sym_table);
         }
     }
 

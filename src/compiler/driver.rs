@@ -31,7 +31,8 @@ impl Context<'_> {
     #[inline]
     #[must_use]
     pub fn src_slice(&self, range: Range<usize>) -> &str {
-        std::str::from_utf8(&self.src[range]).expect("source should only contain ASCII bytes")
+        std::str::from_utf8(&self.src[range])
+            .expect("source should only contain ASCII bytes, any in-bounds range should be valid")
     }
 }
 
@@ -39,8 +40,8 @@ impl Context<'_> {
 ///
 /// # Errors
 ///
-/// Returns an error if the provided input file cannot be opened or read, or if
-/// any compilation phase fails.
+/// Returns an error if the provided input file cannot be opened or read or any
+/// compilation phase fails.
 pub fn run_compiler(args: &args::Args) -> Result<()> {
     let mut f = if args.preprocess {
         preprocess_input(args)?
@@ -79,32 +80,32 @@ pub fn run_compiler(args: &args::Args) -> Result<()> {
             print!("{ast}");
         }
         "ir" => {
-            let (ast, mut sym_map) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, mut sym_table) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
 
-            let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
+            let mut ir = compiler::ir::generate_ir(&ast, &mut sym_table);
             compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
             print!("{ir}");
         }
         "mir" => {
-            let (ast, mut sym_map) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, mut sym_table) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
 
-            let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
+            let mut ir = compiler::ir::generate_ir(&ast, &mut sym_table);
             compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
             let mut mir = compiler::targets::x86_64::generate_x86_64_mir(&ir);
-            compiler::opt::targets::optimize_x86_64_mir(&mut mir, &args.opts, &sym_map);
+            compiler::opt::targets::optimize_x86_64_mir(&mut mir, &args.opts, &sym_table);
 
             print!("{mir}");
         }
         stage => {
-            let (ast, mut sym_map) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
+            let (ast, mut sym_table) = compiler::frontend::parse_ast(&ctx, lexer.peekable())?;
 
-            let mut ir = compiler::ir::generate_ir(&ast, &mut sym_map);
+            let mut ir = compiler::ir::generate_ir(&ast, &mut sym_table);
             compiler::opt::passes::optimize_ir(&mut ir, &args.opts);
 
             let mut mir = compiler::targets::x86_64::generate_x86_64_mir(&ir);
-            compiler::opt::targets::optimize_x86_64_mir(&mut mir, &args.opts, &sym_map);
+            compiler::opt::targets::optimize_x86_64_mir(&mut mir, &args.opts, &sym_table);
 
             let writer: Box<dyn Write> = if stage == "asm" {
                 Box::new(io::stdout().lock())

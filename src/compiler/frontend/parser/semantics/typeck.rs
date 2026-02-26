@@ -22,10 +22,10 @@ use crate::{diag::Result, fmt_token_err};
 pub fn resolve_types<'a>(
     ast: AST<'a, IdentPhase>,
     ctx: &Context<'_>,
-    sym_map: &SymbolTable,
+    sym_table: &SymbolTable,
 ) -> Result<AST<'a, TypePhase>> {
     for decl in &ast.program {
-        type_check_declaration(decl, true, ctx, sym_map)?;
+        type_check_declaration(decl, true, ctx, sym_table)?;
     }
 
     Ok(AST {
@@ -38,30 +38,26 @@ fn type_check_declaration(
     decl: &Declaration<'_>,
     is_file_scope: bool,
     ctx: &Context<'_>,
-    sym_map: &SymbolTable,
+    sym_table: &SymbolTable,
 ) -> Result<()> {
     match decl {
-        var @ Declaration::Var { .. } => type_check_variable(var, is_file_scope, ctx, sym_map),
-        Declaration::Func(func) => type_check_function(func, ctx, sym_map),
+        var @ Declaration::Var { .. } => type_check_variable(var, is_file_scope, ctx, sym_table),
+        Declaration::Fn(f) => type_check_function(f, ctx, sym_table),
     }
 }
 
-fn type_check_function(
-    func: &Function<'_>,
-    ctx: &Context<'_>,
-    sym_map: &SymbolTable,
-) -> Result<()> {
+fn type_check_function(f: &Function<'_>, ctx: &Context<'_>, sym_table: &SymbolTable) -> Result<()> {
     let Function {
         specs,
         ident,
         body,
         token,
         ..
-    } = func;
+    } = f;
 
-    let entry = sym_map
-        .get(ident.as_str())
-        .expect("function should be available after symbol resolution");
+    let entry = sym_table
+        .get(ident)
+        .expect("identifier should be in symbol table after symbol resolution");
 
     if entry.ty != specs.ty {
         let tok_str = format!("{token:?}");
@@ -79,7 +75,7 @@ fn type_check_function(
     }
 
     if let Some(body) = body {
-        type_check_block(body, ctx, sym_map)?;
+        type_check_block(body, ctx, sym_table)?;
     }
 
     Ok(())
@@ -89,7 +85,7 @@ fn type_check_variable(
     var: &Declaration<'_>,
     is_file_scope: bool,
     ctx: &Context<'_>,
-    sym_map: &SymbolTable,
+    sym_table: &SymbolTable,
 ) -> Result<()> {
     if let Declaration::Var {
         specs,
@@ -113,9 +109,9 @@ fn type_check_variable(
             ));
         }
 
-        let entry = sym_map
-            .get(ident.as_str())
-            .expect("variable should be available after symbol resolution");
+        let entry = sym_table
+            .get(ident)
+            .expect("identifier should be in symbol table after symbol resolution");
 
         if entry.ty != specs.ty {
             let tok_str = format!("{token:?}");
@@ -133,18 +129,18 @@ fn type_check_variable(
         }
 
         if let Some(init) = init {
-            type_check_expression(init, ctx, sym_map)?;
+            type_check_expression(init, ctx, sym_table)?;
         }
     }
 
     Ok(())
 }
 
-fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, sym_map: &SymbolTable) -> Result<()> {
+fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, sym_table: &SymbolTable) -> Result<()> {
     for block_item in &block.0 {
         match block_item {
-            BlockItem::Stmt(stmt) => type_check_statement(stmt, ctx, sym_map)?,
-            BlockItem::Decl(decl) => type_check_declaration(decl, false, ctx, sym_map)?,
+            BlockItem::Stmt(stmt) => type_check_statement(stmt, ctx, sym_table)?,
+            BlockItem::Decl(decl) => type_check_declaration(decl, false, ctx, sym_table)?,
         }
     }
 
@@ -154,22 +150,22 @@ fn type_check_block(block: &Block<'_>, ctx: &Context<'_>, sym_map: &SymbolTable)
 fn type_check_statement(
     stmt: &Statement<'_>,
     ctx: &Context<'_>,
-    sym_map: &SymbolTable,
+    sym_table: &SymbolTable,
 ) -> Result<()> {
     match stmt {
         Statement::Return(expr) | Statement::Expression(expr) => {
-            type_check_expression(expr, ctx, sym_map)
+            type_check_expression(expr, ctx, sym_table)
         }
         Statement::If {
             cond,
             then,
             opt_else,
         } => {
-            type_check_expression(cond, ctx, sym_map)?;
-            type_check_statement(then, ctx, sym_map)?;
+            type_check_expression(cond, ctx, sym_table)?;
+            type_check_statement(then, ctx, sym_table)?;
 
             if let Some(stmt) = opt_else {
-                type_check_statement(stmt, ctx, sym_map)?;
+                type_check_statement(stmt, ctx, sym_table)?;
             }
 
             Ok(())
@@ -178,19 +174,19 @@ fn type_check_statement(
             let stmt = match labeled {
                 Labeled::Label { stmt, .. } | Labeled::Default { stmt, .. } => stmt,
                 Labeled::Case { expr, stmt, .. } => {
-                    type_check_expression(expr, ctx, sym_map)?;
+                    type_check_expression(expr, ctx, sym_table)?;
                     stmt
                 }
             };
 
-            type_check_statement(stmt, ctx, sym_map)
+            type_check_statement(stmt, ctx, sym_table)
         }
-        Statement::Compound(block) => type_check_block(block, ctx, sym_map),
+        Statement::Compound(block) => type_check_block(block, ctx, sym_table),
         Statement::While { cond, stmt, .. }
         | Statement::Do { stmt, cond, .. }
         | Statement::Switch { cond, stmt, .. } => {
-            type_check_expression(cond, ctx, sym_map)?;
-            type_check_statement(stmt, ctx, sym_map)
+            type_check_expression(cond, ctx, sym_table)?;
+            type_check_statement(stmt, ctx, sym_table)
         }
         Statement::For {
             init,
@@ -217,28 +213,28 @@ fn type_check_statement(
                             ));
                         }
 
-                        type_check_variable(decl, false, ctx, sym_map)?;
+                        type_check_variable(decl, false, ctx, sym_table)?;
                     }
-                    Declaration::Func(_) => unreachable!(
+                    Declaration::Fn(_) => panic!(
                         "`for` loop initial declaration should never contain a function declaration"
                     ),
                 },
                 ForInit::Expr(opt_init) => {
                     if let Some(init) = opt_init {
-                        type_check_expression(init, ctx, sym_map)?;
+                        type_check_expression(init, ctx, sym_table)?;
                     }
                 }
             }
 
             if let Some(cond) = opt_cond {
-                type_check_expression(cond, ctx, sym_map)?;
+                type_check_expression(cond, ctx, sym_table)?;
             }
 
             if let Some(post) = opt_post {
-                type_check_expression(post, ctx, sym_map)?;
+                type_check_expression(post, ctx, sym_table)?;
             }
 
-            type_check_statement(stmt, ctx, sym_map)
+            type_check_statement(stmt, ctx, sym_table)
         }
         Statement::Goto { .. }
         | Statement::Break { .. }
@@ -250,31 +246,31 @@ fn type_check_statement(
 fn type_check_expression(
     expr: &Expression<'_>,
     ctx: &Context<'_>,
-    sym_map: &SymbolTable,
+    sym_table: &SymbolTable,
 ) -> Result<()> {
     match expr {
         Expression::Assignment { lvalue, rvalue, .. } => {
-            type_check_expression(lvalue, ctx, sym_map)?;
-            type_check_expression(rvalue, ctx, sym_map)
+            type_check_expression(lvalue, ctx, sym_table)?;
+            type_check_expression(rvalue, ctx, sym_table)
         }
-        Expression::Unary { expr, .. } => type_check_expression(expr, ctx, sym_map),
+        Expression::Unary { expr, .. } => type_check_expression(expr, ctx, sym_table),
         Expression::Binary { lhs, rhs, .. } => {
-            type_check_expression(lhs, ctx, sym_map)?;
-            type_check_expression(rhs, ctx, sym_map)
+            type_check_expression(lhs, ctx, sym_table)?;
+            type_check_expression(rhs, ctx, sym_table)
         }
         Expression::Conditional {
             cond,
             second,
             third,
         } => {
-            type_check_expression(cond, ctx, sym_map)?;
-            type_check_expression(second, ctx, sym_map)?;
-            type_check_expression(third, ctx, sym_map)
+            type_check_expression(cond, ctx, sym_table)?;
+            type_check_expression(second, ctx, sym_table)?;
+            type_check_expression(third, ctx, sym_table)
         }
         Expression::Var { ident, token } => {
-            let entry = sym_map
-                .get(ident.as_str())
-                .expect("variable should be available after symbol resolution");
+            let entry = sym_table
+                .get(ident)
+                .expect("identifier should be in symbol table after symbol resolution");
 
             if entry.ty != Type::Int {
                 let tok_str = format!("{token:?}");
@@ -293,12 +289,12 @@ fn type_check_expression(
 
             Ok(())
         }
-        Expression::FuncCall { ident, args, token } => {
-            let entry = sym_map
-                .get(ident.as_str())
-                .expect("function should be available after symbol resolution");
+        Expression::FnCall { ident, args, token } => {
+            let entry = sym_table
+                .get(ident)
+                .expect("identifier should be in symbol table after symbol resolution");
 
-            if let Type::Func {
+            if let Type::Fn {
                 param_count: params,
             } = entry.ty
             {
@@ -320,7 +316,7 @@ fn type_check_expression(
                 }
 
                 for expr in args {
-                    type_check_expression(expr, ctx, sym_map)?;
+                    type_check_expression(expr, ctx, sym_table)?;
                 }
 
                 Ok(())

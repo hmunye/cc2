@@ -51,6 +51,7 @@ pub struct AST<'a, P> {
 impl<P> fmt::Display for AST<'_, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "AST Program")?;
+
         for decl in &self.program {
             decl.fmt_with_indent(f, 2)?;
         }
@@ -93,7 +94,7 @@ pub enum Declaration<'a> {
         /// Identifier token.
         token: Token<'a>,
     },
-    Func(Function<'a>),
+    Fn(Function<'a>),
 }
 
 impl Declaration<'_> {
@@ -102,7 +103,7 @@ impl Declaration<'_> {
 
         match self {
             var @ Declaration::Var { .. } => writeln!(f, "{pad}{var}"),
-            Declaration::Func(func) => func.fmt_with_indent(f, indent),
+            Declaration::Fn(function) => function.fmt_with_indent(f, indent),
         }
     }
 }
@@ -124,7 +125,7 @@ impl fmt::Display for Declaration<'_> {
                     }
                 ),
             },
-            Declaration::Func(func) => func.fmt_with_indent(f, 0),
+            Declaration::Fn(function) => function.fmt_with_indent(f, 0),
         }
     }
 }
@@ -471,7 +472,7 @@ pub enum Expression<'a> {
         second: Box<Expression<'a>>,
         third: Box<Expression<'a>>,
     },
-    FuncCall {
+    FnCall {
         ident: String,
         args: Vec<Expression<'a>>,
         /// Identifier token.
@@ -509,7 +510,7 @@ impl fmt::Display for Expression<'_> {
             } => {
                 write!(f, "{cond} ? {second} : {third}")
             }
-            Expression::FuncCall { ident, args, .. } => {
+            Expression::FnCall { ident, args, .. } => {
                 let args_str = args
                     .iter()
                     .map(|a| format!("{a}"))
@@ -723,9 +724,9 @@ pub fn parse_ast<'a, I: Iterator<Item = Result<Token<'a>>>>(
 ) -> Result<(AST<'a, Analyzed>, SymbolTable)> {
     let ast = parse_program(ctx, &mut iter)?;
 
-    let (ast, sym_map) = semantics::resolve_symbols(ast, ctx)?;
+    let (ast, sym_table) = semantics::resolve_symbols(ast, ctx)?;
 
-    let ast = semantics::resolve_types(ast, ctx, &sym_map)?;
+    let ast = semantics::resolve_types(ast, ctx, &sym_table)?;
 
     let ast = semantics::resolve_labels(ast, ctx)?;
 
@@ -733,7 +734,7 @@ pub fn parse_ast<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
     let ast = semantics::resolve_switches(ast, ctx)?;
 
-    Ok((ast, sym_map))
+    Ok((ast, sym_table))
 }
 
 /// Parses an _AST_ program from the provided `Token` iterator.
@@ -778,8 +779,8 @@ fn parse_declaration<'a, I: Iterator<Item = Result<Token<'a>>>>(
         match &tok.ty {
             // Function declaration/definition.
             TokenType::LParen => {
-                let func = parse_function(ctx, iter, Some((specs, ident, token)))?;
-                return Ok(Declaration::Func(func));
+                let f = parse_function(ctx, iter, Some((specs, ident, token)))?;
+                return Ok(Declaration::Fn(f));
             }
             // Variable declaration with initializer.
             TokenType::Operator(OperatorKind::Assign) => {
@@ -922,7 +923,7 @@ fn parse_function<'a, I: Iterator<Item = Result<Token<'a>>>>(
 
     // NOTE: Include `specs.ty` as return type for function.
     let specs = DeclSpecs {
-        ty: Type::Func {
+        ty: Type::Fn {
             param_count: params.len(),
         },
         storage: specs.storage,
@@ -1108,8 +1109,8 @@ fn parse_for_init<'a, I: Iterator<Item = Result<Token<'a>>>>(
             TokenType::Keyword(Reserved::Int | Reserved::Static | Reserved::Extern)
         ) {
             match parse_declaration(ctx, iter)? {
-                Declaration::Func(func) => {
-                    let token = &func.token;
+                Declaration::Fn(f) => {
+                    let token = &f.token;
 
                     let tok_str = format!("{token:?}");
                     let line_content = ctx.src_slice(token.loc.line_span.clone());
@@ -1680,7 +1681,7 @@ fn parse_factor<'a, I: Iterator<Item = Result<Token<'a>>>>(
                             let args = parse_args(ctx, iter)?;
                             expect_token(ctx, iter, TokenType::RParen)?;
 
-                            return Ok(Expression::FuncCall {
+                            return Ok(Expression::FnCall {
                                 ident: s.to_string(),
                                 args,
                                 token,

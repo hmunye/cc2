@@ -471,7 +471,7 @@ impl<'a> Lexer<'a> {
 
         let line_token = self.consume_constant()?;
         let TokenType::IntConstant(line) = line_token.ty else {
-            panic!("decimal-line should be parsed as an integer constant");
+            panic!("decimal-line should be an integer constant");
         };
 
         debug_assert!(line >= 0);

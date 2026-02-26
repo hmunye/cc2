@@ -14,27 +14,27 @@ use crate::compiler::{self, frontend::SymbolTable};
 /// Runs machine-dependent, intraprocedural optimization passes, on the given
 /// _x86-64_ machine intermediate representation (_MIR_), according to the
 /// optimizations specified.
-pub fn optimize_x86_64_mir<'a>(mir: &mut MIRX86<'a>, opts: &Opts, sym_map: &'a SymbolTable) {
+pub fn optimize_x86_64_mir<'a>(mir: &mut MIRX86<'a>, opts: &Opts, sym_table: &'a SymbolTable) {
     for item in &mut mir.program {
-        if let Item::Func(func) = item {
-            optimize_mir_func(&mut func.instructions, opts, sym_map);
+        if let Item::Fn(f) = item {
+            optimize_mir_function(&mut f.instructions, opts, sym_table);
         }
     }
 }
 
 /// Optimizes the provided _MIR x86-64_ instructions, applying the specified
 /// optimizations.
-fn optimize_mir_func<'a>(
+fn optimize_mir_function<'a>(
     instructions: &mut Vec<Instruction<'a>>,
     opts: &Opts,
-    sym_map: &'a SymbolTable,
+    sym_table: &'a SymbolTable,
 ) {
     if instructions.is_empty() {
         return;
     }
 
     let callee_alloc = if opts.reg_alloc {
-        compiler::opt::targets::x86_64::allocate_registers(instructions, opts, sym_map)
+        compiler::opt::targets::x86_64::allocate_registers(instructions, opts, sym_table)
             .into_iter()
             .collect()
     } else {
@@ -44,7 +44,7 @@ fn optimize_mir_func<'a>(
     let alloc = {
         let callee_bytes = (callee_alloc.len() * 8).cast_signed();
 
-        let stack_offset = replace_symbols(instructions, sym_map) + callee_bytes;
+        let stack_offset = replace_symbols(instructions, sym_table) + callee_bytes;
 
         // System-V x86-64 ABI requires the stack to be 16-byte aligned at every
         // `call` instruction. A length that is a multiple of 16 will always have
@@ -69,13 +69,13 @@ fn optimize_mir_func<'a>(
 /// Replaces each symbolic operand within the _MIR x86-64_ instructions with its
 /// corresponding location: either a stack offset from `%rbp` or an address in
 /// the `.bss` / `.data` _ELF_ section, returning the final stack offset used.
-fn replace_symbols(instructions: &mut Vec<Instruction<'_>>, sym_map: &SymbolTable) -> isize {
+fn replace_symbols(instructions: &mut Vec<Instruction<'_>>, sym_table: &SymbolTable) -> isize {
     let mut offset_map: HashMap<&str, isize> = HashMap::default();
 
     let mut stack_offset = 0;
 
     let mut convert_symbol = |ident| {
-        if let Some(sym_info) = sym_map.get(ident)
+        if let Some(sym_info) = sym_table.get(ident)
             && sym_info.duration == Some(StorageDuration::Static)
         {
             Operand::Data(ident)

@@ -100,8 +100,8 @@ pub fn resolve_escapable_ctrl<'a>(
     let mut ctrl_resolver = CtrlResolver::default();
 
     for decl in &mut ast.program {
-        if let Declaration::Func(func) = decl
-            && let Some(body) = &mut func.body
+        if let Declaration::Fn(f) = decl
+            && let Some(body) = &mut f.body
         {
             resolve_block(body, ctx, &mut ctrl_resolver)?;
         }

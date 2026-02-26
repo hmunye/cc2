@@ -15,7 +15,7 @@ pub struct RegisterLiveness<'a> {
     /// Mapping from block ID to live registers at the block's exit and the
     /// per-instruction live registers by index.
     pub lives: HashMap<usize, (LiveRegs<'a>, Vec<LiveRegs<'a>>)>,
-    sym_map: &'a SymbolTable,
+    sym_table: &'a SymbolTable,
     exit_id: usize,
 }
 
@@ -23,10 +23,10 @@ impl<'a> RegisterLiveness<'a> {
     /// Returns a new `RegisterLiveness`.
     #[inline]
     #[must_use]
-    pub fn new(exit_id: usize, sym_map: &'a SymbolTable) -> Self {
+    pub fn new(exit_id: usize, sym_table: &'a SymbolTable) -> Self {
         Self {
             lives: HashMap::default(),
-            sym_map,
+            sym_table,
             exit_id,
         }
     }
@@ -60,7 +60,7 @@ where
 
                 instr
                     .concrete()
-                    .find_used_and_updated(&mut used, &mut updated, self.sym_map);
+                    .find_used_and_updated(&mut used, &mut updated, self.sym_table);
 
                 updated
                     .drain(..)

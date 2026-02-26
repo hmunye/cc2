@@ -140,7 +140,7 @@ pub fn try_fold_ast(expr: &ast::Expression<'_>) -> Option<c_int> {
         }
         ast::Expression::IntConstant(i) => Some(*i),
         ast::Expression::Var { .. }
-        | ast::Expression::FuncCall { .. }
+        | ast::Expression::FnCall { .. }
         | ast::Expression::Assignment { .. } => None,
     }
 }
@@ -154,10 +154,7 @@ fn eval_unary(unop: UnaryOperator, val: c_int) -> c_int {
         UnaryOperator::Negate => -val,
         UnaryOperator::Not => i32::from(val == 0),
         UnaryOperator::Increment | UnaryOperator::Decrement => {
-            unreachable!(
-                "{:?} expressions should not be folded at compile-time",
-                unop
-            )
+            panic!("{unop:?} expressions should not be folded at compile-time")
         }
     }
 }
@@ -201,9 +198,8 @@ fn eval_binary(binop: BinaryOperator, lhs: c_int, rhs: c_int) -> c_int {
         | BinaryOperator::AssignBitXor
         | BinaryOperator::AssignShiftLeft
         | BinaryOperator::AssignShiftRight
-        | BinaryOperator::Conditional => unreachable!(
-            "{:?} expressions should not be folded at compile-time",
-            binop
-        ),
+        | BinaryOperator::Conditional => {
+            panic!("{binop:?} expressions should not be folded at compile-time")
+        }
     }
 }

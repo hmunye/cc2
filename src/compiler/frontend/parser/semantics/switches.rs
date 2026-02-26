@@ -72,7 +72,7 @@ impl<'a> SwitchResolver<'a> {
 
         let val = match expr {
             Expression::IntConstant(i) => *i,
-            _ => unreachable!("valid cases expressions should be folded to integer constants"),
+            _ => unreachable!("valid case-expressions must be folded to constant-expressions"),
         };
 
         if entry.0.insert(val) {
@@ -160,8 +160,8 @@ pub fn resolve_switches<'a>(
     let mut switch_resolver = SwitchResolver::default();
 
     for decl in &mut ast.program {
-        if let Declaration::Func(func) = decl
-            && let Some(body) = &mut func.body
+        if let Declaration::Fn(f) = decl
+            && let Some(body) = &mut f.body
         {
             resolve_block(body, ctx, &mut switch_resolver)?;
             switch_resolver.reset();

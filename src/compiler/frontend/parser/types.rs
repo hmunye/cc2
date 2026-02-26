@@ -12,14 +12,14 @@ pub type c_int = i32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     Int,
-    Func { param_count: usize },
+    Fn { param_count: usize },
 }
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::Int => write!(f, "Int"),
-            Type::Func { .. } => write!(f, "Fn"),
+            Type::Fn { .. } => write!(f, "Fn"),
         }
     }
 }

@@ -16,15 +16,15 @@ pub fn optimize_ir(ir: &mut IR<'_>, opts: &Opts) {
     }
 
     for item in &mut ir.program {
-        if let Item::Fn(func) = item {
-            optimize_ir_func(func, opts);
+        if let Item::Fn(f) = item {
+            optimize_ir_function(f, opts);
         }
     }
 }
 
 /// Optimizes the provided _IR_ function, applying the specified optimizations.
-fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
-    if func.instructions.is_empty() {
+fn optimize_ir_function(f: &mut Function<'_>, opts: &Opts) {
+    if f.instructions.is_empty() {
         return;
     }
 
@@ -32,10 +32,10 @@ fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
 
     loop {
         if opts.fold {
-            compiler::opt::passes::fold_const(func);
+            compiler::opt::passes::fold_const(f);
         }
 
-        cfg.sync(&func.instructions);
+        cfg.sync(&f.instructions);
 
         if opts.uce {
             compiler::opt::passes::unreachable_code(&mut cfg);
@@ -49,7 +49,7 @@ fn optimize_ir_func(func: &mut Function<'_>, opts: &Opts) {
             compiler::opt::passes::dead_store(&mut cfg);
         }
 
-        if !cfg.apply(&mut func.instructions) {
+        if !cfg.apply(&mut f.instructions) {
             break;
         }
     }

@@ -34,7 +34,7 @@ impl fmt::Display for MIRX86<'_> {
 /// _MIR x86-64_ top-level constructs.
 #[derive(Debug)]
 pub enum Item<'a> {
-    Func(Function<'a>),
+    Fn(Function<'a>),
     /// Declaration with `static` storage duration.
     Static {
         init: c_int,
@@ -46,7 +46,7 @@ pub enum Item<'a> {
 impl fmt::Display for Item<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Item::Func(func) => write!(f, "{func}"),
+            Item::Fn(function) => write!(f, "{function}"),
             Item::Static {
                 init,
                 label: ident,
@@ -145,7 +145,7 @@ impl<'a> Instruction<'a> {
     ///
     /// Panics if a function call label is missing from the symbol map.
     #[inline]
-    pub fn find_used(&self, used: &mut Vec<Operand<'a>>, sym_map: &SymbolTable) {
+    pub fn find_used(&self, used: &mut Vec<Operand<'a>>, sym_table: &SymbolTable) {
         match self {
             Instruction::Mov { src: val, .. }
             | Instruction::Unary { dst: val, .. }
@@ -166,11 +166,11 @@ impl<'a> Instruction<'a> {
                 used.push(Operand::Register(Reg::AX));
             }
             Instruction::Call(label) => {
-                let sym_info = sym_map.get(*label).expect(
-                    "semantic analysis ensures every identifier is registered in the symbol map",
-                );
+                let sym_info = sym_table
+                    .get(*label)
+                    .expect("identifier should be in symbol table after semantic analysis");
 
-                if let Type::Func { param_count } = sym_info.ty {
+                if let Type::Fn { param_count } = sym_info.ty {
                     used.extend(
                         // According to the System-V ABI calling convention, the
                         // first six function parameters are accessed from the
@@ -232,9 +232,9 @@ impl<'a> Instruction<'a> {
         &self,
         used: &mut Vec<Operand<'a>>,
         updated: &mut Vec<Operand<'a>>,
-        sym_map: &SymbolTable,
+        sym_table: &SymbolTable,
     ) {
-        self.find_used(used, sym_map);
+        self.find_used(used, sym_table);
         self.find_updated(updated);
     }
 }
@@ -521,9 +521,9 @@ pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>) -> MIRX86<'a> {
                     is_global: *is_global,
                 });
             }
-            ir::Item::Fn(func) => {
-                locales.insert(func.ident);
-                mir_items.push(Item::Func(generate_mir_function(func)));
+            ir::Item::Fn(f) => {
+                locales.insert(f.ident);
+                mir_items.push(Item::Fn(generate_mir_function(f)));
             }
         }
     }
@@ -535,13 +535,13 @@ pub fn generate_x86_64_mir<'a>(ir: &'a IR<'_>) -> MIRX86<'a> {
 }
 
 /// Generate a _MIR x86-64_ function definition from the provided _IR_ function.
-fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
-    let mut instructions = Vec::with_capacity(func.params.len());
+fn generate_mir_function<'a>(f: &'a ir::Function<'_>) -> Function<'a> {
+    let mut instructions = Vec::with_capacity(f.params.len());
 
     // Lower function parameters before processing `IR` instructions.
-    lower_ir_function_params(&func.params, &mut instructions);
+    lower_ir_function_params(&f.params, &mut instructions);
 
-    for inst in &func.instructions {
+    for inst in &f.instructions {
         match inst {
             ir::Instruction::Return(v) => {
                 // According to the System-V ABI calling convention, the return
@@ -787,9 +787,9 @@ fn generate_mir_function<'a>(func: &'a ir::Function<'_>) -> Function<'a> {
     }
 
     Function {
-        label: func.ident,
+        label: f.ident,
         instructions,
-        is_global: func.is_global,
+        is_global: f.is_global,
     }
 }
 

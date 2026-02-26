@@ -44,7 +44,7 @@ impl SymbolState {
         !matches!(self, SymbolState::Declared)
     }
 
-    /// Returns `true` if the new state promotes the existing state.
+    /// Returns `true` if the new state can promote (update) the existing state.
     ///
     /// Symbol states may promote upward (e.g., declared -> tentative -> defined, etc.)
     /// and are never demoted.
@@ -57,7 +57,7 @@ impl SymbolState {
                 SymbolState::Tentative | SymbolState::Defined | SymbolState::ConstDefined(_),
             )
             | (SymbolState::Tentative, SymbolState::Defined | SymbolState::ConstDefined(_)) => true,
-            // All other cases are not promotions.
+            // All other cases cannot promote.
             _ => false,
         }
     }
@@ -83,10 +83,10 @@ pub type SymbolTable = HashMap<String, SymbolInfo>;
 pub fn convert_bindings_map<S: std::hash::BuildHasher>(
     binding_map: HashMap<BindingKey, BindingInfo, S>,
 ) -> SymbolTable {
-    let mut sym_map = SymbolTable::new();
+    let mut sym_table = SymbolTable::new();
 
     for bind_info in binding_map.into_values() {
-        sym_map
+        sym_table
             .entry(bind_info.canonical)
             // Need to modify existing entries to avoid order-dependent
             // overwrites, since `binding_map` may contains the same symbol
@@ -109,5 +109,5 @@ pub fn convert_bindings_map<S: std::hash::BuildHasher>(
             });
     }
 
-    sym_map
+    sym_table
 }

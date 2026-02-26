@@ -24,7 +24,7 @@ enum ConflictStatus {
     /// previous declaration linkage).
     Linkage(Option<Linkage>),
     /// Attempted redefinition of existing function.
-    Func,
+    Fn,
 }
 
 /// Symbol binding within a scope.
@@ -95,7 +95,7 @@ impl SymbolResolver {
             if bind_info.linkage.is_some()
                 && (matches!(
                     (ty, storage),
-                    (Type::Func { .. }, Some(StorageClass::Extern) | None)
+                    (Type::Fn { .. }, Some(StorageClass::Extern) | None)
                 ) || (*ty == Type::Int && storage == Some(StorageClass::Extern)))
             {
                 // Linkage matches the prior visible declaration.
@@ -111,14 +111,14 @@ impl SymbolResolver {
             }
 
             match (ty, bind_info.ty) {
-                (Type::Func { .. }, Type::Func { .. }) => {
+                (Type::Fn { .. }, Type::Fn { .. }) => {
                     // Multiple function declarations always allowed, not
                     // definitions.
                     if matches!(
                         (state, bind_info.state),
                         (SymbolState::Defined, SymbolState::Defined)
                     ) {
-                        return Err(ConflictStatus::Func);
+                        return Err(ConflictStatus::Fn);
                     }
                 }
                 // Multiple variables declarations only allowed if previous
@@ -256,14 +256,14 @@ pub fn resolve_symbols<'a>(
         resolve_declaration(decl, ctx, &mut ident_resolver)?;
     }
 
-    let sym_map = convert_bindings_map(ident_resolver.bindings);
+    let sym_table = convert_bindings_map(ident_resolver.bindings);
 
     Ok((
         AST {
             program: ast.program,
             _phase: std::marker::PhantomData,
         },
-        sym_map,
+        sym_table,
     ))
 }
 
@@ -274,12 +274,12 @@ fn resolve_declaration(
 ) -> Result<()> {
     match decl {
         var @ Declaration::Var { .. } => resolve_variable(var, ctx, resolver),
-        Declaration::Func(func) => resolve_function(func, ctx, resolver),
+        Declaration::Fn(f) => resolve_function(f, ctx, resolver),
     }
 }
 
 fn resolve_function(
-    func: &mut Function<'_>,
+    f: &mut Function<'_>,
     ctx: &Context<'_>,
     resolver: &mut SymbolResolver,
 ) -> Result<()> {
@@ -289,7 +289,7 @@ fn resolve_function(
         params,
         body,
         token,
-    } = func;
+    } = f;
 
     if !resolver.scope.at_file_scope() && body.is_some() {
         let tok_str = format!("{token:?}");
@@ -334,7 +334,7 @@ fn resolve_function(
         SymbolState::Declared
     };
 
-    let ty = Type::Func {
+    let ty = Type::Fn {
         param_count: params.len(),
     };
 
@@ -346,7 +346,7 @@ fn resolve_function(
             let line_content = ctx.src_slice(token.loc.line_span.clone());
 
             let msg = match status {
-                ConflictStatus::Func => {
+                ConflictStatus::Fn => {
                     format!("redefinition of '{tok_str}'")
                 }
                 ConflictStatus::Linkage(_) => {
@@ -357,7 +357,7 @@ fn resolve_function(
                     }
                 }
                 ConflictStatus::Var => {
-                    unreachable!("function cannot conflict based on variable redeclaration")
+                    unreachable!("function cannot trigger a variable-variable redeclaration")
                 }
             };
 
@@ -386,7 +386,7 @@ fn resolve_function(
         if let Err(status) = resolver.check_ident_conflict(ident, state, None, None, ty) {
             debug_assert!(
                 status == ConflictStatus::Var,
-                "function parameters can only conflict based on variable redeclaration"
+                "function parameters should only conflict based on variable redeclaration"
             );
 
             let tok_str = format!("{token:?}");
@@ -504,7 +504,7 @@ fn resolve_variable(
                                 Some(Linkage::External) => "extern declaration",
                                 None => "declaration with no linkage",
                                 Some(Linkage::Internal) => unreachable!(
-                                    "internal linkage conflict should not occur since they do not differ"
+                                    "internal linkage conflict cannot occur when previous linkage is the same"
                                 ),
                             };
 
@@ -515,7 +515,7 @@ fn resolve_variable(
                                 Some(Linkage::Internal) => "static declaration",
                                 None => "declaration with no linkage",
                                 Some(Linkage::External) => unreachable!(
-                                    "external linkage conflict should not occur since they do not differ"
+                                    "external linkage conflict cannot occur when previous linkage is the same"
                                 ),
                             };
 
@@ -543,15 +543,13 @@ fn resolve_variable(
                                     )
                                 }
                                 None => unreachable!(
-                                    "no linkage conflict cannot occur when they do not differ"
+                                    "no-linkage conflict cannot occur when previous linkage is the same"
                                 ),
                             }
                         }
                     },
-                    ConflictStatus::Func => {
-                        unreachable!(
-                            "variable conflicts cannot trigger function redefinition error"
-                        )
+                    ConflictStatus::Fn => {
+                        panic!("variable conflicts should not trigger function redefinition error")
                     }
                 };
 
@@ -658,7 +656,7 @@ fn resolve_statement(
                     var @ Declaration::Var { .. } => {
                         resolve_variable(var, ctx, resolver)?;
                     }
-                    Declaration::Func(_) => unreachable!(
+                    Declaration::Fn(_) => panic!(
                         "'for' loop initial declaration should never contain a function declaration"
                     ),
                 },
@@ -757,7 +755,7 @@ fn resolve_expression(
             resolve_expression(second, ctx, resolver)?;
             resolve_expression(third, ctx, resolver)
         }
-        Expression::FuncCall { ident, args, token } => {
+        Expression::FnCall { ident, args, token } => {
             if let Some(bind_info) = resolver.resolve_ident(ident) {
                 *ident = bind_info.canonical;
 

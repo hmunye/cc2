@@ -47,7 +47,7 @@ pub enum Item<'a> {
 impl fmt::Display for Item<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Item::Fn(func) => write!(f, "{func}"),
+            Item::Fn(function) => write!(f, "{function}"),
             Item::Static {
                 init,
                 ident,
@@ -369,15 +369,11 @@ pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_table: &mut SymbolTa
                     is_global: sym_info.linkage == Some(Linkage::External),
                 });
             }
-            ast::Declaration::Func(func) => {
-                if func.body.is_some() {
-                    builder.reset(&func.ident);
+            ast::Declaration::Fn(f) => {
+                if f.body.is_some() {
+                    builder.reset(&f.ident);
 
-                    ir_items.push(Item::Fn(generate_ir_function(
-                        func,
-                        &mut builder,
-                        sym_table,
-                    )));
+                    ir_items.push(Item::Fn(generate_ir_function(f, &mut builder, sym_table)));
                 }
             }
         }
@@ -409,7 +405,7 @@ pub fn generate_ir<'a>(ast: &'a ast::AST<'_, Analyzed>, sym_table: &mut SymbolTa
 /// Generates an _IR_ function definition from the provided _AST_ function
 /// definition.
 fn generate_ir_function<'a>(
-    func: &'a ast::Function<'_>,
+    f: &'a ast::Function<'_>,
     builder: &mut TACBuilder<'a>,
     sym_table: &SymbolTable,
 ) -> Function<'a> {
@@ -722,14 +718,14 @@ fn generate_ir_function<'a>(
         }
     }
 
-    let ident = func.ident.as_str();
-    let params = func
+    let ident = f.ident.as_str();
+    let params = f
         .params
         .iter()
         .map(|param| param.ident.as_str())
         .collect::<Vec<_>>();
 
-    let body = &func
+    let body = &f
         .body
         .as_ref()
         .expect("IR should not be generates for function declarations");
@@ -1035,7 +1031,7 @@ fn generate_ir_value<'a>(
 
             dst
         }
-        ast::Expression::FuncCall { ident, args, .. } => {
+        ast::Expression::FnCall { ident, args, .. } => {
             let mut ir_args = Vec::with_capacity(args.len());
 
             let dst = Value::Var {
