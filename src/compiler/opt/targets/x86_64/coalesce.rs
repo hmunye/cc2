@@ -1,12 +1,11 @@
 //! Register Coalescing (_x86-64_)
 //!
-//! Optimizes the use of physical registers by coalescing (merging) compatible
-//! virtual (pseudo) registers on the _x86-64_ architecture. This pass attempts
-//! to reduce the number of registers required by eliminating redundant moves,
-//! improving register usage efficiency, and minimizing instruction count
-//! during code generation.
+//! Optimizes the use of _x86-64_ hardware registers by coalescing (merging)
+//! compatible virtual registers. This pass attempts to reduce the number of
+//! registers required by eliminating redundant moves, improving register usage
+//! efficiency, and minimizing instruction count during code generation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::compiler::frontend::SymbolTable;
 use crate::compiler::opt::targets::x86_64::RegisterType;
@@ -94,9 +93,9 @@ pub fn coalesce_loop<'a>(
     ifg
 }
 
-/// Transforms the _MIR x86-64_ instructions by coalescing (merging) compatible
-/// virtual registers, returning new instructions if coalescing was done, or
-/// `None` if no registers can be coalesced.
+/// Transforms the provided _MIR x86-64_ instructions by coalescing (merging)
+/// compatible virtual registers, returning `true` if coalescing occurred
+/// (indicating further coalescing is possible).
 pub fn coalesce_registers<'a>(
     ifg: &mut InterferenceGraph<'a>,
     instructions: &mut Vec<Instruction<'a>>,
@@ -111,24 +110,40 @@ pub fn coalesce_registers<'a>(
             let src = coalesced.find(src_reg);
             let dst = coalesced.find(dst_reg);
 
-            // NOTE: O(n) time complexity.
-            if src != dst
-                && let (Some(Some(src_node)), Some(Some(dst_node))) = (
-                    ifg.nodes
-                        .iter()
-                        .find(|node| node.as_ref().is_some_and(|n| n.ty == src)),
-                    ifg.nodes
-                        .iter()
-                        .find(|node| node.as_ref().is_some_and(|n| n.ty == dst)),
-                )
-                && !ifg.are_neighbors(src_node.id, dst_node.id)
-                && is_conservative(ifg, src_node, dst_node)
+            if src == dst {
+                continue;
+            }
+
+            // NOTE: Linearly scan `nodes` instead of using `ty_to_index` since
+            // the graph is mutated in-place during coalescing (`remove_node`).
+            let (s_node, d_node) = {
+                let mut src_node = None;
+                let mut dst_node = None;
+
+                for n in ifg.nodes.iter().flatten() {
+                    match n.ty {
+                        t if t == src => src_node = Some(n),
+                        t if t == dst => dst_node = Some(n),
+                        _ => {}
+                    }
+
+                    if src_node.is_some() && dst_node.is_some() {
+                        break;
+                    }
+                }
+
+                (src_node, dst_node)
+            };
+
+            if let (Some(src), Some(dst)) = (s_node, d_node)
+                && !ifg.are_neighbors(src.id, dst.id)
+                && is_conservative(ifg, src, dst)
             {
                 let (keep, merge) = {
-                    if matches!(src_node.ty, RegisterType::Hardware(_)) {
-                        (src_node, dst_node)
+                    if matches!(src.ty, RegisterType::Hardware(_)) {
+                        (src, dst)
                     } else {
-                        (dst_node, src_node)
+                        (dst, src)
                     }
                 };
 
@@ -223,7 +238,7 @@ fn is_conservative(
             .iter()
             .copied()
             .chain(dst.neighbors.iter().copied())
-            .collect::<std::collections::HashSet<_>>();
+            .collect::<HashSet<_>>();
 
         for id in combined_neighbors {
             if let Some(neighbor) = &ifg.nodes[id] {

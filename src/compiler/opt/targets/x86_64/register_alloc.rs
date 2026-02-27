@@ -1,21 +1,19 @@
 //! Register Allocation (_x86-64_)
 //!
-//! Handles the assignment of virtual (pseudo) registers to physical registers
-//! on the _x86-64_ architecture. This pass ensures efficient use of CPU
-//! registers, resolves conflicts, and inserts spills and reloads as needed
-//! during code generation.
+//! Handles the assignment of virtual registers to _x86-64_ hardware registers,
+//! ensuring efficient use of CPU registers, resolving conflicts, and inserting
+//! spills and reloads as needed during code generation.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 
 use crate::compiler;
 use crate::compiler::frontend::SymbolTable;
-use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
-use crate::compiler::opt::targets::x86_64::RegisterLiveness;
-use crate::compiler::opt::{Block, CFG, CFGInstruction};
+use crate::compiler::opt::targets::x86_64::liveness;
 use crate::compiler::targets::x86_64::{self, Instruction, Operand, Reg};
 
-/// Type of registers in interference graph.
+/// Type of registers.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum RegisterType<'a> {
     Virtual(&'a str),
@@ -34,17 +32,16 @@ impl<'a> TryFrom<Operand<'a>> for RegisterType<'a> {
     }
 }
 
-/// Register colors (for physical register assignments).
+/// Hardware register color as a newtype wrapper.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct Color(usize);
 
 impl Color {
-    /// The number of available hardware registers.
+    /// Number of available hardware registers.
     pub const K: usize = x86_64::Reg::ALLOCATABLE_REGS.len();
 
-    /// Returns a new `Color`, or `None` if it does not fit within the range
-    /// of available color values.
+    /// Returns a new `Color`.
     #[inline]
     #[must_use]
     fn new(value: usize) -> Self {
@@ -56,19 +53,19 @@ impl Color {
         Color(value)
     }
 
-    /// Returns the inner color value (physical register number).
+    /// Returns the inner color value.
     #[inline]
     #[must_use]
-    const fn value(self) -> usize {
+    const fn to_value(self) -> usize {
         self.0
     }
 }
 
-/// Node of an interference graph (either pseudo or hardware register).
+/// Node of an interference graph.
 #[derive(Debug)]
 pub struct RegisterNode<'a> {
     pub id: usize,
-    pub neighbors: Vec<usize>,
+    pub neighbors: HashSet<usize>,
     pub ty: RegisterType<'a>,
     /// Cost of spilling the register to memory.
     spill_cost: f64,
@@ -80,31 +77,149 @@ pub struct RegisterNode<'a> {
 #[derive(Debug)]
 pub struct InterferenceGraph<'a> {
     pub nodes: Vec<Option<RegisterNode<'a>>>,
+    pub ty_to_index: HashMap<RegisterType<'a>, usize>,
 }
 
 impl<'a> InterferenceGraph<'a> {
     /// Returns a new, initialized, interference graph from the provided
-    /// instructions and symbol map.
+    /// instructions.
+    #[inline]
     #[must_use]
     pub fn from_instructions(instructions: &[Instruction<'a>], sym_table: &'a SymbolTable) -> Self {
         let mut base = Self::base();
 
-        let mut seen = HashSet::new();
+        base.insert_virtual_registers(instructions);
 
-        // Add all encountered virtual registers to the graph.
+        liveness::update_interference(&mut base, instructions, sym_table);
+
+        base
+    }
+
+    /// Adds a undirected edge between two nodes in the graph.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
+    #[inline]
+    pub fn add_interference(&mut self, to: usize, from: usize) {
+        if let Some(node) = &mut self.nodes[to] {
+            node.neighbors.insert(from);
+        }
+
+        if let Some(node) = &mut self.nodes[from] {
+            node.neighbors.insert(to);
+        }
+    }
+
+    /// Removes an undirected edge between two nodes in the graph.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
+    #[inline]
+    pub fn remove_interference(&mut self, to: usize, from: usize) {
+        if let Some(node) = &mut self.nodes[to] {
+            node.neighbors.remove(&from);
+        }
+
+        if let Some(node) = &mut self.nodes[from] {
+            node.neighbors.remove(&to);
+        }
+    }
+
+    /// Returns `true` if the nodes `to` and `from` interfere.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
+    #[inline]
+    #[must_use]
+    pub fn are_neighbors(&self, to: usize, from: usize) -> bool {
+        if let (Some(to_node), Some(from_node)) =
+            (self.nodes[to].as_ref(), self.nodes[from].as_ref())
+        {
+            to_node.neighbors.contains(&from) || from_node.neighbors.contains(&to)
+        } else {
+            false
+        }
+    }
+
+    /// Removes the node `remove` from the graph, transferring all neighbors
+    /// to the node `keep`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided indices are out-of-bounds.
+    #[inline]
+    pub fn remove_node(&mut self, remove: usize, keep: usize) {
+        if let Some(node) = self.nodes[remove].take() {
+            self.ty_to_index.remove(&node.ty);
+
+            for id in node.neighbors {
+                self.add_interference(keep, id);
+                self.remove_interference(remove, id);
+            }
+        }
+    }
+
+    /// Returns the base (complete) interference graph, containing all
+    /// allocatable hardware registers.
+    fn base() -> Self {
+        let alloc_len = x86_64::Reg::ALLOCATABLE_REGS.len();
+
+        let mut graph = Self {
+            nodes: Vec::with_capacity(alloc_len),
+            ty_to_index: HashMap::with_capacity(alloc_len),
+        };
+
+        // Base graph includes all available hardware registers.
+        for reg in x86_64::Reg::ALLOCATABLE_REGS {
+            let ty = RegisterType::Hardware(reg);
+            let id = graph.nodes.len();
+
+            graph.nodes.push(Some(RegisterNode {
+                id,
+                // Not including itself.
+                neighbors: HashSet::with_capacity(alloc_len - 1),
+                ty,
+                // Cannot be spilled to memory.
+                spill_cost: f64::INFINITY,
+                color: None,
+                pruned: false,
+            }));
+
+            graph.ty_to_index.insert(ty, id);
+        }
+
+        // Add interference edges (all hardware registers interfere with each
+        // other).
+        for i in 0..graph.nodes.len() {
+            for j in (i + 1)..graph.nodes.len() {
+                graph.add_interference(i, j);
+            }
+        }
+
+        graph
+    }
+
+    /// Inserts all virtual registers within the provided instructions to the
+    /// graph.
+    fn insert_virtual_registers(&mut self, instructions: &[Instruction<'a>]) {
         for instr in instructions {
-            let id = base.nodes.len();
+            let id = self.nodes.len();
 
             match instr {
                 Instruction::Mov { src, dst }
                 | Instruction::Cmp { rhs: src, lhs: dst }
                 | Instruction::Binary { rhs: src, dst, .. } => {
-                    if let Ok(reg @ RegisterType::Virtual(ident)) = (*src).try_into()
-                        && seen.insert(ident)
+                    if let Ok(reg @ RegisterType::Virtual(_)) = (*src).try_into()
+                        && let Entry::Vacant(entry) = self.ty_to_index.entry(reg)
                     {
-                        base.nodes.push(Some(RegisterNode {
+                        entry.insert(id);
+
+                        self.nodes.push(Some(RegisterNode {
                             id,
-                            neighbors: vec![],
+                            neighbors: HashSet::default(),
                             ty: reg,
                             spill_cost: 0.0,
                             color: None,
@@ -112,12 +227,14 @@ impl<'a> InterferenceGraph<'a> {
                         }));
                     }
 
-                    if let Ok(reg @ RegisterType::Virtual(ident)) = (*dst).try_into()
-                        && seen.insert(ident)
+                    if let Ok(reg @ RegisterType::Virtual(_)) = (*dst).try_into()
+                        && let Entry::Vacant(entry) = self.ty_to_index.entry(reg)
                     {
-                        base.nodes.push(Some(RegisterNode {
+                        entry.insert(id);
+
+                        self.nodes.push(Some(RegisterNode {
                             id,
-                            neighbors: vec![],
+                            neighbors: HashSet::default(),
                             ty: reg,
                             spill_cost: 0.0,
                             color: None,
@@ -129,12 +246,14 @@ impl<'a> InterferenceGraph<'a> {
                 | Instruction::SetC { dst: op, .. }
                 | Instruction::Push(op)
                 | Instruction::Idiv(op) => {
-                    if let Ok(reg @ RegisterType::Virtual(ident)) = (*op).try_into()
-                        && seen.insert(ident)
+                    if let Ok(reg @ RegisterType::Virtual(_)) = (*op).try_into()
+                        && let Entry::Vacant(entry) = self.ty_to_index.entry(reg)
                     {
-                        base.nodes.push(Some(RegisterNode {
+                        entry.insert(id);
+
+                        self.nodes.push(Some(RegisterNode {
                             id,
-                            neighbors: vec![],
+                            neighbors: HashSet::default(),
                             ty: reg,
                             spill_cost: 0.0,
                             color: None,
@@ -145,57 +264,17 @@ impl<'a> InterferenceGraph<'a> {
                 _ => {}
             }
         }
-
-        base.apply_liveness(instructions, sym_table);
-
-        base
     }
 
-    /// Returns `true` if the node at `to` interferes with the node at `from`,
-    /// or vice-versa.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provided indices are out-of-bounds.
-    #[inline]
-    #[must_use]
-    pub fn are_neighbors(&self, to: usize, from: usize) -> bool {
-        if let (Some(src_node), Some(dst_node)) =
-            (self.nodes[from].as_ref(), self.nodes[to].as_ref())
-        {
-            src_node.neighbors.contains(&to) || dst_node.neighbors.contains(&from)
-        } else {
-            false
-        }
-    }
-
-    /// Removes the node at `remove` from the graph, adding all it's neighbors
-    /// to the node at `keep`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provided indices are out-of-bounds.
-    pub fn remove_node(&mut self, remove: usize, keep: usize) {
-        if let Some(node) = self.nodes[remove].take() {
-            for id in node.neighbors {
-                self.add_interference(keep, id);
-                self.remove_interference(remove, id);
-            }
-        }
-    }
-
-    /// Calculates and updates the spill costs for each register, based on its
+    /// Computes the spill costs for each register within the graph, based on
     /// usage frequency.
     fn compute_spill_costs(&mut self, instructions: &[Instruction<'_>]) {
-        // NOTE: Weight the spill_cost based on if the instruction is within a
+        // TODO: Weigh the `spill_cost` based on if the instruction is within a
         // loop.
         let mut update_spill = |op: Operand<'_>| {
-            // NOTE: O(n) time complexity.
             if let Ok(reg @ RegisterType::Virtual(_)) = op.try_into()
-                && let Some(Some(node)) = self
-                    .nodes
-                    .iter_mut()
-                    .find(|node| node.as_ref().is_some_and(|n| n.ty == reg))
+                && let Some(&idx) = self.ty_to_index.get(&reg)
+                && let Some(node) = &mut self.nodes[idx]
             {
                 node.spill_cost += 1.0;
             }
@@ -220,9 +299,9 @@ impl<'a> InterferenceGraph<'a> {
         }
     }
 
-    /// Performs graph coloring to assign a physical register (represented by a
-    /// color) to each pseudo-register.
-    fn assign_registers(&mut self) {
+    /// Performs graph coloring, assigning a hardware register (represented by a
+    /// color) to each virtual register.
+    fn color_registers(&mut self) {
         if let Some(start) = self
             .nodes
             .iter()
@@ -278,16 +357,15 @@ impl<'a> InterferenceGraph<'a> {
                 }
             }
 
-            let candidate_idx = candidate_idx.expect("candidate should have been found");
+            let candidate_idx = candidate_idx.expect("candidate node index should have been found");
 
             if let Some(candidate) = self.nodes[candidate_idx].as_mut() {
                 candidate.pruned = true;
             }
 
-            // Color the rest of the graph.
-            self.assign_registers();
+            self.color_registers();
 
-            // Sets the first `K` bits as available colors.
+            // Sets the first `K` color bits as available.
             let mut available: u32 = (1 << Color::K) - 1;
 
             if let Some(neighbors) = self.nodes[candidate_idx].as_ref().map(|n| &n.neighbors) {
@@ -295,9 +373,8 @@ impl<'a> InterferenceGraph<'a> {
                     if let Some(color) =
                         self.nodes[id].as_ref().and_then(|node| node.color.as_ref())
                     {
-                        // Clear the bit at `color.value()`: color is no longer
-                        // available.
-                        available &= !(1 << (color.value() - 1));
+                        // Clear the bit: color is no longer available.
+                        available &= !(1 << (color.to_value() - 1));
                     }
                 }
             }
@@ -308,13 +385,14 @@ impl<'a> InterferenceGraph<'a> {
                 if let RegisterType::Hardware(reg) = candidate.ty
                     && reg.is_callee_saved()
                 {
-                    // Callee-saved hardware registers: pick the largest
-                    // available color.
+                    // Pick the largest available color.
                     let leading = available.leading_zeros();
+
                     candidate.color = Some(Color::new((u32::BITS - leading) as usize));
                 } else {
-                    // Other: pick the smallest available color.
+                    // Pick the smallest available color.
                     let trailing = available.trailing_zeros() as usize;
+
                     candidate.color = Some(Color::new(trailing + 1));
                 }
 
@@ -324,164 +402,23 @@ impl<'a> InterferenceGraph<'a> {
 
         // No unpruned node exists: base case reached.
     }
-
-    /// Returns the base (complete) interference graph, containing all
-    /// allocatable hardware registers.
-    fn base() -> Self {
-        let mut graph = Self {
-            nodes: Vec::with_capacity(x86_64::Reg::ALLOCATABLE_REGS.len()),
-        };
-
-        let alloc_len = x86_64::Reg::ALLOCATABLE_REGS.len();
-
-        // Base graph includes all available hardware registers.
-        for reg in x86_64::Reg::ALLOCATABLE_REGS {
-            graph.nodes.push(Some(RegisterNode {
-                id: graph.nodes.len(),
-                neighbors: Vec::with_capacity(alloc_len - 1),
-                ty: RegisterType::Hardware(reg),
-                // Cannot be spilled to memory.
-                spill_cost: f64::INFINITY,
-                color: None,
-                pruned: false,
-            }));
-        }
-
-        // Add interference edges (all hardware registers interfere with each
-        // other).
-        for i in 0..graph.nodes.len() {
-            for j in (i + 1)..graph.nodes.len() {
-                graph.add_interference(i, j);
-            }
-        }
-
-        graph
-    }
-
-    /// Adds edges to the graph based on the results of the liveness data-flow
-    /// analysis.
-    fn apply_liveness(&mut self, instructions: &[Instruction<'a>], sym_table: &'a SymbolTable) {
-        let mut cfg = CFG::new();
-        cfg.sync(instructions);
-
-        let mut liveness = RegisterLiveness::new(cfg.exit_block_id(), sym_table);
-
-        run_analysis(&cfg, &mut liveness);
-
-        self.update_interference(&cfg, &liveness);
-    }
-
-    /// Updates the neighbors of virtual registers based on a liveness analysis.
-    fn update_interference<I>(&mut self, cfg: &CFG<I>, liveness: &RegisterLiveness<'a>)
-    where
-        I: CFGInstruction<Instr = Instruction<'a>>,
-    {
-        for block in &cfg.basic_blocks() {
-            if let Block::Basic {
-                id: block_id,
-                instructions,
-                ..
-            } = block
-            {
-                let mut updated = vec![];
-
-                for (i, instr) in instructions.iter().enumerate() {
-                    if let Some(live_regs) =
-                        <RegisterLiveness<'_> as DataFlowAnalysis<I>>::get_instruction_fact(
-                            liveness, *block_id, i,
-                        )
-                    {
-                        let instr = instr.concrete();
-
-                        instr.find_updated(&mut updated);
-
-                        for &lr in live_regs {
-                            // Ensure we don't add an edge between this `src`
-                            // and it's `dst`.
-                            if let Instruction::Mov { src, .. } = instr
-                                && (*src).try_into() == Ok(lr)
-                            {
-                                continue;
-                            }
-
-                            for u in updated
-                                .iter()
-                                .filter_map(|op| RegisterType::try_from(*op).ok())
-                            {
-                                // NOTE: O(n) time complexity.
-                                if lr != u
-                                    && let (Some(Some(lr_node)), Some(Some(u_node))) = (
-                                        self.nodes
-                                            .iter()
-                                            .find(|node| node.as_ref().is_some_and(|n| n.ty == lr)),
-                                        self.nodes
-                                            .iter()
-                                            .find(|node| node.as_ref().is_some_and(|n| n.ty == u)),
-                                    )
-                                {
-                                    self.add_interference(lr_node.id, u_node.id);
-                                }
-                            }
-                        }
-
-                        updated.clear();
-                    }
-                }
-            }
-        }
-    }
-
-    /// Adds a undirected edge between two nodes in the interference graph.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provided indices are out-of-bounds.
-    #[inline]
-    fn add_interference(&mut self, to: usize, from: usize) {
-        if let Some(node) = &mut self.nodes[to]
-            && !node.neighbors.contains(&from)
-        {
-            node.neighbors.push(from);
-        }
-
-        if let Some(node) = &mut self.nodes[from]
-            && !node.neighbors.contains(&to)
-        {
-            node.neighbors.push(to);
-        }
-    }
-
-    /// Removes an undirected edge between two nodes in the interference graph.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provided indices are out-of-bounds.
-    #[inline]
-    fn remove_interference(&mut self, to: usize, from: usize) {
-        if let Some(node) = &mut self.nodes[to] {
-            node.neighbors.retain(|&id| id != from);
-        }
-
-        if let Some(node) = &mut self.nodes[from] {
-            node.neighbors.retain(|&id| id != to);
-        }
-    }
 }
 
 /// Register mapping from colored virtual registers to hardware registers.
 #[derive(Debug)]
 struct RegisterMap<'a> {
-    /// Mapping from virtual register identifier to hardware register.
+    /// Mapping from virtual register identifiers to hardware registers.
     reg_map: HashMap<&'a str, Reg>,
-    /// Set of callee-saved registers allocated.
+    /// Set of callee-saved registers used during allocation.
     callee_saved: HashSet<Reg>,
 }
 
 impl<'a> RegisterMap<'a> {
     /// Returns a new, initialized, register map from the provided interference
     /// graph.
-    fn from_graph(ifg: &InterferenceGraph<'a>) -> Self {
-        let mut color_map: HashMap<Option<Color>, Reg> = HashMap::default();
+    fn from_graph(ifg: InterferenceGraph<'a>) -> Self {
+        let mut color_map: HashMap<Option<Color>, Reg> =
+            HashMap::with_capacity(x86_64::Reg::ALLOCATABLE_REGS.len());
 
         for node in &ifg.nodes {
             if let Some(node) = node
@@ -494,7 +431,7 @@ impl<'a> RegisterMap<'a> {
         let mut reg_map = HashMap::default();
         let mut callee_saved = HashSet::default();
 
-        for node in &ifg.nodes {
+        for node in ifg.nodes {
             if let Some(node) = node
                 && let RegisterType::Virtual(ident) = node.ty
                 && let Some(reg) = color_map.get(&node.color)
@@ -514,9 +451,9 @@ impl<'a> RegisterMap<'a> {
     }
 }
 
-/// Transforms the _MIR x86-64_ instructions by assigning virtual registers to
-/// physical _x86-64_ registers, returning a set containing callee-saved
-/// registers used in allocation.
+/// Transforms the provided _MIR x86-64_ instructions, assigning virtual
+/// registers to hardware registers, returning a `HashSet` containing
+/// callee-saved registers used during allocation.
 pub fn allocate_registers<'a>(
     instructions: &mut Vec<Instruction<'a>>,
     sym_table: &'a SymbolTable,
@@ -529,9 +466,9 @@ pub fn allocate_registers<'a>(
     };
 
     ifg.compute_spill_costs(instructions);
-    ifg.assign_registers();
+    ifg.color_registers();
 
-    let rm = RegisterMap::from_graph(&ifg);
+    let rm = RegisterMap::from_graph(ifg);
 
     let mut to_remove = Vec::new();
 
@@ -584,8 +521,8 @@ pub fn allocate_registers<'a>(
         }
     }
 
-    // Removing instructions from right-left ensures indicies are not
-    // affected by shifting.
+    // Removing instructions from right-left ensures indicies are not affected
+    // by shifting.
     for i in to_remove.drain(..).rev() {
         instructions.remove(i);
     }

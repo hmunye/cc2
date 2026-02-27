@@ -41,7 +41,7 @@ impl<'a, I> PostOrder<'a, I> {
         entry: usize,
         id_to_index: &HashMap<usize, usize>,
     ) {
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::with_capacity(1);
         let mut stack = vec![(entry, false)];
 
         while let Some((id, children_done)) = stack.pop() {

@@ -407,7 +407,7 @@ fn emit_asm_operand(op: &x86_64::Operand<'_>, size: u8, use_high_byte: bool) -> 
         // On _macOS_, symbol is prefixed with underscore (e.g., `_foo(%rip)`).
         x86_64::Operand::Data(symbol) => format!("{symbol}(%rip)"),
         x86_64::Operand::Symbol { .. } => {
-            panic!("pseudoregisters should not be emitted to assembly")
+            panic!("virtual registers should not be emitted to assembly")
         }
     }
 }

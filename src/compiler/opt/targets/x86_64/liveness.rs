@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::frontend::SymbolTable;
-use crate::compiler::opt::analysis::DataFlowAnalysis;
+use crate::compiler::opt::analysis::{DataFlowAnalysis, run_analysis};
 use crate::compiler::opt::targets::x86_64::RegisterType;
+use crate::compiler::opt::targets::x86_64::register_alloc::InterferenceGraph;
 use crate::compiler::opt::{Block, CFG, CFGInstruction};
 use crate::compiler::targets::x86_64::{Instruction, Reg};
 
@@ -11,25 +12,10 @@ type LiveRegs<'a> = HashSet<RegisterType<'a>>;
 
 /// Liveness analysis for register allocation over a control-flow graph.
 #[derive(Debug)]
-pub struct RegisterLiveness<'a> {
-    /// Mapping from block ID to live registers at the block's exit and the
-    /// per-instruction live registers by index.
-    pub lives: HashMap<usize, (LiveRegs<'a>, Vec<LiveRegs<'a>>)>,
+struct RegisterLiveness<'a> {
+    lives: HashMap<usize, (LiveRegs<'a>, Vec<LiveRegs<'a>>)>,
     sym_table: &'a SymbolTable,
     exit_id: usize,
-}
-
-impl<'a> RegisterLiveness<'a> {
-    /// Returns a new `RegisterLiveness`.
-    #[inline]
-    #[must_use]
-    pub fn new(exit_id: usize, sym_table: &'a SymbolTable) -> Self {
-        Self {
-            lives: HashMap::default(),
-            sym_table,
-            exit_id,
-        }
-    }
 }
 
 impl<'a, I> DataFlowAnalysis<I> for RegisterLiveness<'a>
@@ -136,5 +122,75 @@ where
     #[inline]
     fn is_forward(&self) -> bool {
         false
+    }
+}
+
+/// Updates the neighbors of virtual registers within the given interference
+/// graph, based on a liveness analysis.
+pub fn update_interference<'a, I>(
+    ifg: &mut InterferenceGraph<'_>,
+    instructions: &[I],
+    sym_table: &'a SymbolTable,
+) where
+    I: CFGInstruction<Instr = Instruction<'a>> + Clone,
+{
+    let mut cfg = CFG::new();
+    cfg.sync(instructions);
+
+    let mut liveness = RegisterLiveness {
+        lives: HashMap::default(),
+        sym_table,
+        exit_id: cfg.exit_block_id(),
+    };
+
+    run_analysis(&cfg, &mut liveness);
+
+    for block in &cfg.basic_blocks() {
+        if let Block::Basic {
+            id: block_id,
+            instructions,
+            ..
+        } = block
+        {
+            let mut updated = vec![];
+
+            for (i, instr) in instructions.iter().enumerate() {
+                if let Some(live_regs) =
+                    <RegisterLiveness<'_> as DataFlowAnalysis<I>>::get_instruction_fact(
+                        &liveness, *block_id, i,
+                    )
+                {
+                    let instr = instr.concrete();
+
+                    instr.find_updated(&mut updated);
+
+                    for &lr in live_regs {
+                        // Ensure we don't add an edge between this `src`
+                        // and it's `dst`.
+                        if let Instruction::Mov { src, .. } = instr
+                            && (*src).try_into() == Ok(lr)
+                        {
+                            continue;
+                        }
+
+                        for u in updated
+                            .iter()
+                            .filter_map(|op| RegisterType::try_from(*op).ok())
+                        {
+                            if lr != u
+                                && let (Some(&lr_idx), Some(&u_idx)) =
+                                    (ifg.ty_to_index.get(&lr), ifg.ty_to_index.get(&u))
+                                && let (Some(lr_node), Some(u_node)) =
+                                    (&ifg.nodes[lr_idx], &ifg.nodes[u_idx])
+                            {
+                                ifg.add_interference(lr_node.id, u_node.id);
+                            }
+                        }
+                    }
+
+                    updated.clear();
+                }
+            }
+        }
     }
 }

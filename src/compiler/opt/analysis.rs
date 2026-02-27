@@ -4,7 +4,7 @@
 //! graph (_CFG_).
 
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::compiler::opt::{Block, CFG, CFGInstruction};
 
@@ -34,8 +34,7 @@ impl<K: std::hash::Hash + Eq, V, S: std::hash::BuildHasher> MapLike<K, V> for Ha
     }
 }
 
-/// Trait for performing data-flow analysis over a control-flow graph
-/// (bi-directional).
+/// Trait for performing data-flow analysis over a control-flow graph.
 pub trait DataFlowAnalysis<I> {
     /// Information being tracked during analysis.
     type Fact: Default + Clone + PartialEq;
@@ -138,18 +137,18 @@ pub trait DataFlowAnalysis<I> {
 /// Panics if the control-flow graph is malformed.
 pub fn run_analysis<I: CFGInstruction, A: DataFlowAnalysis<I>>(cfg: &CFG<I>, a: &mut A) {
     let init = a.initial(cfg);
-    let basic_blocks = cfg.basic_blocks();
 
-    let mut id_to_block = HashMap::with_capacity(basic_blocks.len());
+    // Exclude the entry and exit block IDs from the set.
+    let mut seen_blocks = HashSet::with_capacity(cfg.blocks.len() - 2);
 
-    let mut worklist: VecDeque<_> = basic_blocks
+    let mut worklist: VecDeque<_> = cfg
+        .basic_blocks()
         // Working in post-order minimizes the number of times a block needs
         // to be revisited for analysis.
         .post_order()
         .inspect(|block| {
             let id = block.id();
-            id_to_block.insert(id, (*block, true));
-
+            seen_blocks.insert(id);
             if let Block::Basic { instructions, .. } = block {
                 let num_insts = instructions.len();
                 a.record_block_fact(id, num_insts, &init);
@@ -164,11 +163,8 @@ pub fn run_analysis<I: CFGInstruction, A: DataFlowAnalysis<I>>(cfg: &CFG<I>, a: 
 
     while let Some(block) = worklist.pop_front() {
         let id = block.id();
-
         // Ensures we reflect the state of the `worklist`.
-        if let Some((_, scheduled)) = id_to_block.get_mut(&id) {
-            *scheduled = false;
-        }
+        seen_blocks.remove(&id);
 
         let old_block_fact = a.get_block_fact(id).cloned();
 
@@ -203,12 +199,12 @@ pub fn run_analysis<I: CFGInstruction, A: DataFlowAnalysis<I>>(cfg: &CFG<I>, a: 
                         );
                     }
                     id => {
-                        if let Some((next_block, scheduled)) = id_to_block.get_mut(&id)
-                            && !*scheduled
-                        {
-                            // Ensures we reflect the state of the `worklist`.
-                            *scheduled = true;
-                            worklist.push_back(next_block);
+                        if let Some(idx) = cfg.id_to_index.get(&id) {
+                            let next_block = &cfg.blocks[*idx];
+
+                            if seen_blocks.insert(next_block.id()) {
+                                worklist.push_back(next_block);
+                            }
                         }
                     }
                 }

@@ -15,8 +15,6 @@ type Stores = HashSet<usize>;
 /// Liveness analysis over a control-flow graph.
 #[derive(Debug)]
 struct DeadStore {
-    /// Mapping from block ID to live variables at the block's exit and the
-    /// per-instruction live variables by index.
     stores: HashMap<usize, (Stores, Vec<Stores>)>,
     statics: Stores,
     exit_id: usize,
