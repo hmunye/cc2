@@ -13,11 +13,11 @@ Tiny C Compiler (subset of _C17_).
 ### Types
 
 - [x] `int`
+- [x] `void` (as function parameter)
 
 ### Functions
 
-- [x] Function definitions and declarations (supports types listed above)
-- [x] `int main(void) { ... }`
+- [x] Function definitions and declarations
 
 ### Declarations
 
@@ -32,13 +32,13 @@ Tiny C Compiler (subset of _C17_).
 
 - [x] `return`
 - [x] Expression statements
-- [x] `if` / `else`
+- [x] `if`/`else`
 - [x] `goto`/labeled statements
 - [x] Compound statements (`{ ... }`)
-- [x] `for` / `do` / `while`
-- [x] `break` / `continue`
+- [x] `for`/`do`/`while`
+- [x] `break`/`continue`
 - [x] `switch`
-- [x] `default` / `case` labels
+- [x] `default`/`case` labels
 - [x] Empty statements (`;`)
 
 ### Expressions
@@ -66,7 +66,7 @@ Tiny C Compiler (subset of _C17_).
 
 ## Testing
 
-Compiler is tested using an external test suite: [`nlsandler/writing-a-c-compiler-tests/`](https://github.com/nlsandler/writing-a-c-compiler-tests/).
+Compiler is tested using an external test suite: [nlsandler/writing-a-c-compiler-tests/](https://github.com/nlsandler/writing-a-c-compiler-tests/).
 
 ## Quick Start
 
@@ -109,12 +109,12 @@ gcc hello_world.s -o hello_world
 as hello_world.s -o hello_world.o   # assemble to object file
 ld hello_world.o -o hello_world     # link to produce executable
 
-# -----------------------------
+# --------------------------
 # Shortcut: Use the -p flag
-# -----------------------------
+# --------------------------
 #
-# The `-p` flag preprocesses and compiles in a single step.
-# This is just a convenience; no separate preprocessed file is needed.
+# The `-p` flag preprocesses and compiles in a single step. This is just a 
+# convenience; no separate preprocessed file is needed.
 ./target/release/cc2 -p hello_world.c
 
 # Assemble and link as usual:
